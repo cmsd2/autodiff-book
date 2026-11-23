@@ -18,8 +18,7 @@ mathematics, and no chapter depends on running a program.
 ## What the book assumes
 
 The book assumes a first university course in calculus, vectors and
-matrices, such as the Open University modules MST124 and MST125. In
-particular it assumes:
+matrices. In particular it assumes:
 
 - differentiation and integration of functions of one variable,
   including the chain rule, the product rule and the mean value

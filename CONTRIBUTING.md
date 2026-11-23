@@ -7,8 +7,8 @@ for everything here; read it before writing.
 ## Readers
 
 The reader has finished a first university course in calculus,
-vectors and matrices, such as the Open University's MST124 and MST125.
-They know single-variable calculus (including the mean value theorem
+vectors and matrices. Do not name any particular course, module or
+institution in the book. They know single-variable calculus (including the mean value theorem
 and Taylor polynomials), 2D and 3D vectors, matrices and their
 products, eigenvalues and eigenvectors of small matrices, linear
 transformations of the plane, first-order differential equations,
