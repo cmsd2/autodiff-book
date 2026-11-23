@@ -1,14 +1,1433 @@
 # The chain rule {#sec-chain-rule}
 
-::: {.callout-note}
-## Not yet written
+A neural network computes its output in stages. An affine map feeds a
+function applied to each component, which feeds another affine map,
+and at the end a loss function turns the output into a single number.
+Every model in this book is a composition of this kind, and the chain
+rule says how to differentiate one: the derivative of a composition is
+the product of the derivatives of its stages. Automatic
+differentiation, the subject of the next two chapters, is a way of
+organising that product.
 
-This chapter will cover:
+The chapter proves the chain rule for maps between spaces of any
+dimension and recasts it as a sum over paths through the intermediate
+variables, the form that @sec-forward-mode and @sec-reverse-mode build
+on. The product and quotient rules and the fact that the gradient is
+perpendicular to level sets follow from it. The second half turns to
+second derivatives. Taylor's theorem and the eigenvalues of the
+Hessian matrix decide what kind of point a zero of the gradient is, and
+@sec-gradient-descent uses the same eigenvalues to measure how fast
+gradient descent converges.
 
-- the chain rule for functions between spaces of any dimension, with proof
-- derivatives as sums over paths through a composition
-- the product and quotient rules as special cases
-- gradients and level sets
-- second derivatives, the Hessian and Taylor's theorem in several variables
-- the second-derivative test through the eigenvalues of the Hessian
+```{python}
+#| include: false
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+
+rng = np.random.default_rng(2)
+```
+
+## The chain rule {#sec-chain-rule-theorem}
+
+For functions of one variable the chain rule reads
+$(g\circ f)'(a) = g'(f(a))\,f'(a)$. The obvious argument writes the
+difference quotient of $g\circ f$ as
+$$
+\frac{g(f(a+h)) - g(f(a))}{f(a+h) - f(a)}\cdot\frac{f(a+h) - f(a)}{h}
+$$
+and lets $h \to 0$. It fails when $f(a+h) = f(a)$ for values of
+$h \ne 0$ arbitrarily close to $0$, as happens for
+$f(x) = x^2\sin(1/x)$ (with $f(0) = 0$) at $a = 0$, because the first
+fraction then divides by zero. The proof below avoids that division
+by working with the remainder form of the derivative from
+@def-differentiable.
+
+```{python}
+#| include: false
+# x^2 sin(1/x) returns to f(0) = 0 at h = 1/(k pi), arbitrarily close to 0.
+kk_ = sp.symbols("k", integer=True, positive=True)
+check(sp.simplify((1 / (kk_ * sp.pi))**2 * sp.sin(kk_ * sp.pi)) == 0, "f(1/(k pi)) = 0")
+```
+
+We need one fact about functions with several outputs. The proof of
+@thm-continuous-partials used it in passing; here it is as a lemma.
+
+::: {#lem-components}
+## Differentiating component by component
+
+Let $U \subseteq \mathbb{R}^n$ be open and
+$f = (f_1, \dots, f_m)\colon U \to \mathbb{R}^m$. Then $f$ is
+differentiable at $\mathbf{a} \in U$ if and only if every component
+$f_i$ is, and then row $i$ of $J_f(\mathbf{a})$ is
+$J_{f_i}(\mathbf{a}) = \nabla f_i(\mathbf{a})^\top$.
+:::
+
+::: {.proof}
+Let $L$ be a linear map from $\mathbb{R}^n$ to $\mathbb{R}^m$ with
+rows $L_1, \dots, L_m$, and let $\mathbf{v}$ be the vector
+$f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) - L\mathbf{h}$, whose
+component $i$ is $f_i(\mathbf{a}+\mathbf{h}) - f_i(\mathbf{a}) -
+L_i\mathbf{h}$. Every vector satisfies $|v_i| \le \|\mathbf{v}\|$ and
+$\|\mathbf{v}\| \le |v_1| + \dots + |v_m|$. So
+$\|\mathbf{v}\|/\|\mathbf{h}\| \to 0$ if and only if
+$|v_i|/\|\mathbf{h}\| \to 0$ for every $i$. That is, $L$ satisfies
+@eq-derivative for $f$ if and only if each row $L_i$ satisfies it for
+$f_i$.
+:::
+
+::: {#thm-chain-rule}
+## The chain rule
+
+Let $U \subseteq \mathbb{R}^n$ and $V \subseteq \mathbb{R}^m$ be open,
+and let $f\colon U \to \mathbb{R}^m$ and $g\colon V \to \mathbb{R}^p$
+with $f(U) \subseteq V$. If $f$ is differentiable at $\mathbf{a}$ and
+$g$ is differentiable at $f(\mathbf{a})$, then $g\circ f$ is
+differentiable at $\mathbf{a}$ and
+$$
+D(g\circ f)(\mathbf{a}) = Dg(f(\mathbf{a}))\,Df(\mathbf{a}),
+\qquad\text{so}\qquad
+J_{g\circ f}(\mathbf{a}) = J_g(f(\mathbf{a}))\,J_f(\mathbf{a}) .
+$$ {#eq-chain-rule}
+:::
+
+::: {.proof}
+Write $\mathbf{b} = f(\mathbf{a})$, $A = J_f(\mathbf{a})$ and
+$B = J_g(\mathbf{b})$. By @def-differentiable,
+$$
+f(\mathbf{a}+\mathbf{h}) = f(\mathbf{a}) + A\mathbf{h} + \mathbf{r}(\mathbf{h}),
+\qquad
+g(\mathbf{b}+\mathbf{k}) = g(\mathbf{b}) + B\mathbf{k} + \mathbf{s}(\mathbf{k}),
+$$
+where $\|\mathbf{r}(\mathbf{h})\|/\|\mathbf{h}\| \to 0$ as
+$\mathbf{h} \to \mathbf{0}$ and
+$\|\mathbf{s}(\mathbf{k})\|/\|\mathbf{k}\| \to 0$ as
+$\mathbf{k} \to \mathbf{0}$. To deal with $\mathbf{k} = \mathbf{0}$,
+define $\sigma(\mathbf{k}) = \|\mathbf{s}(\mathbf{k})\|/\|\mathbf{k}\|$
+for $\mathbf{k} \ne \mathbf{0}$ and $\sigma(\mathbf{0}) = 0$. Then
+$\sigma$ is continuous at $\mathbf{0}$, and
+$\|\mathbf{s}(\mathbf{k})\| = \sigma(\mathbf{k})\,\|\mathbf{k}\|$ for
+every $\mathbf{k}$, including $\mathbf{k} = \mathbf{0}$, where both
+sides are $0$ because $\mathbf{s}(\mathbf{0}) = \mathbf{0}$.
+
+For $\mathbf{h}$ with $\mathbf{a}+\mathbf{h} \in U$, put
+$\mathbf{k}(\mathbf{h}) = f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) =
+A\mathbf{h} + \mathbf{r}(\mathbf{h})$. Then
+$\mathbf{b} + \mathbf{k}(\mathbf{h}) = f(\mathbf{a}+\mathbf{h})$ lies
+in $V$, and
+$$
+g(f(\mathbf{a}+\mathbf{h}))
+= g(\mathbf{b}) + B\mathbf{k}(\mathbf{h}) + \mathbf{s}(\mathbf{k}(\mathbf{h}))
+= g(f(\mathbf{a})) + BA\mathbf{h}
+  + \underbrace{B\mathbf{r}(\mathbf{h}) + \mathbf{s}(\mathbf{k}(\mathbf{h}))}_{\mathbf{R}(\mathbf{h})} .
+$$
+It remains to show that $\|\mathbf{R}(\mathbf{h})\|/\|\mathbf{h}\| \to 0$.
+By @lem-linear-bound,
+$\|B\mathbf{r}(\mathbf{h})\| \le \|B\|_F\,\|\mathbf{r}(\mathbf{h})\|$,
+so the first term divided by $\|\mathbf{h}\|$ tends to $0$. For the
+second, @lem-linear-bound and the triangle inequality give
+$\|\mathbf{k}(\mathbf{h})\| \le \|A\|_F\,\|\mathbf{h}\| + \|\mathbf{r}(\mathbf{h})\|$,
+and so
+$$
+\frac{\|\mathbf{s}(\mathbf{k}(\mathbf{h}))\|}{\|\mathbf{h}\|}
+= \sigma(\mathbf{k}(\mathbf{h}))\,\frac{\|\mathbf{k}(\mathbf{h})\|}{\|\mathbf{h}\|}
+\le \sigma(\mathbf{k}(\mathbf{h}))\left(\|A\|_F + \frac{\|\mathbf{r}(\mathbf{h})\|}{\|\mathbf{h}\|}\right).
+$$
+The bracket tends to $\|A\|_F$. By @thm-differentiable-continuous,
+$\mathbf{k}(\mathbf{h}) \to \mathbf{0}$ as $\mathbf{h} \to \mathbf{0}$,
+and $\sigma$ is continuous at $\mathbf{0}$ with value $0$, so
+$\sigma(\mathbf{k}(\mathbf{h})) \to 0$. The product tends to $0$, and
+the triangle inequality completes the proof that
+$D(g\circ f)(\mathbf{a}) = BA$. Composing linear maps multiplies their
+matrices, which gives the statement about Jacobians.
+:::
+
+The function $\sigma$ is what rescues the argument when
+$f(\mathbf{a}+\mathbf{h}) = f(\mathbf{a})$: the proof never divides by
+$\|\mathbf{k}\|$. Written out entry by entry, @eq-chain-rule says
+$$
+\frac{\partial (g\circ f)_i}{\partial x_j}(\mathbf{a})
+= \sum_{k=1}^{m} \frac{\partial g_i}{\partial y_k}(f(\mathbf{a}))\,
+                 \frac{\partial f_k}{\partial x_j}(\mathbf{a}) ,
+$$ {#eq-chain-entries}
+where $y_1, \dots, y_m$ are the variables of $g$. A change in $x_j$
+reaches output $i$ through each of the $m$ intermediate variables
+$y_k$, and the contributions add.
+
+Two special cases come up constantly. When $n = m = p = 1$ every
+Jacobian is a $1\times1$ matrix and @eq-chain-rule is the familiar
+$(g\circ f)'(a) = g'(f(a))\,f'(a)$, now with a proof that covers every
+case. When $n = 1$ and $p = 1$, $f$ is a curve and $g$ is a
+real-valued function.
+
+A *differentiable curve* is a function $\boldsymbol{\gamma}\colon I \to
+\mathbb{R}^n$ on an open interval $I$ that is differentiable at every
+point of $I$. Its Jacobian at $t$ is the column of derivatives
+$\boldsymbol{\gamma}'(t) = (\gamma_1'(t), \dots, \gamma_n'(t))^\top$,
+the *velocity* of the curve.
+
+::: {#cor-chain-curve}
+## Differentiating along a curve
+
+Let $U$ be open, $\boldsymbol{\gamma}\colon I \to U$ a curve that is
+differentiable at $t$, and $f\colon U \to \mathbb{R}$ differentiable at
+$\boldsymbol{\gamma}(t)$. Then
+$$
+(f\circ\boldsymbol{\gamma})'(t) = \nabla f(\boldsymbol{\gamma}(t))\cdot\boldsymbol{\gamma}'(t) .
+$$
+:::
+
+::: {.proof}
+By @thm-chain-rule the $1\times1$ Jacobian of $f\circ\boldsymbol{\gamma}$
+is the row $\nabla f(\boldsymbol{\gamma}(t))^\top$ times the column
+$\boldsymbol{\gamma}'(t)$.
+:::
+
+@thm-directional is the case $\boldsymbol{\gamma}(t) =
+\mathbf{a} + t\mathbf{u}$, whose velocity is $\mathbf{u}$.
+
+## Worked examples {#sec-chain-examples}
+
+The first example composes the three kinds of map from
+@sec-three-derivatives. It is a network with one layer, differentiated
+with respect to its input.
+
+::: {#exm-one-layer}
+## One layer and a squared error
+
+Let $W$ be an $m\times n$ matrix, $\mathbf{b}$ and $\mathbf{t}$ vectors
+in $\mathbb{R}^m$, and $\sigma\colon\mathbb{R}\to\mathbb{R}$
+differentiable. Define
+$$
+L(\mathbf{x}) = \|\sigma(W\mathbf{x} + \mathbf{b}) - \mathbf{t}\|^2 ,
+$$
+where $\sigma$ acts on each component. Then $L$ is the composition of
+four maps:
+$$
+\mathbf{x} \;\mapsto\; \mathbf{z} = W\mathbf{x} + \mathbf{b}
+\;\mapsto\; \mathbf{y} = \sigma(\mathbf{z})
+\;\mapsto\; \mathbf{e} = \mathbf{y} - \mathbf{t}
+\;\mapsto\; \mathbf{e}^\top\mathbf{e} .
+$$
+Their Jacobians are $W$ (@exm-affine), the diagonal matrix
+$\operatorname{diag}(\sigma'(\mathbf{z}))$ with entries
+$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise), the identity
+(@exm-affine again) and the row $2\mathbf{e}^\top$ (@exm-quadratic with
+$A = I$). Applying @thm-chain-rule three times,
+$$
+J_L(\mathbf{x}) = 2\mathbf{e}^\top\, I\,\operatorname{diag}(\sigma'(\mathbf{z}))\, W,
+\qquad
+\nabla L(\mathbf{x}) = 2\,W^\top\operatorname{diag}(\sigma'(\mathbf{z}))\,(\mathbf{y} - \mathbf{t}) .
+$$ {#eq-one-layer}
+For a concrete case take $\sigma = \tanh$, whose derivative is
+$1 - \tanh^2$, and
+$$
+W = \begin{pmatrix} 1 & -1\\ 1 & 1\end{pmatrix},\quad
+\mathbf{b} = \begin{pmatrix} 0\\ -1\end{pmatrix},\quad
+\mathbf{t} = \begin{pmatrix} 1\\ 1\end{pmatrix},\quad
+\mathbf{x} = \begin{pmatrix} 1\\ 1\end{pmatrix}.
+$$
+Then $\mathbf{z} = (0, 1)$, $\mathbf{y} = (0, \tanh 1) \approx
+(0, 0.7616)$, $\sigma'(\mathbf{z}) \approx (1, 0.4200)$ and
+$\mathbf{y} - \mathbf{t} \approx (-1, -0.2384)$. So
+$2\operatorname{diag}(\sigma'(\mathbf{z}))(\mathbf{y}-\mathbf{t})
+\approx (-2, -0.2003)$, and multiplying by $W^\top$ gives
+$\nabla L(1, 1) \approx (-2.2003,\; 1.7997)$.
+:::
+
+```{python}
+#| include: false
+# One layer: symbolic gradient against the formula, then the numbers.
+x1, x2 = sp.symbols("x1 x2", real=True)
+Wl = sp.Matrix([[1, -1], [1, 1]])
+bl, tl = sp.Matrix([0, -1]), sp.Matrix([1, 1])
+zl = Wl * sp.Matrix([x1, x2]) + bl
+el = zl.applyfunc(sp.tanh) - tl
+Ll = (el.T * el)[0, 0]
+grad_direct = sp.Matrix([sp.diff(Ll, v) for v in (x1, x2)])
+grad_formula = 2 * Wl.T * sp.diag(*[1 - sp.tanh(zi)**2 for zi in zl]) * el
+check(sp.simplify(grad_direct - grad_formula) == sp.zeros(2, 1), "one-layer gradient formula")
+pt = {x1: 1, x2: 1}
+check(zl.subs(pt) == sp.Matrix([0, 1]), "z = (0, 1)")
+close([float(v) for v in (el + tl).subs(pt)], [0, 0.7616], "y", tol=1e-4)
+close(1 - np.tanh(1)**2, 0.4200, "sigma'(1)", tol=1e-4)
+close(np.tanh(1) - 1, -0.2384, "y2 - t2", tol=1e-4)
+close(2 * (1 - np.tanh(1)**2) * (np.tanh(1) - 1), -0.2003, "middle vector", tol=1e-4)
+gL = np.array([float(v) for v in grad_formula.subs(pt)])
+close(gL, [-2.2003, 1.7997], "gradient at (1, 1)", tol=1e-4)
+Lnum = lambda p: float(np.sum((np.tanh(np.array([[1, -1], [1, 1]]) @ p + [0, -1]) - 1) ** 2))
+close(num_grad(Lnum, [1.0, 1.0]), gL, "finite differences agree", tol=1e-7)
+maxima_zero("block([L: (tanh(x1-x2) - 1)^2 + (tanh(x1+x2-1) - 1)^2], "
+            "diff(L, x1) - 2*((1 - tanh(x1-x2)^2)*(tanh(x1-x2) - 1) "
+            "+ (1 - tanh(x1+x2-1)^2)*(tanh(x1+x2-1) - 1)))",
+            "one-layer gradient in Maxima")
+```
+
+The product in @eq-one-layer can be evaluated in two orders. From the
+right, the first step multiplies two matrices. From the left, every
+step multiplies a row vector by a matrix, which costs far less when
+the matrices are large. That observation is the seed of reverse mode
+(@sec-reverse-mode). In a network the quantities being trained are the
+entries of $W$ and $\mathbf{b}$ rather than $\mathbf{x}$, and
+@sec-networks differentiates with respect to them.
+
+::: {#exm-chain-polar}
+## Polar coordinates
+
+Let $f\colon\mathbb{R}^2\to\mathbb{R}$ be differentiable, and express
+it in polar coordinates:
+$g(r, \theta) = f(r\cos\theta, r\sin\theta) = f(P(r, \theta))$, with
+$P$ the map of @exr-ch1-polar. By @thm-chain-rule,
+$$
+\begin{pmatrix}\dfrac{\partial g}{\partial r} & \dfrac{\partial g}{\partial\theta}\end{pmatrix}
+= \begin{pmatrix}\dfrac{\partial f}{\partial x} & \dfrac{\partial f}{\partial y}\end{pmatrix}
+\begin{pmatrix}\cos\theta & -r\sin\theta\\ \sin\theta & r\cos\theta\end{pmatrix},
+$$
+with the partial derivatives of $f$ evaluated at $P(r, \theta)$. So
+$$
+\frac{\partial g}{\partial r} = \frac{\partial f}{\partial x}\cos\theta + \frac{\partial f}{\partial y}\sin\theta,
+\qquad
+\frac{\partial g}{\partial\theta} = -\frac{\partial f}{\partial x}\,r\sin\theta + \frac{\partial f}{\partial y}\,r\cos\theta .
+$$
+For $f(x, y) = x^2 + 3y^2$, the function of @exm-steepest, these give
+$\partial g/\partial r = 2r\cos^2\theta + 6r\sin^2\theta$ and
+$\partial g/\partial\theta = 4r^2\sin\theta\cos\theta$. Substituting
+first, $g(r, \theta) = r^2(1 + 2\sin^2\theta)$, and differentiating
+directly gives the same answers.
+
+The Jacobian of $P$ factorises as $R_\theta D_r$, where $R_\theta$ is
+the matrix of rotation through $\theta$ and
+$D_r = \operatorname{diag}(1, r)$. So for $r > 0$,
+$$
+\Bigl(\frac{\partial g}{\partial r},\; \frac1r\frac{\partial g}{\partial\theta}\Bigr)
+= \nabla f^\top R_\theta ,
+$$
+whose transpose is $R_\theta^\top\nabla f$. The matrix $R_\theta^\top$
+is the rotation through $-\theta$, which preserves lengths
+(@exr-ch1-rotation), so
+$$
+\|\nabla f\|^2 = \Bigl(\frac{\partial g}{\partial r}\Bigr)^2
++ \frac{1}{r^2}\Bigl(\frac{\partial g}{\partial \theta}\Bigr)^2 .
+$$
+:::
+
+```{python}
+#| include: false
+r, th = sp.symbols("r theta", positive=True)
+xs_, ys_ = sp.symbols("x y", real=True)
+fpol = xs_**2 + 3 * ys_**2
+on_P = {xs_: r * sp.cos(th), ys_: r * sp.sin(th)}
+gpol = fpol.subs(on_P)
+sym_equal(gpol, r**2 * (1 + 2 * sp.sin(th)**2), "g in polar form")
+fx, fy = sp.diff(fpol, xs_).subs(on_P), sp.diff(fpol, ys_).subs(on_P)
+sym_equal(sp.diff(gpol, r), fx * sp.cos(th) + fy * sp.sin(th), "g_r by the chain rule")
+sym_equal(sp.diff(gpol, th), -fx * r * sp.sin(th) + fy * r * sp.cos(th), "g_theta by the chain rule")
+sym_equal(sp.diff(gpol, r), 2*r*sp.cos(th)**2 + 6*r*sp.sin(th)**2, "g_r stated")
+sym_equal(sp.diff(gpol, th), 4 * r**2 * sp.sin(th) * sp.cos(th), "g_theta stated")
+JPm = sp.Matrix([r * sp.cos(th), r * sp.sin(th)]).jacobian([r, th])
+Rth = sp.Matrix([[sp.cos(th), -sp.sin(th)], [sp.sin(th), sp.cos(th)]])
+check(sp.simplify(JPm - Rth * sp.diag(1, r)) == sp.zeros(2, 2), "J_P = R D")
+check(sp.simplify(Rth.T - Rth.subs(th, -th)) == sp.zeros(2, 2), "R^T is rotation through -theta")
+# The norm identity for a general f: p and q stand for f_x and f_y at P(r, theta).
+p_, q_ = sp.symbols("p q", real=True)
+gr = p_ * sp.cos(th) + q_ * sp.sin(th)
+gt = -p_ * r * sp.sin(th) + q_ * r * sp.cos(th)
+sym_equal(gr**2 + gt**2 / r**2, p_**2 + q_**2, "norm identity in polar coordinates")
+maxima_zero("(p*cos(t) + q*sin(t))^2 + (-p*r*sin(t) + q*r*cos(t))^2/r^2 - p^2 - q^2",
+            "polar norm identity in Maxima")
+```
+
+## Derivatives as sums over paths {#sec-chain-paths}
+
+Entry $(i, j)$ of a product of two matrices is a sum of products,
+$(BA)_{ij} = \sum_k b_{ik}a_{kj}$, and @eq-chain-entries reads this sum
+as a list of routes from $x_j$ to output $i$, one through each
+intermediate variable. With more stages the routes become longer, and
+when an intermediate quantity feeds into several later ones they
+branch and rejoin. This section makes the picture precise. A program
+that evaluates a function produces exactly this kind of structure, so
+the theorem below is the basis for the computational graphs of
+@sec-forward-mode.
+
+::: {#def-intermediate-variables}
+## A function computed through intermediate variables
+
+Fix integers $1 \le n < N$. A *system of intermediate variables* with
+inputs $v_1, \dots, v_n$ consists of, for each $k = n+1, \dots, N$, a
+non-empty set $P(k) \subseteq \{1, \dots, k-1\}$ of *parents* of $k$
+and a real-valued function $\varphi_k$ of the variables $v_i$ with
+$i \in P(k)$ (in increasing order of $i$), defined on an open subset of
+$\mathbb{R}^{|P(k)|}$. Given values of the inputs, the system computes
+$$
+v_k = \varphi_k\bigl((v_i)_{i\in P(k)}\bigr), \qquad k = n+1, \dots, N,
+$$
+in this order. Draw an arrow $i \to k$ whenever $i \in P(k)$. A *path*
+from $j$ to $k$ is a sequence $j = i_0 \to i_1 \to \dots \to i_r = k$ of
+arrows, with $r \ge 0$; the path with $r = 0$ is the *empty path* from
+$k$ to itself.
+:::
+
+Every arrow goes from a smaller index to a larger one, so a path never
+returns to a variable it has visited, and there are finitely many
+paths. Inputs have no parents, so no arrow ends at an input.
+
+Suppose the inputs range over an open set $U \subseteq \mathbb{R}^n$
+on which every step is defined: for every $\mathbf{x} \in U$, each
+$\varphi_k$ receives arguments inside its domain.
+Then each $v_k$ is a function of the inputs, and we write it as
+$F_k\colon U\to\mathbb{R}$. For the inputs themselves,
+$F_k(\mathbf{x}) = x_k$.
+
+::: {#thm-chain-rule-paths}
+## The chain rule as a sum over paths
+
+Take a system of intermediate variables as in
+@def-intermediate-variables, with inputs ranging over an open set $U$,
+and a point $\mathbf{a} \in U$. Suppose that each $\varphi_k$ is
+differentiable at the values its parents take when the inputs equal
+$\mathbf{a}$. For an arrow $i \to k$, write
+$$
+d_{ki} = \frac{\partial\varphi_k}{\partial v_i}
+$$
+for the *local partial derivative*, evaluated at those values. Then
+every $F_k$ is differentiable at $\mathbf{a}$, and for every input $j$
+and every $k$,
+$$
+\frac{\partial F_k}{\partial x_j}(\mathbf{a})
+= \sum_{\text{paths } j = i_0 \to i_1 \to \dots \to i_r = k}\;
+  \prod_{s=1}^{r} d_{i_s i_{s-1}} ,
+$$ {#eq-paths}
+where the empty path contributes the empty product $1$, and a sum with
+no paths is $0$.
+:::
+
+::: {.proof}
+We prove the statement for $k = 1, 2, \dots, N$ in turn, assuming it
+for all smaller indices (strong induction).
+
+For an input $k \le n$, $F_k(\mathbf{x}) = x_k$ is linear, so it is
+differentiable with $\partial F_k/\partial x_j = 1$ if $j = k$ and $0$
+otherwise. No arrow ends at an input, so the only path from $j$ to $k$
+is the empty path when $j = k$, and there is none when $j \ne k$. The
+right side of @eq-paths is $1$ or $0$ accordingly.
+
+Now let $k > n$, and suppose the theorem holds for every index below
+$k$. Write $G_k(\mathbf{x}) = (F_i(\mathbf{x}))_{i\in P(k)}$, so that
+$F_k = \varphi_k\circ G_k$. Each component $F_i$ of $G_k$ has
+$i < k$, so it is differentiable at $\mathbf{a}$ by the induction
+hypothesis, and by @lem-components so is $G_k$, with the row for $i$
+of its Jacobian holding the partial derivatives of $F_i$. By hypothesis
+$\varphi_k$ is differentiable at $G_k(\mathbf{a})$, so @thm-chain-rule
+shows that $F_k$ is differentiable at $\mathbf{a}$, and
+@eq-chain-entries gives
+$$
+\frac{\partial F_k}{\partial x_j}(\mathbf{a})
+= \sum_{i\in P(k)} d_{ki}\,\frac{\partial F_i}{\partial x_j}(\mathbf{a}) .
+$$ {#eq-paths-step}
+By the induction hypothesis, each $\partial F_i/\partial x_j(\mathbf{a})$
+is the sum over paths from $j$ to $i$ of products of local partial
+derivatives, so the right side of @eq-paths-step is the sum, over pairs
+consisting of a parent $i$ of $k$ and a path from $j$ to $i$, of that
+path's product times $d_{ki}$. Appending the arrow $i \to k$ turns such
+a pair into a path from $j$ to $k$, with product multiplied by $d_{ki}$.
+Every path from $j$ to $k$ arises exactly once in this way: it is not
+empty, since $j \le n < k$, and removing its last arrow, which ends at
+$k$ and so starts at a parent of $k$, recovers the pair. So the right
+side of @eq-paths-step equals the right side of @eq-paths.
+:::
+
+The theorem places no condition on the functions $\varphi_k$ beyond
+differentiability. They can be as simple as an addition or a sine,
+whose local partial derivatives are easy to write down, and the
+theorem assembles the whole derivative from them.
+
+::: {#exm-paths}
+Let $f(x, y) = xy\,e^{xy}$, computed through intermediate variables as
+$$
+v_1 = x,\quad v_2 = y,\quad v_3 = v_1v_2,\quad v_4 = e^{v_3},\quad v_5 = v_3v_4 .
+$$
+The arrows are $1\to3$, $2\to3$, $3\to4$, $3\to5$ and $4\to5$, and the
+local partial derivatives are
+$$
+d_{31} = v_2,\quad d_{32} = v_1,\quad d_{43} = e^{v_3} = v_4,\quad
+d_{53} = v_4,\quad d_{54} = v_3 .
+$$
+The variable $v_3$ reaches $v_5$ in two ways, directly and through
+$v_4$, so there are two paths from $1$ to $5$: $1\to3\to5$, with
+product $v_2v_4$, and $1\to3\to4\to5$, with product $v_2v_4v_3$. By
+@thm-chain-rule-paths,
+$$
+\frac{\partial f}{\partial x} = v_2v_4 + v_2v_4v_3 = y\,e^{xy}(1 + xy),
+$$
+which agrees with the product rule applied to $xy\,e^{xy}$. In the same
+way $\partial f/\partial y = x\,e^{xy}(1 + xy)$, and at $(1, 2)$ the
+gradient is $(6e^2, 3e^2)$.
+:::
+
+```{python}
+#| include: false
+xq, yq = sp.symbols("x y", real=True)
+v1, v2 = xq, yq
+v3 = v1 * v2
+v4 = sp.exp(v3)
+v5 = v3 * v4
+paths_x = v2 * v4 + v2 * v4 * v3     # 1->3->5 and 1->3->4->5
+paths_y = v1 * v4 + v1 * v4 * v3     # 2->3->5 and 2->3->4->5
+sym_equal(sp.diff(v5, xq), paths_x, "sum over paths from x")
+sym_equal(sp.diff(v5, yq), paths_y, "sum over paths from y")
+sym_equal(paths_x, yq * sp.exp(xq*yq) * (1 + xq*yq), "closed form for f_x")
+sym_equal(paths_y, xq * sp.exp(xq*yq) * (1 + xq*yq), "closed form for f_y")
+check(sp.simplify(paths_x.subs({xq: 1, yq: 2}) - 6*sp.exp(2)) == 0, "f_x(1,2) = 6e^2")
+check(sp.simplify(paths_y.subs({xq: 1, yq: 2}) - 3*sp.exp(2)) == 0, "f_y(1,2) = 3e^2")
+maxima_zero("diff(x*y*exp(x*y), x) - y*exp(x*y)*(1 + x*y)", "f_x in Maxima")
+
+
+def path_sum(parents, local, j, k):
+    """Sum over paths j -> k of products of local partials, by enumerating paths."""
+    if j == k:
+        return sp.Integer(1)
+    return sum((local[(k, i)] * path_sum(parents, local, j, i) for i in parents.get(k, ())),
+               sp.Integer(0))
+
+
+# Random systems of intermediate variables (variables 0, 1, 2 are inputs):
+# the path sum of the theorem against SymPy's derivative of the composed function.
+ins = sp.symbols("u1:4", real=True)
+ops = [sp.sin, lambda a: a**2, lambda a: sp.exp(a / 3)]
+for trial in range(5):
+    vals, parents, local = list(ins), {}, {}
+    for k in range(3, 9):
+        ps = sorted(rng.choice(k, size=int(rng.integers(1, 3)), replace=False).tolist())
+        parents[k] = ps
+        syms = sp.symbols(f"w0:{len(ps)}", real=True)
+        phi = ops[k % 3](sum((c + 1) * s for c, s in enumerate(syms))) + syms[0] * syms[-1]
+        sub = dict(zip(syms, [vals[i] for i in ps]))
+        for s_, i in zip(syms, ps):
+            local[(k, i)] = sp.diff(phi, s_).subs(sub)
+        vals.append(phi.subs(sub))
+    at = dict(zip(ins, (0.3, -0.7, 1.1)))
+    for j in range(3):
+        close(float(sp.diff(vals[8], ins[j]).subs(at)),
+              float(path_sum(parents, local, j, 8).subs(at)),
+              "path sum equals the derivative on a random system")
+```
+
+When the system is arranged in layers, with every variable of one
+layer a function of all the variables of the layer before, a path
+picks one variable from each layer, and @eq-paths becomes the expanded
+product of the Jacobians.
+
+::: {#cor-paths-layers}
+## Paths through layers
+
+Let $\mathbf{x}^{(0)} \in \mathbb{R}^{n_0}$ and
+$\mathbf{x}^{(\ell)} = f_\ell(\mathbf{x}^{(\ell-1)})$ for
+$\ell = 1, \dots, L$, where each $f_\ell$ maps an open subset of
+$\mathbb{R}^{n_{\ell-1}}$ into $\mathbb{R}^{n_\ell}$ and is
+differentiable at the point $\mathbf{x}^{(\ell-1)}$ computed from a
+given $\mathbf{x}^{(0)}$. Then
+$J = J_{f_L}(\mathbf{x}^{(L-1)})\cdots J_{f_1}(\mathbf{x}^{(0)})$ is the
+Jacobian of $\mathbf{x}^{(0)} \mapsto \mathbf{x}^{(L)}$, and
+$$
+J_{ij} = \sum_{k_1=1}^{n_1}\cdots\sum_{k_{L-1}=1}^{n_{L-1}}
+\frac{\partial x^{(L)}_{i}}{\partial x^{(L-1)}_{k_{L-1}}}
+\cdots
+\frac{\partial x^{(2)}_{k_2}}{\partial x^{(1)}_{k_1}}
+\frac{\partial x^{(1)}_{k_1}}{\partial x^{(0)}_{j}} .
+$$
+:::
+
+::: {.proof}
+The first statement follows from @thm-chain-rule by induction on $L$.
+The formula for $J_{ij}$ is @eq-paths for the system whose variables
+are the components of $\mathbf{x}^{(0)}, \dots, \mathbf{x}^{(L)}$, in
+that order, with the parents of each component of
+$\mathbf{x}^{(\ell)}$ being all the components of
+$\mathbf{x}^{(\ell-1)}$. Each component of $f_\ell$ is differentiable
+by @lem-components. A path from $x^{(0)}_j$ to $x^{(L)}_i$ visits one
+component $x^{(\ell)}_{k_\ell}$ of each layer in turn, so the paths
+correspond to the choices of $k_1, \dots, k_{L-1}$.
+:::
+
+```{python}
+#| include: false
+# Paths through layers: the expanded sum equals the product of random matrices.
+for _ in range(20):
+    dims = rng.integers(1, 5, size=4)
+    Js = [rng.normal(size=(dims[l + 1], dims[l])) for l in range(3)]
+    prod = Js[2] @ Js[1] @ Js[0]
+    expanded = np.einsum("ik,kl,lj->ij", Js[2], Js[1], Js[0])
+    close(expanded, prod, "sum over layered paths equals the Jacobian product")
+```
+
+The number of paths can be enormous. With $L$ layers of width $w$
+there are $w^{L-1}$ paths from each input to each output, and
+@exr-ch2-diamonds builds a system with only $3k+1$ variables and $2^k$
+paths. Computing the derivative takes far less work than listing the
+paths: the product of Jacobians can be multiplied out one matrix at a
+time, and the distributive law collects the paths into shared partial
+sums. @sec-forward-mode accumulates these partial sums from the inputs
+forward, and @sec-reverse-mode from the output backward.
+
+## The product and quotient rules {#sec-chain-product-rule}
+
+The product rule is the chain rule applied to multiplication.
+
+::: {#lem-multiplication}
+The map $\mu(u, v) = uv$ from $\mathbb{R}^2$ to $\mathbb{R}$ is
+differentiable everywhere, with $J_\mu(u, v) = (v \;\; u)$.
+:::
+
+::: {.proof}
+$\mu(u + h, v + k) - uv - (vh + uk) = hk$, and
+$|hk| \le \tfrac12(h^2 + k^2) = \tfrac12\|(h, k)\|^2$ because
+$(|h| - |k|)^2 \ge 0$. Divided by $\|(h, k)\|$ this tends to $0$.
+:::
+
+::: {#thm-product-rule}
+## Product rule
+
+Let $U \subseteq \mathbb{R}^n$ be open and $f, g\colon U \to \mathbb{R}$
+differentiable at $\mathbf{a}$. Then $fg$ is differentiable at
+$\mathbf{a}$ and
+$$
+\nabla(fg)(\mathbf{a}) = g(\mathbf{a})\nabla f(\mathbf{a}) + f(\mathbf{a})\nabla g(\mathbf{a}) .
+$$
+:::
+
+::: {.proof}
+Let $F = (f, g)\colon U \to \mathbb{R}^2$. By @lem-components, $F$ is
+differentiable at $\mathbf{a}$ with rows $\nabla f(\mathbf{a})^\top$
+and $\nabla g(\mathbf{a})^\top$. Then $fg = \mu\circ F$, and by
+@thm-chain-rule and @lem-multiplication,
+$$
+J_{fg}(\mathbf{a}) = \bigl(g(\mathbf{a}) \;\; f(\mathbf{a})\bigr)
+\begin{pmatrix}\nabla f(\mathbf{a})^\top\\ \nabla g(\mathbf{a})^\top\end{pmatrix}
+= g(\mathbf{a})\nabla f(\mathbf{a})^\top + f(\mathbf{a})\nabla g(\mathbf{a})^\top .
+$$
+:::
+
+::: {#cor-quotient-rule}
+## Quotient rule
+
+Let $U \subseteq \mathbb{R}^n$ be open, and $f, g\colon U \to
+\mathbb{R}$ differentiable at $\mathbf{a}$, with $g(\mathbf{x}) \ne 0$
+for every $\mathbf{x} \in U$. Then $f/g$ is differentiable at
+$\mathbf{a}$ and
+$$
+\nabla\Bigl(\frac{f}{g}\Bigr)(\mathbf{a})
+= \frac{g(\mathbf{a})\nabla f(\mathbf{a}) - f(\mathbf{a})\nabla g(\mathbf{a})}{g(\mathbf{a})^2} .
+$$
+:::
+
+::: {.proof}
+The function $\rho(v) = 1/v$ on the open set of non-zero reals has
+derivative $-1/v^2$. By @thm-chain-rule, $1/g = \rho\circ g$ is
+differentiable at $\mathbf{a}$ with gradient
+$-\nabla g(\mathbf{a})/g(\mathbf{a})^2$. Apply @thm-product-rule to
+$f\cdot(1/g)$:
+$$
+\nabla\Bigl(\frac{f}{g}\Bigr)(\mathbf{a})
+= \frac{1}{g(\mathbf{a})}\nabla f(\mathbf{a})
+  - f(\mathbf{a})\frac{\nabla g(\mathbf{a})}{g(\mathbf{a})^2} ,
+$$
+which is the stated formula over a common denominator.
+:::
+
+With $n = 1$ these are the product and quotient rules of
+one-variable calculus. @exr-ch2-dot asks for the corresponding rule for
+the dot product of two vector-valued functions.
+
+::: {#exm-quotient}
+Let $f(x, y) = x/(1 + x^2 + y^2)$. The denominator
+$1 + x^2 + y^2$ is never $0$, so @cor-quotient-rule gives
+$$
+\nabla f(x, y) = \frac{(1 + x^2 + y^2)(1, 0) - x(2x, 2y)}{(1 + x^2 + y^2)^2}
+= \frac{(1 - x^2 + y^2,\; -2xy)}{(1 + x^2 + y^2)^2} ,
+$$
+and $\nabla f(1, 1) = (1/9, -2/9)$.
+:::
+
+```{python}
+#| include: false
+fq = xq / (1 + xq**2 + yq**2)
+gq = sp.Matrix([sp.diff(fq, v) for v in (xq, yq)])
+want = sp.Matrix([1 - xq**2 + yq**2, -2*xq*yq]) / (1 + xq**2 + yq**2)**2
+check(sp.simplify(gq - want) == sp.zeros(2, 1), "quotient rule example")
+check(gq.subs({xq: 1, yq: 1}) == sp.Matrix([sp.Rational(1, 9), sp.Rational(-2, 9)]), "value at (1,1)")
+# Product rule on sample functions, and the multiplication map's remainder bound.
+fa, ga = xq**2 * yq + 3*yq, sp.sin(xq) - yq**3
+grad2 = lambda e: sp.Matrix([sp.diff(e, v) for v in (xq, yq)])
+check(sp.simplify(grad2(fa * ga) - (ga * grad2(fa) + fa * grad2(ga))) == sp.zeros(2, 1), "product rule")
+for hh, kk in rng.normal(size=(200, 2)):
+    check(abs(hh * kk) <= 0.5 * (hh*hh + kk*kk) + 1e-15, "|hk| <= ||(h,k)||^2 / 2")
+maxima_zero("diff(x/(1+x^2+y^2), y) - (-2*x*y)/(1+x^2+y^2)^2", "quotient example in Maxima")
+```
+
+## Gradients and level sets {#sec-chain-level-sets}
+
+::: {#def-level-set}
+## Level set
+
+For $f\colon U \to \mathbb{R}$ and a real number $c$, the *level set*
+of $f$ at $c$ is $\{\mathbf{x} \in U : f(\mathbf{x}) = c\}$. For
+$n = 2$ it is usually a curve, a *level curve* or contour line.
+:::
+
+@exm-steepest claimed that the gradient is perpendicular to level
+curves. The chain rule proves it in any dimension, for every direction
+in which a curve can pass through a point while staying in the level
+set.
+
+::: {#thm-gradient-level-set}
+## The gradient is perpendicular to level sets
+
+Let $U \subseteq \mathbb{R}^n$ be open and $f\colon U \to \mathbb{R}$
+differentiable at $\mathbf{a}$, with $f(\mathbf{a}) = c$. Let
+$\boldsymbol{\gamma}\colon I \to U$ be a curve on an open interval $I$,
+differentiable at $t_0 \in I$, with $\boldsymbol{\gamma}(t_0) =
+\mathbf{a}$ and $f(\boldsymbol{\gamma}(t)) = c$ for every $t \in I$.
+Then
+$$
+\nabla f(\mathbf{a})\cdot\boldsymbol{\gamma}'(t_0) = 0 .
+$$
+:::
+
+::: {.proof}
+The function $f\circ\boldsymbol{\gamma}$ is constant on $I$, so its
+derivative at $t_0$ is $0$. By @cor-chain-curve that derivative is
+$\nabla f(\mathbf{a})\cdot\boldsymbol{\gamma}'(t_0)$.
+:::
+
+So every velocity of a curve that stays in the level set is
+perpendicular to the gradient. When $\nabla f(\mathbf{a}) \ne
+\mathbf{0}$ and $f$ is continuously differentiable near $\mathbf{a}$,
+the converse also holds: every vector perpendicular to
+$\nabla f(\mathbf{a})$ is the velocity of some curve in the level set
+through $\mathbf{a}$. That needs the implicit function theorem, which
+this book does not prove; see @zorich2015mathematical [sec. 8.5 and
+8.7.2]. With the converse, the vectors perpendicular to the gradient
+are exactly the directions along the level set, and by
+@thm-directional they are the directions in which $f$ has zero
+directional derivative.
+
+::: {#exm-ellipse}
+Return to $f(x, y) = x^2 + 3y^2$ and the point $(1, 1)$ of
+@exm-steepest, where $f = 4$. The level curve $x^2 + 3y^2 = 4$ is an
+ellipse, traced by
+$\boldsymbol{\gamma}(t) = (2\cos t,\; (2/\sqrt3)\sin t)$, and
+$\boldsymbol{\gamma}(\pi/3) = (1, 1)$. Its velocity is
+$\boldsymbol{\gamma}'(t) = (-2\sin t,\; (2/\sqrt3)\cos t)$, so
+$\boldsymbol{\gamma}'(\pi/3) = (-\sqrt3,\; 1/\sqrt3)$, and
+$$
+\nabla f(1, 1)\cdot\boldsymbol{\gamma}'(\pi/3) = 2(-\sqrt3) + 6/\sqrt3 = 0 .
+$$
+At a general point of the ellipse,
+$\nabla f(\boldsymbol{\gamma}(t)) = (4\cos t,\; 4\sqrt3\sin t)$, and the
+dot product with $\boldsymbol{\gamma}'(t)$ is
+$-8\sin t\cos t + 8\sin t\cos t = 0$.
+:::
+
+```{python}
+#| include: false
+tt = sp.symbols("t", real=True)
+gam = sp.Matrix([2 * sp.cos(tt), 2 / sp.sqrt(3) * sp.sin(tt)])
+sym_equal(gam[0]**2 + 3 * gam[1]**2, 4, "the curve lies on the level set 4")
+check(sp.simplify(gam.subs(tt, sp.pi / 3) - sp.Matrix([1, 1])) == sp.zeros(2, 1), "gamma(pi/3) = (1,1)")
+dg = gam.diff(tt)
+check(sp.simplify(dg.subs(tt, sp.pi / 3) - sp.Matrix([-sp.sqrt(3), 1 / sp.sqrt(3)])) == sp.zeros(2, 1),
+      "velocity at pi/3")
+check(sp.simplify(2 * (-sp.sqrt(3)) + 6 / sp.sqrt(3)) == 0, "dot product at (1, 1)")
+gradb = sp.Matrix([2 * gam[0], 6 * gam[1]])
+check(sp.simplify(gradb - sp.Matrix([4 * sp.cos(tt), 4 * sp.sqrt(3) * sp.sin(tt)])) == sp.zeros(2, 1),
+      "gradient along the ellipse")
+sym_equal((gradb.T * dg)[0, 0], 0, "gradient perpendicular to the velocity")
+maxima_zero("(4*cos(t))*(-2*sin(t)) + (4*sqrt(3)*sin(t))*(2/sqrt(3)*cos(t))", "ellipse in Maxima")
+```
+
+## Second derivatives and the Hessian {#sec-chain-hessian}
+
+The partial derivatives of $f\colon U \to \mathbb{R}$ are themselves
+functions on $U$, and they may have partial derivatives of their own.
+Write
+$$
+\frac{\partial^2 f}{\partial x_i\,\partial x_j}
+= \frac{\partial}{\partial x_i}\Bigl(\frac{\partial f}{\partial x_j}\Bigr),
+\qquad
+\frac{\partial^2 f}{\partial x_i^2}
+= \frac{\partial}{\partial x_i}\Bigl(\frac{\partial f}{\partial x_i}\Bigr).
+$$
+For $i \ne j$ these are *mixed* partial derivatives. A function is
+*twice continuously differentiable* on $U$ if all its first and second
+partial derivatives exist and are continuous on $U$.
+
+::: {#def-hessian}
+## Hessian matrix
+
+Let $f\colon U \to \mathbb{R}$ have all second partial derivatives at
+$\mathbf{a}$. Its *Hessian* at $\mathbf{a}$ is the $n\times n$ matrix
+$$
+\nabla^2 f(\mathbf{a}) =
+\begin{pmatrix}
+\dfrac{\partial^2 f}{\partial x_1^2}(\mathbf{a}) & \cdots & \dfrac{\partial^2 f}{\partial x_1\,\partial x_n}(\mathbf{a})\\
+\vdots & & \vdots\\
+\dfrac{\partial^2 f}{\partial x_n\,\partial x_1}(\mathbf{a}) & \cdots & \dfrac{\partial^2 f}{\partial x_n^2}(\mathbf{a})
+\end{pmatrix},
+$$
+with entry $(i, j)$ equal to
+$\partial^2 f/\partial x_i\,\partial x_j(\mathbf{a})$.
+:::
+
+Row $j$ of the Jacobian of the gradient map
+$\mathbf{x} \mapsto \nabla f(\mathbf{x})$ holds the partial derivatives
+of $\partial f/\partial x_j$, so $J_{\nabla f}(\mathbf{a})$ is the
+transpose of $\nabla^2 f(\mathbf{a})$. @thm-mixed-partials below shows
+that for twice continuously differentiable functions the Hessian is
+symmetric, so the two matrices agree.
+
+::: {#exm-hessian}
+For the function $f(x, y) = x^2y + \sin(xy)$ of @exm-partials,
+$$
+\nabla^2 f(x, y) = \begin{pmatrix}
+2y - y^2\sin(xy) & 2x + \cos(xy) - xy\sin(xy)\\
+2x + \cos(xy) - xy\sin(xy) & -x^2\sin(xy)
+\end{pmatrix},
+\qquad
+\nabla^2 f(1, 0) = \begin{pmatrix} 0 & 3\\ 3 & 0\end{pmatrix}.
+$$
+The two mixed partial derivatives, computed in different orders, came
+out equal. For a quadratic form
+$f(\mathbf{x}) = \mathbf{x}^\top A\mathbf{x}$, @exm-quadratic gives
+$\nabla f(\mathbf{x}) = (A + A^\top)\mathbf{x}$, a linear map, so
+$\nabla^2 f(\mathbf{x}) = A + A^\top$ at every point, which is
+symmetric whether or not $A$ is.
+:::
+
+```{python}
+#| include: false
+fh = xq**2 * yq + sp.sin(xq * yq)
+H = sp.hessian(fh, (xq, yq))
+mixed = 2*xq + sp.cos(xq*yq) - xq*yq*sp.sin(xq*yq)
+check(sp.simplify(H - sp.Matrix([[2*yq - yq**2*sp.sin(xq*yq), mixed],
+                                 [mixed, -xq**2*sp.sin(xq*yq)]])) == sp.zeros(2, 2), "Hessian")
+sym_equal(sp.diff(fh, xq, yq), sp.diff(fh, yq, xq), "mixed partials agree")
+check(H.subs({xq: 1, yq: 0}) == sp.Matrix([[0, 3], [3, 0]]), "Hessian at (1, 0)")
+Xh = sp.Matrix(sp.symbols("x1:4", real=True))
+Ah = sp.Matrix(3, 3, sp.symbols("a1:10", real=True))
+check(sp.hessian((Xh.T * Ah * Xh)[0, 0], list(Xh)) == Ah + Ah.T, "Hessian of a quadratic form")
+maxima_zero("diff(x^2*y + sin(x*y), x, 1, y, 1) - (2*x + cos(x*y) - x*y*sin(x*y))",
+            "mixed partial in Maxima")
+```
+
+::: {#thm-mixed-partials}
+## Symmetry of mixed partial derivatives
+
+Let $f\colon U \to \mathbb{R}$, with $U$ open, and $i \ne j$. Suppose
+that $\partial f/\partial x_i$, $\partial f/\partial x_j$ and both
+mixed partial derivatives $\partial^2 f/\partial x_i\,\partial x_j$ and
+$\partial^2 f/\partial x_j\,\partial x_i$ exist on an open disc around
+$\mathbf{a}$, and that the two mixed partial derivatives are continuous
+at $\mathbf{a}$. Then
+$$
+\frac{\partial^2 f}{\partial x_i\,\partial x_j}(\mathbf{a})
+= \frac{\partial^2 f}{\partial x_j\,\partial x_i}(\mathbf{a}) .
+$$
+In particular, if $f$ is twice continuously differentiable on $U$, then
+$\nabla^2 f(\mathbf{a})$ is symmetric for every $\mathbf{a} \in U$.
+:::
+
+::: {.proof}
+Only $x_i$ and $x_j$ vary in the argument, so write
+$\mathbf{p}(s, t) = \mathbf{a} + s\mathbf{e}_i + t\mathbf{e}_j$, write
+$\partial_i f$ for $\partial f/\partial x_i$, and let $\rho$ be the
+radius of the disc. For $0 < |h| < \rho/2$, every point
+$\mathbf{p}(s, t)$ with $|s|, |t| \le |h|$ lies within
+$\sqrt2|h| < \rho$ of $\mathbf{a}$, so in the disc. Consider
+$$
+\Delta(h) = f(\mathbf{p}(h, h)) - f(\mathbf{p}(h, 0)) - f(\mathbf{p}(0, h)) + f(\mathbf{a}) .
+$$
+First group it as $\varphi(h) - \varphi(0)$ with
+$\varphi(s) = f(\mathbf{p}(s, h)) - f(\mathbf{p}(s, 0))$. The function
+$\varphi$ is differentiable for $|s| \le |h|$, with
+$\varphi'(s) = \partial_i f(\mathbf{p}(s, h)) - \partial_i f(\mathbf{p}(s, 0))$.
+By the mean value theorem, $\Delta(h) = h\varphi'(s_1)$ for some $s_1$
+between $0$ and $h$. The function $t \mapsto \partial_i f(\mathbf{p}(s_1, t))$
+has derivative $\partial^2 f/\partial x_j\,\partial x_i$, so a second
+application of the mean value theorem gives a $t_1$ between $0$ and $h$
+with
+$$
+\Delta(h) = h^2\,\frac{\partial^2 f}{\partial x_j\,\partial x_i}(\mathbf{p}(s_1, t_1)) .
+$$
+Grouping $\Delta(h)$ instead as $\psi(h) - \psi(0)$ with
+$\psi(t) = f(\mathbf{p}(h, t)) - f(\mathbf{p}(0, t))$ and repeating the
+argument with the roles of $i$ and $j$ exchanged gives $s_2$ and $t_2$
+between $0$ and $h$ with
+$$
+\Delta(h) = h^2\,\frac{\partial^2 f}{\partial x_i\,\partial x_j}(\mathbf{p}(s_2, t_2)) .
+$$
+Divide both expressions by $h^2$ and let $h \to 0$. Both points
+$\mathbf{p}(s_1, t_1)$ and $\mathbf{p}(s_2, t_2)$ lie within
+$\sqrt2|h|$ of $\mathbf{a}$, and both mixed partial derivatives are
+continuous at $\mathbf{a}$, so the two limits are the two mixed partial
+derivatives at $\mathbf{a}$, and they are equal.
+:::
+
+Without continuity the conclusion can fail, as @exr-ch2-mixed shows.
+
+## Taylor's theorem {#sec-chain-taylor}
+
+Near a point, a differentiable function is approximately a constant
+plus a linear map. Adding a quadratic term built from the Hessian gives
+a better approximation, and that term is what tells a minimum from a
+saddle. The proof reduces to one variable by restricting $f$ to a
+segment.
+
+::: {#lem-taylor-one}
+## Taylor's theorem in one variable, second order
+
+Let $g$ be twice differentiable on an open interval containing
+$[0, 1]$. Then there is a $\tau \in (0, 1)$ with
+$$
+g(1) = g(0) + g'(0) + \tfrac12 g''(\tau) .
+$$
+:::
+
+::: {.proof}
+Choose the constant $M$ so that
+$k(t) = g(1) - g(t) - g'(t)(1 - t) - M(1 - t)^2$ satisfies $k(0) = 0$.
+Also $k(1) = 0$, and $k$ is differentiable, with
+$$
+k'(t) = -g'(t) - g''(t)(1 - t) + g'(t) + 2M(1 - t) = (1 - t)\bigl(2M - g''(t)\bigr) .
+$$
+By Rolle's theorem $k'(\tau) = 0$ for some $\tau \in (0, 1)$, and since
+$1 - \tau \ne 0$, $M = \tfrac12 g''(\tau)$. Then $k(0) = 0$ reads
+$g(1) = g(0) + g'(0) + \tfrac12 g''(\tau)$.
+:::
+
+::: {#thm-taylor-second}
+## Taylor's theorem in several variables, second order
+
+Let $U \subseteq \mathbb{R}^n$ be open and $f\colon U \to \mathbb{R}$
+twice continuously differentiable on $U$. If $\mathbf{a} \in U$ and
+the segment from $\mathbf{a}$ to $\mathbf{a} + \mathbf{h}$ lies in $U$,
+there is a $\tau \in (0, 1)$ with
+$$
+f(\mathbf{a} + \mathbf{h}) = f(\mathbf{a}) + \nabla f(\mathbf{a})\cdot\mathbf{h}
++ \tfrac12\,\mathbf{h}^\top\nabla^2 f(\mathbf{a} + \tau\mathbf{h})\,\mathbf{h} .
+$$ {#eq-taylor-lagrange}
+Consequently, for every $\mathbf{a} \in U$ and every $\mathbf{h}$ with
+$\mathbf{a} + \mathbf{h} \in U$,
+$$
+f(\mathbf{a} + \mathbf{h}) = f(\mathbf{a}) + \nabla f(\mathbf{a})\cdot\mathbf{h}
++ \tfrac12\,\mathbf{h}^\top\nabla^2 f(\mathbf{a})\,\mathbf{h} + R(\mathbf{h}),
+\qquad \frac{|R(\mathbf{h})|}{\|\mathbf{h}\|^2} \to 0
+\text{ as } \mathbf{h} \to \mathbf{0} .
+$$ {#eq-taylor-peano}
+:::
+
+::: {.proof}
+The set of $t$ with $\mathbf{a} + t\mathbf{h} \in U$ is open,
+because $U$ is, and it contains $[0, 1]$. On it define
+$g(t) = f(\mathbf{a} + t\mathbf{h})$. By @thm-continuous-partials, $f$
+is differentiable on $U$, so by @cor-chain-curve, with the curve
+$t \mapsto \mathbf{a} + t\mathbf{h}$ of velocity $\mathbf{h}$,
+$$
+g'(t) = \nabla f(\mathbf{a} + t\mathbf{h})\cdot\mathbf{h}
+= \sum_{j=1}^n h_j\,\frac{\partial f}{\partial x_j}(\mathbf{a} + t\mathbf{h}) .
+$$
+Each $\partial f/\partial x_j$ has continuous partial derivatives, so
+it is differentiable by @thm-continuous-partials, and the same
+corollary gives
+$$
+g''(t) = \sum_{j=1}^n h_j \sum_{i=1}^n h_i\,\frac{\partial^2 f}{\partial x_i\,\partial x_j}(\mathbf{a} + t\mathbf{h})
+= \mathbf{h}^\top\nabla^2 f(\mathbf{a} + t\mathbf{h})\,\mathbf{h} .
+$$
+@lem-taylor-one, applied on an open interval containing $[0, 1]$
+inside the domain of $g$, gives @eq-taylor-lagrange, since
+$g(0) = f(\mathbf{a})$, $g(1) = f(\mathbf{a} + \mathbf{h})$ and
+$g'(0) = \nabla f(\mathbf{a})\cdot\mathbf{h}$.
+
+For @eq-taylor-peano, let $\rho > 0$ be the radius of a disc around
+$\mathbf{a}$ inside $U$. For $\|\mathbf{h}\| < \rho$ the segment lies in the disc, and
+subtracting @eq-taylor-peano from @eq-taylor-lagrange gives
+$R(\mathbf{h}) = \tfrac12\mathbf{h}^\top E\,\mathbf{h}$ with
+$E = \nabla^2 f(\mathbf{a} + \tau\mathbf{h}) - \nabla^2 f(\mathbf{a})$.
+By @thm-cauchy-schwarz and @lem-linear-bound,
+$|R(\mathbf{h})| \le \tfrac12\|\mathbf{h}\|\,\|E\mathbf{h}\|
+\le \tfrac12\|E\|_F\,\|\mathbf{h}\|^2$. The point
+$\mathbf{a} + \tau\mathbf{h}$ is within $\|\mathbf{h}\|$ of
+$\mathbf{a}$, and every second partial derivative is continuous at
+$\mathbf{a}$, so each entry of $E$, and therefore $\|E\|_F$, tends to
+$0$ as $\mathbf{h} \to \mathbf{0}$.
+:::
+
+The open interval used for @eq-taylor-lagrange exists because the set of $t$ with
+$\mathbf{a} + t\mathbf{h} \in U$ contains a small open interval around
+each of $0$ and $1$, and the whole of $[0, 1]$ in between. The
+computation of $g''$ did not need the Hessian to be symmetric: the
+double sum counts entry $(i, j)$ and entry $(j, i)$ with the same
+weight $h_ih_j$.
+
+::: {#exm-taylor}
+Let $f(x, y) = e^x\cos y$ and $\mathbf{a} = \mathbf{0}$. Then
+$f(\mathbf{0}) = 1$, $\nabla f(\mathbf{0}) = (1, 0)$ and
+$$
+\nabla^2 f(x, y) = \begin{pmatrix} e^x\cos y & -e^x\sin y\\ -e^x\sin y & -e^x\cos y\end{pmatrix},
+\qquad
+\nabla^2 f(\mathbf{0}) = \begin{pmatrix} 1 & 0\\ 0 & -1\end{pmatrix},
+$$
+so @eq-taylor-peano reads
+$e^{h_1}\cos h_2 = 1 + h_1 + \tfrac12(h_1^2 - h_2^2) + R(\mathbf{h})$.
+For $\mathbf{h} = (0.1, 0.2)$ the quadratic approximation is $1.085$
+and the true value is $1.08314\ldots$, an error of about $0.0019$,
+small compared with $\|\mathbf{h}\|^2 = 0.05$. Halving $\mathbf{h}$
+divides the error by about 8, so it shrinks like $\|\mathbf{h}\|^3$,
+faster than @eq-taylor-peano requires.
+:::
+
+```{python}
+#| include: false
+ft = sp.exp(xq) * sp.cos(yq)
+Ht = sp.hessian(ft, (xq, yq))
+check(sp.simplify(Ht - sp.Matrix([[sp.exp(xq)*sp.cos(yq), -sp.exp(xq)*sp.sin(yq)],
+                                  [-sp.exp(xq)*sp.sin(yq), -sp.exp(xq)*sp.cos(yq)]])) == sp.zeros(2, 2),
+      "Hessian of e^x cos y")
+origin = {xq: 0, yq: 0}
+check(Ht.subs(origin) == sp.diag(1, -1), "Hessian at 0")
+g0 = sp.Matrix([sp.diff(ft, v).subs(origin) for v in (xq, yq)])
+check(ft.subs(origin) == 1 and g0 == sp.Matrix([1, 0]), "value and gradient at 0")
+hvec = sp.Matrix([xq, yq])
+taylor2 = ft.subs(origin) + (g0.T * hvec)[0, 0] + (hvec.T * Ht.subs(origin) * hvec)[0, 0] / 2
+sym_equal(taylor2, 1 + xq + (xq**2 - yq**2) / 2, "quadratic Taylor polynomial")
+taylor_err = lambda h: np.exp(h[0]) * np.cos(h[1]) - (1 + h[0] + (h[0]**2 - h[1]**2) / 2)
+h = np.array([0.1, 0.2])
+close(1 + 0.1 + (0.01 - 0.04) / 2, 1.085, "quadratic approximation")
+close(np.exp(0.1) * np.cos(0.2), 1.08314, "true value", tol=1e-6)
+close(abs(taylor_err(h)), 0.0019, "error", tol=1e-4)
+close(h @ h, 0.05, "||h||^2")
+close(taylor_err(h) / taylor_err(h / 2), 8, "halving divides the error by about 8", tol=0.05)
+```
+
+## Critical points and the second-derivative test {#sec-chain-second-derivative-test}
+
+::: {#def-local-extremum}
+## Local extrema and critical points
+
+Let $f\colon U \to \mathbb{R}$ with $U$ open. A point $\mathbf{a} \in U$
+is a *local minimum* of $f$ if there is an $r > 0$ with
+$f(\mathbf{x}) \ge f(\mathbf{a})$ whenever
+$\|\mathbf{x} - \mathbf{a}\| < r$, and a *strict local minimum* if
+moreover $f(\mathbf{x}) > f(\mathbf{a})$ whenever
+$0 < \|\mathbf{x} - \mathbf{a}\| < r$. Reversing the inequalities
+defines local maxima and strict local maxima. A *critical point* of $f$ is a point where $f$
+is differentiable and $\nabla f(\mathbf{a}) = \mathbf{0}$.
+:::
+
+::: {#thm-critical-point}
+If $f$ is differentiable at $\mathbf{a}$ and $\mathbf{a}$ is a local
+minimum or a local maximum, then $\nabla f(\mathbf{a}) = \mathbf{0}$.
+:::
+
+::: {.proof}
+For each $j$, the function $t \mapsto f(\mathbf{a} + t\mathbf{e}_j)$ is
+defined on an open interval around $0$ and has a local minimum or
+maximum at $t = 0$, so its derivative there,
+$\partial f/\partial x_j(\mathbf{a})$, is $0$.
+:::
+
+A critical point need not be either. The function $x^2 - y^2$ has a
+critical point at the origin, but it increases along the $x$-axis and
+decreases along the $y$-axis. To sort critical points we look at the
+quadratic term of @eq-taylor-peano, which needs the eigenvalues of the
+symmetric matrix $\nabla^2 f(\mathbf{a})$.
+
+### Symmetric matrices and their eigenvalues
+
+A real matrix can have complex eigenvalues: a rotation of the plane
+through a right angle has eigenvalues $\pm i$. A symmetric matrix
+cannot, and its eigenvectors can be chosen perpendicular to each
+other. For $2\times2$ matrices this is a calculation.
+
+::: {#thm-spectral-2x2}
+## Symmetric $2\times2$ matrices
+
+Let $A = \begin{pmatrix} a & b\\ b & d\end{pmatrix}$ with $a$, $b$, $d$
+real. Then the eigenvalues of $A$ are real, say $\lambda_1 \ge
+\lambda_2$, and there are unit vectors $\mathbf{u}_1$ and
+$\mathbf{u}_2$ with $\mathbf{u}_1\cdot\mathbf{u}_2 = 0$ and
+$A\mathbf{u}_k = \lambda_k\mathbf{u}_k$.
+:::
+
+::: {.proof}
+The eigenvalues are the roots of the characteristic polynomial
+$\lambda^2 - (a + d)\lambda + (ad - b^2)$, whose discriminant is
+$$
+(a + d)^2 - 4(ad - b^2) = (a - d)^2 + 4b^2 \ge 0 .
+$$
+So both roots are real.
+
+If the discriminant is $0$, then $a = d$ and $b = 0$, so $A = aI$, and
+$\mathbf{u}_1 = \mathbf{e}_1$, $\mathbf{u}_2 = \mathbf{e}_2$ will do.
+
+Otherwise $\lambda_1 > \lambda_2$. Each $A - \lambda_kI$ has
+determinant $0$, so there are non-zero vectors $\mathbf{v}_k$ with
+$A\mathbf{v}_k = \lambda_k\mathbf{v}_k$. Since $A^\top = A$,
+$$
+\lambda_1\,\mathbf{v}_1\cdot\mathbf{v}_2 = (A\mathbf{v}_1)\cdot\mathbf{v}_2
+= \mathbf{v}_1^\top A^\top\mathbf{v}_2 = \mathbf{v}_1\cdot(A\mathbf{v}_2)
+= \lambda_2\,\mathbf{v}_1\cdot\mathbf{v}_2 ,
+$$
+so $(\lambda_1 - \lambda_2)\,\mathbf{v}_1\cdot\mathbf{v}_2 = 0$ and
+$\mathbf{v}_1\cdot\mathbf{v}_2 = 0$. Take
+$\mathbf{u}_k = \mathbf{v}_k/\|\mathbf{v}_k\|$.
+:::
+
+The orthogonality argument works for symmetric matrices of any size.
+The existence of real eigenvalues and of a full set of eigenvectors
+holds in any size too, but its proof needs more linear algebra than
+this book assumes.
+
+::: {#thm-spectral}
+## Spectral theorem
+
+Let $A$ be a real symmetric $n\times n$ matrix. Then there are real
+numbers $\lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_n$ and an
+orthonormal basis $\mathbf{u}_1, \dots, \mathbf{u}_n$ of
+$\mathbb{R}^n$ (unit vectors, each perpendicular to the others) with
+$A\mathbf{u}_k = \lambda_k\mathbf{u}_k$ for every $k$. The
+$\lambda_k$ are the eigenvalues of $A$, repeated according to
+multiplicity.
+:::
+
+The book does not prove @thm-spectral for $n > 2$; see
+@axler2024linear [result 7.29] or @deisenroth2020mathematics
+[Theorem 4.15].
+
+::: {#cor-quadratic-bounds}
+## Quadratic forms through eigenvalues
+
+With $A$, $\lambda_k$ and $\mathbf{u}_k$ as in @thm-spectral, every
+$\mathbf{h} \in \mathbb{R}^n$ satisfies
+$$
+\mathbf{h}^\top A\mathbf{h} = \sum_{k=1}^n \lambda_k(\mathbf{u}_k\cdot\mathbf{h})^2
+\qquad\text{and}\qquad
+\lambda_n\|\mathbf{h}\|^2 \le \mathbf{h}^\top A\mathbf{h} \le \lambda_1\|\mathbf{h}\|^2 ,
+$$
+with equality on the left at $\mathbf{h} = \mathbf{u}_n$ and on the
+right at $\mathbf{h} = \mathbf{u}_1$.
+:::
+
+::: {.proof}
+Write $\mathbf{h} = \sum_k c_k\mathbf{u}_k$, which is possible because
+the $\mathbf{u}_k$ form a basis. Taking the dot product with
+$\mathbf{u}_l$ and using orthonormality gives $c_l = \mathbf{u}_l\cdot
+\mathbf{h}$. Then $A\mathbf{h} = \sum_k c_k\lambda_k\mathbf{u}_k$, and
+expanding the dot products,
+$$
+\mathbf{h}^\top A\mathbf{h} = \sum_{k,l} c_l c_k\lambda_k\,\mathbf{u}_l\cdot\mathbf{u}_k
+= \sum_k\lambda_k c_k^2,
+\qquad
+\|\mathbf{h}\|^2 = \sum_{k,l} c_lc_k\,\mathbf{u}_l\cdot\mathbf{u}_k = \sum_k c_k^2 .
+$$
+Each $\lambda_k$ lies between $\lambda_n$ and $\lambda_1$, which gives
+the inequalities, and $\mathbf{h} = \mathbf{u}_1$ has $c_1 = 1$ and
+every other $c_k = 0$, and similarly for $\mathbf{u}_n$.
+:::
+
+A symmetric matrix $A$ is *positive definite* if
+$\mathbf{h}^\top A\mathbf{h} > 0$ for every $\mathbf{h} \ne \mathbf{0}$
+and *negative definite* if $\mathbf{h}^\top A\mathbf{h} < 0$ for every
+$\mathbf{h} \ne \mathbf{0}$. By @cor-quadratic-bounds, $A$ is positive
+definite exactly when all its eigenvalues are positive, and negative
+definite exactly when all are negative.
+
+```{python}
+#| include: false
+# The 2x2 spectral facts: characteristic polynomial and discriminant, then random
+# symmetric matrices have orthonormal eigenvectors and satisfy the quadratic-form bounds.
+a_, b_, d_, l_ = sp.symbols("a b d lambda", real=True)
+char = (sp.Matrix([[a_, b_], [b_, d_]]) - l_ * sp.eye(2)).det()
+sym_equal(char, l_**2 - (a_ + d_)*l_ + (a_*d_ - b_**2), "characteristic polynomial")
+sym_equal((a_ + d_)**2 - 4*(a_*d_ - b_**2), (a_ - d_)**2 + 4*b_**2, "discriminant")
+maxima_zero("(a+d)^2 - 4*(a*d - b^2) - ((a-d)^2 + 4*b^2)", "discriminant in Maxima")
+check(sp.Matrix([[0, -1], [1, 0]]).eigenvals() == {sp.I: 1, -sp.I: 1}, "rotation by a right angle")
+for n_ in (2, 3, 6):
+    for _ in range(50):
+        M = rng.normal(size=(n_, n_))
+        S = M + M.T
+        lam, Q = np.linalg.eigh(S)          # ascending order
+        close(Q.T @ Q, np.eye(n_), "orthonormal eigenvectors")
+        close(Q.T @ S @ Q, np.diag(lam), "diagonalisation")
+        hv = rng.normal(size=n_)
+        qf = hv @ S @ hv
+        close(qf, np.sum(lam * (Q.T @ hv) ** 2), "h^T A h as a sum over eigenvalues")
+        check(lam[0] * (hv @ hv) - 1e-9 <= qf <= lam[-1] * (hv @ hv) + 1e-9, "quadratic-form bounds")
+        close(Q[:, -1] @ S @ Q[:, -1], lam[-1], "equality at the top eigenvector")
+```
+
+### The test
+
+::: {#thm-second-derivative-test}
+## Second-derivative test
+
+Let $U \subseteq \mathbb{R}^n$ be open, $f\colon U \to \mathbb{R}$
+twice continuously differentiable on $U$, and $\mathbf{a}$ a critical
+point of $f$. Let $\lambda_1 \ge \dots \ge \lambda_n$ be the
+eigenvalues of the symmetric matrix $\nabla^2 f(\mathbf{a})$.
+
+(a) If every eigenvalue is positive ($\lambda_n > 0$), $\mathbf{a}$ is
+a strict local minimum.
+
+(b) If every eigenvalue is negative ($\lambda_1 < 0$), $\mathbf{a}$ is
+a strict local maximum.
+
+(c) If $\lambda_1 > 0 > \lambda_n$, then $\mathbf{a}$ is a *saddle
+point*: every disc around $\mathbf{a}$ contains points where
+$f > f(\mathbf{a})$ and points where $f < f(\mathbf{a})$, so
+$\mathbf{a}$ is neither a local minimum nor a local maximum.
+:::
+
+::: {.proof}
+Write $H = \nabla^2 f(\mathbf{a})$, which is symmetric by
+@thm-mixed-partials, and let $\mathbf{u}_1, \dots, \mathbf{u}_n$ be
+orthonormal eigenvectors from @thm-spectral. Since
+$\nabla f(\mathbf{a}) = \mathbf{0}$, @eq-taylor-peano reads
+$$
+f(\mathbf{a} + \mathbf{h}) - f(\mathbf{a}) = \tfrac12\mathbf{h}^\top H\mathbf{h} + R(\mathbf{h}),
+\qquad \frac{|R(\mathbf{h})|}{\|\mathbf{h}\|^2} \to 0 .
+$$
+
+(a) Choose $r > 0$ so that the disc of radius $r$ around $\mathbf{a}$
+lies in $U$ and $|R(\mathbf{h})| < \tfrac14\lambda_n\|\mathbf{h}\|^2$
+whenever $0 < \|\mathbf{h}\| < r$. By @cor-quadratic-bounds, for these
+$\mathbf{h}$,
+$$
+f(\mathbf{a} + \mathbf{h}) - f(\mathbf{a})
+> \tfrac12\lambda_n\|\mathbf{h}\|^2 - \tfrac14\lambda_n\|\mathbf{h}\|^2
+= \tfrac14\lambda_n\|\mathbf{h}\|^2 > 0 .
+$$
+
+(b) Apply (a) to $-f$, whose Hessian $-H$ has eigenvalues
+$-\lambda_n \ge \dots \ge -\lambda_1 > 0$.
+
+(c) Choose $r > 0$ as in (a) but with
+$|R(\mathbf{h})| < \tfrac14\min(\lambda_1, -\lambda_n)\|\mathbf{h}\|^2$.
+For $0 < |t| < r$, $\mathbf{h} = t\mathbf{u}_1$ has
+$\mathbf{h}^\top H\mathbf{h} = \lambda_1t^2$, so
+$f(\mathbf{a} + t\mathbf{u}_1) - f(\mathbf{a}) >
+\tfrac12\lambda_1t^2 - \tfrac14\lambda_1t^2 > 0$. In the same way
+$f(\mathbf{a} + t\mathbf{u}_n) - f(\mathbf{a}) <
+\tfrac12\lambda_nt^2 - \tfrac14\lambda_nt^2 < 0$.
+:::
+
+The test says nothing when some eigenvalue is $0$ and the others all
+have the same sign. The functions $x^4 + y^4$ and $x^4 - y^4$ both
+have zero Hessian at the origin, which is a minimum of the first and a
+saddle point of the second.
+@exr-ch2-inconclusive gives a pair of examples with a non-zero
+Hessian.
+
+In two variables the eigenvalues need not be computed. The
+characteristic polynomial of
+$H = \begin{pmatrix} A & B\\ B & C\end{pmatrix}$ is
+$\lambda^2 - (A + C)\lambda + (AC - B^2)$, so
+$\lambda_1\lambda_2 = \det H = AC - B^2$ and
+$\lambda_1 + \lambda_2 = A + C$.
+
+::: {#cor-test-2d}
+## The test in two variables
+
+Let $f$ be as in @thm-second-derivative-test with $n = 2$, and write
+$\nabla^2 f(\mathbf{a}) = \begin{pmatrix} A & B\\ B & C\end{pmatrix}$.
+
+(a) If $AC - B^2 > 0$ and $A > 0$, $\mathbf{a}$ is a strict local
+minimum.
+
+(b) If $AC - B^2 > 0$ and $A < 0$, $\mathbf{a}$ is a strict local
+maximum.
+
+(c) If $AC - B^2 < 0$, $\mathbf{a}$ is a saddle point.
+:::
+
+::: {.proof}
+If $AC - B^2 < 0$ the product of the eigenvalues is negative, so one is
+positive and the other negative, and part (c) of
+@thm-second-derivative-test applies. If $AC - B^2 > 0$ the eigenvalues
+have the same sign, and so does their sum $A + C$. Also
+$AC > B^2 \ge 0$, so $A$ and $C$ have the same sign, which is therefore
+the sign of $A + C$ and of both eigenvalues.
+:::
+
+```{python}
+#| include: false
+# The two-variable test agrees with the eigenvalue test on random symmetric matrices.
+for _ in range(500):
+    A_, B_, C_ = rng.normal(size=3)
+    lam = np.linalg.eigvalsh([[A_, B_], [B_, C_]])
+    close([lam.sum(), lam.prod()], [A_ + C_, A_*C_ - B_**2], "trace and determinant")
+    det = A_*C_ - B_**2
+    if det > 0 and A_ > 0:
+        check(lam.min() > 0, "2D test: minimum")
+    if det > 0 and A_ < 0:
+        check(lam.max() < 0, "2D test: maximum")
+    if det < 0:
+        check(lam.min() < 0 < lam.max(), "2D test: saddle")
+# Zero Hessians at the origin for the three quartics.
+for fz in (xq**4 + yq**4, xq**4 - yq**4):
+    check(sp.hessian(fz, (xq, yq)).subs({xq: 0, yq: 0}) == sp.zeros(2, 2), "zero Hessian")
+```
+
+::: {#exm-classify}
+Let $f(x, y) = x^3 - 3xy + y^3$. Then
+$\nabla f = (3x^2 - 3y,\; 3y^2 - 3x)$, so a critical point has $y = x^2$
+and $x = y^2$. Hence $x = x^4$, so $x = 0$ or $x = 1$, and the critical
+points are $(0, 0)$ and $(1, 1)$. The Hessian is
+$$
+\nabla^2 f(x, y) = \begin{pmatrix} 6x & -3\\ -3 & 6y\end{pmatrix} .
+$$
+At $(0, 0)$ it has eigenvalues $3$ and $-3$, with eigenvectors
+$(1, -1)/\sqrt2$ and $(1, 1)/\sqrt2$, so the origin is a saddle point.
+The eigenvectors show where to look: for small $t \ne 0$,
+$f(t, -t) = 3t^2$ is positive and $f(t, t) = 2t^3 - 3t^2$ is negative.
+At $(1, 1)$ the Hessian $\begin{pmatrix} 6 & -3\\ -3 & 6\end{pmatrix}$
+has eigenvalues $9$ and $3$, both positive, so $(1, 1)$ is a strict
+local minimum, with $f(1, 1) = -1$. The two-variable test agrees:
+$AC - B^2 = -9$ at the origin, and $27$ at $(1, 1)$, where
+$A = 6 > 0$. The local minimum is not a global one, since
+$f(x, 0) = x^3$ takes every real value.
+:::
+
+```{python}
+#| include: false
+fc = xq**3 - 3*xq*yq + yq**3
+gc = [sp.diff(fc, v) for v in (xq, yq)]
+check(gc == [3*xq**2 - 3*yq, 3*yq**2 - 3*xq], "gradient of the cubic")
+crit = sp.solve(gc, [xq, yq], dict=True)
+real_crit = {(s[xq], s[yq]) for s in crit if s[xq].is_real and s[yq].is_real}
+check(real_crit == {(0, 0), (1, 1)}, "real critical points")
+Hc = sp.hessian(fc, (xq, yq))
+check(Hc == sp.Matrix([[6*xq, -3], [-3, 6*yq]]), "Hessian of the cubic")
+H0, H1 = Hc.subs({xq: 0, yq: 0}), Hc.subs({xq: 1, yq: 1})
+check(H0.eigenvals() == {3: 1, -3: 1}, "eigenvalues at the origin")
+check(H0 * sp.Matrix([1, -1]) == 3 * sp.Matrix([1, -1]), "eigenvector for 3")
+check(H0 * sp.Matrix([1, 1]) == -3 * sp.Matrix([1, 1]), "eigenvector for -3")
+tq = sp.symbols("t", real=True)
+sym_equal(fc.subs({xq: tq, yq: -tq}), 3*tq**2, "f(t, -t)")
+sym_equal(fc.subs({xq: tq, yq: tq}), 2*tq**3 - 3*tq**2, "f(t, t)")
+check(H1.eigenvals() == {9: 1, 3: 1}, "eigenvalues at (1, 1)")
+check(fc.subs({xq: 1, yq: 1}) == -1, "f(1, 1)")
+check(H0.det() == -9 and H1.det() == 27 and H1[0, 0] == 6, "determinants and A")
+# Numerical confirmation: f > f(1,1) on small circles around (1,1).
+ang = np.linspace(0, 2*np.pi, 721)
+for rad in (1e-1, 1e-2):
+    cx, cy = 1 + rad*np.cos(ang), 1 + rad*np.sin(ang)
+    check(np.all(cx**3 - 3*cx*cy + cy**3 > -1), "strict local minimum at (1, 1)")
+maxima_zero("expand(charpoly(matrix([6,-3],[-3,6]), l) - (l-3)*(l-9))",
+            "characteristic polynomial at (1, 1) in Maxima")
+```
+
+Near a strict local minimum, the eigenvalues of the Hessian describe
+the shape of the valley: along $\mathbf{u}_k$ the function rises like
+$\tfrac12\lambda_kt^2$. When the largest eigenvalue is much bigger than
+the smallest, the valley is long and narrow, as for $x^2 + 3y^2$ in
+@exm-steepest, whose Hessian has eigenvalues $6$ and $2$.
+@sec-gradient-descent shows that the ratio $\lambda_1/\lambda_n$
+governs how fast gradient descent converges.
+
+## Notes and further reading {#sec-notes-chain}
+
+@zorich2015mathematical proves the chain rule for maps between spaces
+of any dimension in sec. 8.3.2 and Taylor's formula in several
+variables in sec. 8.4.4, and studies extrema of functions of several
+variables in sec. 8.4.5. @zorich2016mathematical [sec. 10.5--10.6]
+gives the same results for maps between normed spaces, where the
+derivative of each order is a multilinear map.
+@deisenroth2020mathematics [ch. 5] covers the chain rule and Taylor
+series from the point of view of machine learning. Its sec. 5.6 writes
+a computation as a sequence of intermediate variables, each a function
+of its parents, as @def-intermediate-variables does, and applies the
+chain rule to it one step at a time. The proof of the spectral theorem
+for general $n$ uses inner product spaces; @axler2024linear [sec. 7B]
+gives one.
+
+## Exercises {#sec-exercises-chain}
+
+::: {#exr-ch2-compose}
+Let $f(x, y) = (xy,\; x + y)$ and $g(u, v) = (u^2 + v,\; \sin u)$.
+Compute $J_{g\circ f}(1, 2)$ in two ways: as the product
+$J_g(f(1, 2))\,J_f(1, 2)$, and by writing out $g\circ f$ and
+differentiating directly.
+:::
+
+::: {#exr-ch2-homogeneous}
+A function $f\colon\mathbb{R}^n\to\mathbb{R}$ is *homogeneous of
+degree* $k$ if $f(t\mathbf{x}) = t^kf(\mathbf{x})$ for all $t > 0$ and
+all $\mathbf{x}$. Show that a differentiable function that is
+homogeneous of degree $k$ satisfies
+$\mathbf{x}\cdot\nabla f(\mathbf{x}) = k\,f(\mathbf{x})$ (Euler's
+theorem). Check it for $f(x, y) = x^2y - 4y^3$.
+:::
+
+::: {#exr-ch2-dot}
+(a) Let $U \subseteq \mathbb{R}^n$ be open and
+$\mathbf{f}, \mathbf{g}\colon U\to\mathbb{R}^m$ differentiable at
+$\mathbf{a}$. Show that $h(\mathbf{x}) = \mathbf{f}(\mathbf{x})\cdot
+\mathbf{g}(\mathbf{x})$ is differentiable at $\mathbf{a}$ with
+$J_h(\mathbf{a}) = \mathbf{g}(\mathbf{a})^\top J_{\mathbf{f}}(\mathbf{a}) +
+\mathbf{f}(\mathbf{a})^\top J_{\mathbf{g}}(\mathbf{a})$.
+
+(b) Deduce that if a differentiable curve $\boldsymbol{\gamma}$ stays
+on the sphere $\|\mathbf{x}\| = 1$, then
+$\boldsymbol{\gamma}(t)\cdot\boldsymbol{\gamma}'(t) = 0$ for every $t$.
+:::
+
+::: {#exr-ch2-diamonds}
+Fix $k \ge 1$ and compute, from an input $v_0 = x$, for
+$s = 1, \dots, k$,
+$$
+p_s = v_{s-1}^2, \qquad q_s = \sin v_{s-1}, \qquad v_s = p_s + q_s .
+$$
+(a) Show that there are $2^k$ paths from $x$ to $v_k$.
+
+(b) Use @thm-chain-rule-paths to show that
+$dv_k/dx = \prod_{s=1}^k (2v_{s-1} + \cos v_{s-1})$, a product that
+takes $k - 1$ multiplications once its factors are known.
+:::
+
+::: {#exr-ch2-mixed}
+Let $f(x, y) = xy(x^2 - y^2)/(x^2 + y^2)$ for $(x, y) \ne (0, 0)$ and
+$f(0, 0) = 0$.
+
+(a) Show that $\partial f/\partial x(0, y) = -y$ and
+$\partial f/\partial y(x, 0) = x$ for all $x$ and $y$.
+
+(b) Deduce that $\partial^2 f/\partial y\,\partial x(0, 0) = -1$ and
+$\partial^2 f/\partial x\,\partial y(0, 0) = 1$. Which hypothesis of
+@thm-mixed-partials fails?
+:::
+
+::: {#exr-ch2-ridge}
+Let $\mathbf{w} \in \mathbb{R}^n$ be non-zero, $b \in \mathbb{R}$, and
+$\sigma\colon\mathbb{R}\to\mathbb{R}$ twice continuously
+differentiable. A single neuron computes
+$f(\mathbf{x}) = \sigma(\mathbf{w}\cdot\mathbf{x} + b)$.
+
+(a) Show that $\nabla f(\mathbf{x}) = \sigma'(z)\,\mathbf{w}$ and
+$\nabla^2 f(\mathbf{x}) = \sigma''(z)\,\mathbf{w}\mathbf{w}^\top$, where
+$z = \mathbf{w}\cdot\mathbf{x} + b$.
+
+(b) Find the eigenvalues of $\mathbf{w}\mathbf{w}^\top$, and deduce
+that for $n \ge 2$ the Hessian of $f$ always has the eigenvalue $0$.
+:::
+
+::: {#exr-ch2-classify}
+Find and classify the critical points of
+$f(x, y) = x^4 + y^4 - 4xy$.
+:::
+
+::: {#exr-ch2-inconclusive}
+Show that $f(x, y) = x^2 + y^4$ and $g(x, y) = x^2 - y^4$ have the same
+Hessian at the origin, that the origin is a critical point of both,
+and that it is a strict local minimum of $f$ and a saddle point of
+$g$. Why does @thm-second-derivative-test not decide either case?
 :::
