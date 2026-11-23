@@ -870,6 +870,13 @@ theta = init_params(rng)
 for name in ("emma", "isabella", "ava", "christopher"):
     toks = encode(name)[:CONTEXT]
     close(logits(theta, toks), forward_cached(theta, toks), f"two implementations agree on {name}")
+# Chapters 7, 8 and 10 run their checks through the same position-by-position
+# implementation (checks.ch11), by way of checks.ch07 and checks.ch10.
+from checks.ch07 import forward as forward_ch07
+from checks.ch10 import small_gpt_logits as logits_ch10
+toks = encode("isabella")
+close(forward_ch07(theta, toks)[0], logits(theta, toks), "chapter 7's checks use this model")
+close(logits_ch10(toks, theta), logits(theta, toks), "chapter 10's checks use this model")
 check(encode("emma") == [26, 4, 12, 12, 0, 26], "emma as tokens")
 check(BOUNDARY == 26 and VOCAB == 27, "boundary token is 26 of 27")
 check(sorted(set("abcdefghijklmnopqrstuvwxyz")) == [chr(97 + i) for i in range(26)],

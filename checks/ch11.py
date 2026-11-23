@@ -1,5 +1,10 @@
 """A NumPy version of the small transformer of chapter 11, for hidden checks.
 
+Chapters 7, 8 and 10 run the model through this module too (via
+checks.ch07 and checks.ch10), so the book has one implementation of it
+for its hidden checks; chapter 11 compares it with the whole-sequence
+code shown in the chapter.
+
 The model follows the equations of the chapter: one layer, d = 16,
 four heads of width 4, RMS normalisation with eps = 1e-5 and no gain,
 a 16 -> 64 -> 16 ReLU MLP, no biases, and no normalisation before the
@@ -55,9 +60,16 @@ def encode(name):
     return [BOUNDARY] + [ord(c) - ord("a") for c in name] + [BOUNDARY]
 
 
-def position_step(params, token, t, cache):
-    """Logits at position t (counted from 0), appending this position's key and value."""
-    r0 = rms(params["E"][token] + params["P"][t])
+def position_step(params, token, t, cache, use_positions=True):
+    """Every vector computed at position t (counted from 0), appending this position's key and value.
+
+    Returns a dict with the vectors of def-small-gpt: r0, u, q, k, v, o, r1,
+    the normalised MLP input h = rms(r1), the MLP pre-activations pre, the
+    MLP output mlp_out, r2 and the logits z. With use_positions=False the
+    position embedding is left out, as in chapter 10's check that attention
+    without positions ignores the order of the tokens.
+    """
+    r0 = rms(params["E"][token] + (params["P"][t] if use_positions else 0.0))
     u = rms(r0)
     q, k, v = params["WQ"] @ u, params["WK"] @ u, params["WV"] @ u
     cache.append((k, v))
@@ -69,20 +81,33 @@ def position_step(params, token, t, cache):
         alpha = softmax(keys[:, s] @ q[s] / np.sqrt(HEAD_DIM))
         out[s] = alpha @ values[:, s]
     r1 = r0 + params["WO"] @ out
-    r2 = r1 + params["W2"] @ np.maximum(params["W1"] @ rms(r1), 0.0)
-    return params["WU"] @ r2, r2
+    h = rms(r1)
+    pre = params["W1"] @ h
+    mlp_out = params["W2"] @ np.maximum(pre, 0.0)
+    r2 = r1 + mlp_out
+    return {"r0": r0, "u": u, "q": q, "k": k, "v": v, "o": out, "r1": r1, "h": h,
+            "pre": pre, "mlp_out": mlp_out, "r2": r2, "z": params["WU"] @ r2}
+
+
+def run(params, tokens, use_positions=True):
+    """Run the model over a token sequence one position at a time with a cache.
+
+    Returns a dict mapping each name of position_step's record to a T x n
+    array whose row t is that vector at position t.
+    """
+    cache = []
+    records = [position_step(params, x, t, cache, use_positions) for t, x in enumerate(tokens)]
+    return {name: np.array([r[name] for r in records]) for name in records[0]}
 
 
 def forward_cached(params, tokens):
     """Logits for every position, computed one position at a time with a cache."""
-    cache = []
-    return np.array([position_step(params, x, t, cache)[0] for t, x in enumerate(tokens)])
+    return run(params, tokens)["z"]
 
 
 def residual_streams(params, tokens):
     """Final residual-stream vectors r^(2)_t for every position."""
-    cache = []
-    return np.array([position_step(params, x, t, cache)[1] for t, x in enumerate(tokens)])
+    return run(params, tokens)["r2"]
 
 
 def document_loss(params, name):

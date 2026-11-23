@@ -7,6 +7,8 @@ row t is the vector at position t.
 
 import numpy as np
 
+from checks.ch11 import init_params, run
+
 
 def softmax(z):
     """Softmax of a 1-D array."""
@@ -65,27 +67,14 @@ def multi_head_cached(X, WQ, WK, WV, WO, h):
     return np.array(out)
 
 
-def rmsnorm(x, eps=1e-5):
-    return x / np.sqrt((x * x).mean() + eps)
+def small_gpt_logits(tokens, params, use_positions=True):
+    """Logits at every position of the book's model (checks.ch11), optionally without positions."""
+    return run(params, tokens, use_positions)["z"]
 
 
-def small_gpt_logits(tokens, params, use_positions=True, h=4):
-    """Logits at every position of a one-layer model with the shape of the book's model."""
-    E, P, WQ, WK, WV, WO, W1, W2, Wout = (params[k] for k in
-                                          ("E", "P", "WQ", "WK", "WV", "WO", "W1", "W2", "Wout"))
-    X = np.array([E[x] + (P[t] if use_positions else 0) for t, x in enumerate(tokens)])
-    X = np.array([rmsnorm(x) for x in X])
-    Xn = np.array([rmsnorm(x) for x in X])
-    X = X + multi_head(Xn, WQ, WK, WV, WO, h, causal=True)
-    Xn = np.array([rmsnorm(x) for x in X])
-    X = X + np.maximum(Xn @ W1.T, 0) @ W2.T
-    return X @ Wout.T
-
-
-def random_params(rng, V=27, d=16, T=16, std=0.08):
-    shapes = {"E": (V, d), "P": (T, d), "WQ": (d, d), "WK": (d, d), "WV": (d, d), "WO": (d, d),
-              "W1": (4 * d, d), "W2": (d, 4 * d), "Wout": (V, d)}
-    return {k: rng.normal(scale=std, size=s) for k, s in shapes.items()}
+def random_params(rng):
+    """Parameters of the book's model, each entry drawn from N(0, 0.08^2) (checks.ch11)."""
+    return init_params(rng)
 
 
 def saturation_stats(dh, scaled, rng, T=8, trials=20000):
