@@ -100,8 +100,9 @@ item $j$. Entry $(t, j)$ of the $m\times T$ matrix $QK^\top/\sqrt{d_h}$
 is the score of key $j$ for query $t$. After the softmax, row $t$ of the
 $m\times T$ matrix $A$ holds the weights that query $t$ gives to the
 $T$ keys, so each row sums to 1, and row $t$ of $AV$ is the output for
-query $t$. (In this chapter $V$ is the matrix of values; the
-vocabulary appears only in @sec-attention-position.)
+query $t$. (In this chapter $V$ is the matrix of values. The
+vocabulary, which @def-vocabulary also calls $V$, does not appear by
+name in this chapter.)
 
 The weights are positive and sum to 1, so the output is a *convex
 combination* of the values, a weighted sum with non-negative weights
@@ -844,15 +845,14 @@ check(not np.allclose(Yb_, Ya_[::-1]), "the orders are told apart")
 ::: {#def-position-embedding}
 ## Position embeddings
 
-Let $V$ be a vocabulary with an embedding matrix $E$ of width $d$, as
+Let $E$ be a token embedding matrix of width $d$, as
 in @def-embedding, so that token $a$ has embedding $\mathbf{u}_a$, row
 $a$ of $E$ written as a column. Let $T_{\max}$, the *context length*,
 be the largest number of positions the model accepts. A *position
 embedding matrix* is a $T_{\max}\times d$ matrix $E_{\mathrm{pos}}$
-with rows
-$\mathbf{p}_1^\top, \dots, \mathbf{p}_{T_{\max}}^\top$. The input
-vector at position $t$ of a sequence of tokens $x_1, x_2, \dots$ is the
-sum of the token embedding and the position embedding,
+with rows $\mathbf{p}_1^\top, \dots, \mathbf{p}_{T_{\max}}^\top$. The
+input vector at position $t$ of a sequence of tokens $x_1, x_2, \dots$
+is the sum of the token embedding and the position embedding,
 $$
 \mathbf{x}_t = \mathbf{u}_{x_t} + \mathbf{p}_t .
 $$

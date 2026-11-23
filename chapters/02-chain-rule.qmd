@@ -687,13 +687,13 @@ choices of a variable in that layer.
 ## Paths through layers
 
 Let $D \ge 1$, let $U_0, \dots, U_{D-1}$ be open sets with
-$U_\ell \subseteq \mathbb{R}^{n_\ell}$, and let
-$f_\ell\colon U_{\ell-1} \to \mathbb{R}^{n_\ell}$ for
-$\ell = 1, \dots, D$, with $f_\ell(U_{\ell-1}) \subseteq U_\ell$ for
-$\ell < D$. Given $\mathbf{x}^{(0)} \in U_0$, put
-$\mathbf{x}^{(\ell)} = f_\ell(\mathbf{x}^{(\ell-1)})$ for
-$\ell = 1, \dots, D$, and suppose that each $f_\ell$ is differentiable
-at $\mathbf{x}^{(\ell-1)}$. Then the composition
+$U_l \subseteq \mathbb{R}^{n_l}$, and let
+$f_l\colon U_{l-1} \to \mathbb{R}^{n_l}$ for
+$l = 1, \dots, D$, with $f_l(U_{l-1}) \subseteq U_l$ for
+$l < D$. Given $\mathbf{x}^{(0)} \in U_0$, put
+$\mathbf{x}^{(l)} = f_l(\mathbf{x}^{(l-1)})$ for
+$l = 1, \dots, D$, and suppose that each $f_l$ is differentiable
+at $\mathbf{x}^{(l-1)}$. Then the composition
 $f_D\circ\cdots\circ f_1$ is differentiable at $\mathbf{x}^{(0)}$ with
 Jacobian $J = J_{f_D}(\mathbf{x}^{(D-1)})\cdots J_{f_1}(\mathbf{x}^{(0)})$,
 and
@@ -704,8 +704,8 @@ J_{ij} = \sum_{k_1=1}^{n_1}\cdots\sum_{k_{D-1}=1}^{n_{D-1}}
 \frac{\partial x^{(2)}_{k_2}}{\partial x^{(1)}_{k_1}}
 \frac{\partial x^{(1)}_{k_1}}{\partial x^{(0)}_{j}} ,
 $$
-where $\partial x^{(\ell)}_a/\partial x^{(\ell-1)}_b$ stands for entry
-$(a, b)$ of $J_{f_\ell}(\mathbf{x}^{(\ell-1)})$.
+where $\partial x^{(l)}_a/\partial x^{(l-1)}_b$ stands for entry
+$(a, b)$ of $J_{f_l}(\mathbf{x}^{(l-1)})$.
 :::
 
 ::: {.proof}
@@ -713,13 +713,13 @@ The first statement follows from @thm-chain-rule by induction on $D$.
 The formula for $J_{ij}$ is @eq-paths for the system whose variables
 are the components of $\mathbf{x}^{(0)}, \dots, \mathbf{x}^{(D)}$, in
 that order, with the parents of each component of
-$\mathbf{x}^{(\ell)}$ being all the components of
-$\mathbf{x}^{(\ell-1)}$. The inputs range over $U_0$, and every step is
-defined there because $f_\ell(U_{\ell-1}) \subseteq U_\ell$. Each
-component of $f_\ell$ is differentiable by @lem-components, and its
+$\mathbf{x}^{(l)}$ being all the components of
+$\mathbf{x}^{(l-1)}$. The inputs range over $U_0$, and every step is
+defined there because $f_l(U_{l-1}) \subseteq U_l$. Each
+component of $f_l$ is differentiable by @lem-components, and its
 local partial derivatives are the entries of
-$J_{f_\ell}(\mathbf{x}^{(\ell-1)})$. A path from $x^{(0)}_j$ to
-$x^{(D)}_i$ visits one component $x^{(\ell)}_{k_\ell}$ of each layer in
+$J_{f_l}(\mathbf{x}^{(l-1)})$. A path from $x^{(0)}_j$ to
+$x^{(D)}_i$ visits one component $x^{(l)}_{k_l}$ of each layer in
 turn, so the paths correspond to the choices of
 $k_1, \dots, k_{D-1}$.
 :::
@@ -1621,12 +1621,16 @@ have zero Hessian at the origin, which is a minimum of the first and a
 saddle point of the second. @exr-ch2-inconclusive gives a pair of examples with a non-zero
 Hessian.
 
-In two variables the eigenvalues need not be computed. The
-characteristic polynomial of
-$H = \begin{pmatrix} A & B\\ B & C\end{pmatrix}$ is
-$\lambda^2 - (A + C)\lambda + (AC - B^2)$, so
-$\lambda_1\lambda_2 = \det H = AC - B^2$ and
-$\lambda_1 + \lambda_2 = A + C$.
+In two variables the eigenvalues need not be computed. Write
+$f_{xx}$, $f_{xy}$ and $f_{yy}$ for the second partial derivatives
+$\partial^2 f/\partial x^2$, $\partial^2 f/\partial x\,\partial y$ and
+$\partial^2 f/\partial y^2$ at $\mathbf{a}$. For a twice continuously
+differentiable $f$ the Hessian is symmetric (@thm-mixed-partials), so
+$H = \begin{pmatrix} f_{xx} & f_{xy}\\ f_{xy} & f_{yy}\end{pmatrix}$.
+The characteristic polynomial of $H$ is
+$\lambda^2 - (f_{xx} + f_{yy})\lambda + (f_{xx}f_{yy} - f_{xy}^2)$, so
+$\lambda_1\lambda_2 = \det H = f_{xx}f_{yy} - f_{xy}^2$ and
+$\lambda_1 + \lambda_2 = f_{xx} + f_{yy}$.
 
 ::: {#cor-test-2d}
 ## The test in two variables
@@ -1634,23 +1638,25 @@ $\lambda_1 + \lambda_2 = A + C$.
 Let $U \subseteq \mathbb{R}^2$ be open, $f\colon U \to \mathbb{R}$
 twice continuously differentiable on $U$, and $\mathbf{a}$ a critical
 point of $f$, and write
-$\nabla^2 f(\mathbf{a}) = \begin{pmatrix} A & B\\ B & C\end{pmatrix}$.
+$\nabla^2 f(\mathbf{a}) = \begin{pmatrix} f_{xx} & f_{xy}\\ f_{xy} & f_{yy}\end{pmatrix}$.
 
-(a) If $AC - B^2 > 0$ and $A > 0$, $\mathbf{a}$ is a strict local
-minimum.
+(a) If $f_{xx}f_{yy} - f_{xy}^2 > 0$ and $f_{xx} > 0$, $\mathbf{a}$ is
+a strict local minimum.
 
-(b) If $AC - B^2 > 0$ and $A < 0$, $\mathbf{a}$ is a strict local
-maximum.
+(b) If $f_{xx}f_{yy} - f_{xy}^2 > 0$ and $f_{xx} < 0$, $\mathbf{a}$ is
+a strict local maximum.
 
-(c) If $AC - B^2 < 0$, $\mathbf{a}$ is a saddle point.
+(c) If $f_{xx}f_{yy} - f_{xy}^2 < 0$, $\mathbf{a}$ is a saddle point.
 :::
 
 ::: {.proof}
-If $AC - B^2 < 0$ the product of the eigenvalues is negative, so one is
-positive and the other negative, and part (c) of @thm-second-derivative-test applies. If $AC - B^2 > 0$ the eigenvalues
-have the same sign, and so does their sum $A + C$. Also
-$AC > B^2 \ge 0$, so $A$ and $C$ have the same sign, which is therefore
-the sign of $A + C$ and of both eigenvalues.
+If $f_{xx}f_{yy} - f_{xy}^2 < 0$ the product of the eigenvalues is
+negative, so one is positive and the other negative, and part (c)
+of @thm-second-derivative-test applies. If $f_{xx}f_{yy} - f_{xy}^2 > 0$
+the eigenvalues have the same sign, and so does their sum
+$f_{xx} + f_{yy}$. Also $f_{xx}f_{yy} > f_{xy}^2 \ge 0$, so $f_{xx}$
+and $f_{yy}$ have the same sign, which is therefore the sign of
+$f_{xx} + f_{yy}$ and of both eigenvalues.
 :::
 
 ```{python}
@@ -1687,8 +1693,8 @@ $f(t, -t) = 3t^2$ is positive and $f(t, t) = 2t^3 - 3t^2$ is negative.
 At $(1, 1)$ the Hessian $\begin{pmatrix} 6 & -3\\ -3 & 6\end{pmatrix}$
 has eigenvalues $9$ and $3$, both positive, so $(1, 1)$ is a strict
 local minimum, with $f(1, 1) = -1$. The two-variable test agrees:
-$AC - B^2 = -9$ at the origin, and $27$ at $(1, 1)$, where
-$A = 6 > 0$. The local minimum is not a global one, since
+$f_{xx}f_{yy} - f_{xy}^2 = -9$ at the origin, and $27$ at $(1, 1)$,
+where $f_{xx} = 6 > 0$. The local minimum is not a global one, since
 $f(x, 0) = x^3$ takes every real value.
 :::
 

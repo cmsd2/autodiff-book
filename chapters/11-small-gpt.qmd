@@ -663,50 +663,59 @@ close(JR, np.eye(5) + np.diag(1 - np.tanh(Wr @ ar)**2) @ Wr, "J_R = I + J_F", to
 The previous chapters supply every part of the model; this section
 says exactly how they fit together, as one function from a sequence of
 symbols to predictions. As in @sec-language-models, the symbols are
-*tokens*, the elements of a finite *vocabulary* $V$. Here $|V| = 27$:
-the letters a to z, numbered $0$ to $25$ in alphabetical order, and a
-*boundary token*, numbered 26 and written $\mathtt{B}$, which marks
-the start and the end of a name. The name "emma" becomes the sequence
-$\mathtt{B}, \mathrm{e}, \mathrm{m}, \mathrm{m}, \mathrm{a}, \mathtt{B}$,
-that is, $26, 4, 12, 12, 0, 26$. At each position the model produces
-a vector of 27 *logits*, one real number per token, and the softmax
-of that vector, $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$ (@def-softmax), is the model's probability distribution for the next
+tokens, the elements of a finite vocabulary $V$ (@def-vocabulary).
+Here $|V| = 27$: the letters a to z, numbered $0$ to $25$ in
+alphabetical order, and the boundary token $\diamond$, numbered 26,
+which marks the start and the end of a name. The name `emma` becomes
+the sequence
+$\diamond, \mathtt{e}, \mathtt{m}, \mathtt{m}, \mathtt{a}, \diamond$,
+that is, $26, 4, 12, 12, 0, 26$. At each position the model produces a
+vector of 27 logits, one real number per token, and the softmax of
+that vector, $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$
+(see @def-softmax), is the model's probability distribution for the next
 token. A larger logit means a more probable token, and only
 differences between logits matter (@thm-softmax-shift).
 
 The other parts come from chapters 7 to 10.
 
-- A *token embedding* (@def-embedding) represents each token by a
-  learned vector, here in $\mathbb{R}^{16}$; the *width* $d = 16$ is the
+- A token embedding (@def-embedding) represents each token by a
+  learned vector, here in $\mathbb{R}^{16}$; the width $d = 16$ is the
   length of the vector that represents each position throughout the
   model.
 - Attention (@def-attention) computes, at each position $t$, three
-  vectors from the vector there: a *query* $\mathbf{q}_t$, a *key*
-  $\mathbf{k}_t$ and a *value* $\mathbf{v}_t$. Position $t$ gives
-  position $\tau$ a weight that grows with the score
-  $\mathbf{q}_t\cdot\mathbf{k}_\tau$ (the weights are a softmax of the
+  vectors from the vector there: a query $\mathbf{q}_t$, a key
+  $\mathbf{k}_t$ and a value $\mathbf{v}_t$. Position $t$ gives
+  position $j$ a weight that grows with the score
+  $\mathbf{q}_t\cdot\mathbf{k}_j$ (the weights are a softmax of the
   scores), and its output is the weighted average of the values. The
   causal mask (@def-causal-mask) gives weight zero to positions
-  $\tau > t$, so no position sees later ones.
+  $j > t$, so no position sees later ones.
 - Multi-head attention (@def-multi-head) splits the query, key and
   value vectors into $h$ consecutive pieces of length $d_h = d/h$, the
-  *heads*, runs attention separately on each piece, and places the
+  heads, runs attention separately on each piece, and places the
   $h$ outputs one after another. Here $h = 4$ and $d_h = 4$.
 - An MLP (@def-mlp) applies a matrix, then
   $\operatorname{relu}(x) = \max(x, 0)$ (@def-relu) to each component,
-  then a second matrix. Here the intermediate *hidden* vector has
+  then a second matrix. Here the intermediate hidden vector has
   $64 = 4d$ components.
 
-The model reads at most 16 tokens, its *context length*, and has a
-single *layer*: one attention block followed by one MLP block. Its
-parameters are nine matrices, with no bias vectors and no
-normalisation gains:
+The model reads at most 16 tokens, its context
+length (@def-position-embedding), and has a single *layer* in the sense used
+for transformers: one attention block followed by one MLP block. (A
+layer of an MLP in @def-nn-layer is a smaller unit, one affine map and
+one activation function.) Its parameters are nine matrices, with no
+bias vectors and no normalisation gains:
 
 - $E$ ($27\times16$), the token embedding (@def-embedding): row $x$
   is the vector that represents token $x$, and $E_x$ denotes that row
-  written as a column.
-- $P$ ($16\times16$), the position embedding: row $t$, written $P_t$,
-  is the vector added at position $t$.
+  written as a column, the embedding $\mathbf{u}_x$ of that
+  definition. The rows of $E$, like those of $W_U$, are numbered 0 to
+  26 to match the tokens.
+- $P$ ($16\times16$), the position embedding matrix, written
+  $E_{\mathrm{pos}}$ in @def-position-embedding: row $t$, written
+  $P_t$, is the vector added at position $t$ (written $\mathbf{p}_t$
+  in that definition; here $\mathbf{p}_t$ is the model's probability
+  vector at position $t$).
 - $W_Q$, $W_K$, $W_V$ (each $16\times16$): row $i$ of $W_Q$ gives
   component $i$ of a query as a linear combination of the 16
   components of the vector at that position, and likewise for keys
@@ -722,7 +731,7 @@ normalisation gains:
   final vector at a position, gives the logit of token $i$.
 
 A vector $\mathbf{q}\in\mathbb{R}^{16}$ splits into four heads,
-$\mathbf{q}^{(j)} = (q_{4j-3}, \dots, q_{4j})$ for $j = 1, \dots, 4$.
+$\mathbf{q}^{(i)} = (q_{4i-3}, \dots, q_{4i})$ for $i = 1, \dots, 4$.
 
 ::: {#def-small-gpt}
 ## The model
@@ -740,11 +749,11 @@ $$
 \mathbf{k}_t = W_K\mathbf{u}_t, \quad
 \mathbf{v}_t = W_V\mathbf{u}_t
 &&\text{queries, keys, values}\\
-\boldsymbol{\alpha}^{(j)}_t &= \operatorname{softmax}\Bigl(
-\frac{\mathbf{q}^{(j)}_t\cdot\mathbf{k}^{(j)}_1}{2}, \dots,
-\frac{\mathbf{q}^{(j)}_t\cdot\mathbf{k}^{(j)}_t}{2}\Bigr)
-&&\text{head } j = 1, \dots, 4\\
-\mathbf{o}^{(j)}_t &= \sum_{\tau=1}^t \alpha^{(j)}_{t\tau}\,\mathbf{v}^{(j)}_\tau,
+\boldsymbol{\alpha}^{(i)}_t &= \operatorname{softmax}\Bigl(
+\frac{\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_1}{2}, \dots,
+\frac{\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_t}{2}\Bigr)
+&&\text{head } i = 1, \dots, 4\\
+\mathbf{o}^{(i)}_t &= \sum_{j=1}^t \alpha^{(i)}_{tj}\,\mathbf{v}^{(i)}_j,
 \qquad
 \mathbf{o}_t = \bigl(\mathbf{o}^{(1)}_t, \dots, \mathbf{o}^{(4)}_t\bigr)
 &&\text{attention output}\\
@@ -758,8 +767,8 @@ $$
 \end{aligned}
 $$
 with $\operatorname{rms}$ as in @def-rmsnorm ($n = 16$,
-$\varepsilon = 10^{-5}$), $\alpha^{(j)}_{t\tau}$ component $\tau$ of
-$\boldsymbol\alpha^{(j)}_t$, and $\mathbf{o}_t\in\mathbb{R}^{16}$ the
+$\varepsilon = 10^{-5}$), $\alpha^{(i)}_{tj}$ component $j$ of
+$\boldsymbol\alpha^{(i)}_t$, and $\mathbf{o}_t\in\mathbb{R}^{16}$ the
 four head outputs placed one after another. The model's distribution
 for the next token is $\mathbf{p}_t = \operatorname{softmax}(\mathbf{z}_t)$.
 :::
@@ -776,9 +785,9 @@ The divisor 2 in the attention scores is $\sqrt{d_h}$. When the
 components of a query and a key are independent with mean 0 and
 variance 1, their dot product of $d_h$ terms has variance $d_h$, and
 dividing by $\sqrt{d_h}$ brings the variance of the score back to 1 (@thm-attention-scale). The attention line is causal multi-head
-attention (@def-multi-head, @def-causal-mask): head $j$ uses rows
-$4j - 3$ to $4j$ of $W_Q$, $W_K$ and $W_V$ as its own query, key and
-value matrices, the weights $\alpha^{(j)}_{t\tau}$ for $\tau > t$ are
+attention (@def-multi-head, @def-causal-mask): head $i$ uses rows
+$4i - 3$ to $4i$ of $W_Q$, $W_K$ and $W_V$ as its own query, key and
+value matrices, the weights $\alpha^{(i)}_{tj}$ for $j > t$ are
 zero, and $W_O$ mixes the concatenated head outputs. The source
 counts positions from 0; here they run from 1, so $P_t$ is row $t$ of
 $P$ in this book's numbering.
@@ -820,8 +829,10 @@ $\mathbf{r}^{(0)}_t$, while the identity path keeps it.
 The equations translate directly into array code. The function below
 computes every position at once, as matrices whose row $t$ holds the
 vectors for position $t$, and it implements the causal mask by
-setting the scores for $\tau > t$ to $-\infty$ before the softmax, so
-that their weights are $e^{-\infty} = 0$.
+setting the scores for $j > t$ to $-\infty$ before the softmax, so
+that their weights are $e^{-\infty} = 0$. As in @eq-attention-matrix, `Q`, `K`
+and `V` hold the queries, keys and values, so in the code `V` is the
+matrix of values, not the vocabulary.
 
 ```{python}
 #| echo: true
@@ -837,11 +848,11 @@ def logits(theta, tokens):
     R0 = rms_rows(theta["E"][tokens] + theta["P"][:T])
     U = rms_rows(R0)
     Q, K, V = U @ theta["WQ"].T, U @ theta["WK"].T, U @ theta["WV"].T
-    later = np.triu(np.ones((T, T), dtype=bool), k=1)   # entries with tau > t
+    later = np.triu(np.ones((T, T), dtype=bool), k=1)   # entries with j > t
     O = np.zeros((T, 16))
     for j in range(4):
         c = slice(4 * j, 4 * j + 4)                     # the columns of head j
-        S = Q[:, c] @ K[:, c].T / 2.0                    # scores q_t . k_tau / sqrt(4)
+        S = Q[:, c] @ K[:, c].T / 2.0                    # scores q_t . k_j / sqrt(4)
         S[later] = -np.inf
         A = np.exp(S - S.max(axis=1, keepdims=True))
         A = A / A.sum(axis=1, keepdims=True)             # row t is alpha_t
@@ -938,17 +949,18 @@ check(sorted(src) == sorted(SHAPES.values()), "shapes match the source")
 
 Training adjusts the parameters so that the model's predictions match
 real names, and it needs a single number that measures the mismatch.
-For "emma" the model makes five predictions, one per position:
-$\mathtt{B}$ followed by e, then e by m, m by m, m by a, and a by
-$\mathtt{B}$. If it gave each correct token probability $1/2$, the
+For `emma` the model makes five predictions, one per position:
+$\diamond$ followed by $\mathtt{e}$, then $\mathtt{e}$ by $\mathtt{m}$,
+$\mathtt{m}$ by $\mathtt{m}$, $\mathtt{m}$ by $\mathtt{a}$, and
+$\mathtt{a}$ by $\diamond$. If it gave each correct token probability $1/2$, the
 average of $-\ln$ of these probabilities would be
 $\ln 2 \approx 0.693$; if it gave each probability $1/27$, as a model
 that knows nothing might, the average would be $\ln 27 \approx 3.296$.
-That average is the loss.
+That average is the loss of @def-perplexity.
 
 In general, a name $c_1c_2\cdots c_m$ becomes the token sequence
-$x_1 = \mathtt{B}$, $x_{i+1} = c_i$ for $i = 1, \dots, m$, and
-$x_{m+2} = \mathtt{B}$. The model predicts each token from those
+$x_1 = \diamond$, $x_{i+1} = c_i$ for $i = 1, \dots, m$, and
+$x_{m+2} = \diamond$, numbered as in @def-language-model. The model predicts each token from those
 before it. With $T = \min(16, m + 1)$ predictions, the loss on the
 name is the average cross-entropy (@def-cross-entropy)
 $$
@@ -1213,9 +1225,9 @@ close(3.3660, 3.37, "post's first-step loss 3.3660 rounds to 3.37", tol=1e-3)
 ## Sampling and temperature {#sec-gpt-temperature}
 
 After training, the model generates a name by sampling. It starts
-with $x_1 = \mathtt{B}$ at position 1, computes $\mathbf{z}_1$, draws
+with $x_1 = \diamond$ at position 1, computes $\mathbf{z}_1$, draws
 $x_2$ at random from a distribution built from $\mathbf{z}_1$, feeds
-$x_2$ back in at position 2, and continues until it draws $\mathtt{B}$
+$x_2$ back in at position 2, and continues until it draws $\diamond$
 or has drawn 16 tokens. The letters drawn before the boundary token
 form the name, so a sample has at most 16 letters. The distribution
 is not $\operatorname{softmax}(\mathbf{z}_t)$ itself but
@@ -1384,8 +1396,8 @@ $\hat{\mathbf{o}}_t = \mathbf{o}_t$. Step 3 then gives
 $\hat{\mathbf{z}}_t = \mathbf{z}_t$.
 :::
 
-With several layers the keys and values of layer $\ell$ come from the
-residual stream after layer $\ell - 1$, which depends on
+With several layers the keys and values of layer $l$ come from the
+residual stream after layer $l - 1$, which depends on
 earlier positions, so they are no longer functions of $x_t$ and $t$
 alone. The same argument then runs by induction on $t$, and within
 each $t$ by induction on the layer: once the cached and whole-sequence
@@ -1539,8 +1551,8 @@ example with $\|J_F(\mathbf{a})\|_F = 1$ where it is not.
 
 ::: {#exr-ch11-kv-cost}
 Count only the multiplications in attention scores
-($\mathbf{q}^{(j)}_t\cdot\mathbf{k}^{(j)}_\tau$, $d_h$ each) and in
-weighted sums of values ($d_h$ per head for each $\tau$). Show that
+($\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_j$, $d_h$ each) and in
+weighted sums of values ($d_h$ per head for each $j$). Show that
 generating $n$ positions with the cache costs $d\,n(n+1)$ such
 multiplications, while recomputing all positions from scratch at
 every step costs $d\,n(n+1)(n+2)/3$. Evaluate both for $d = n = 16$.

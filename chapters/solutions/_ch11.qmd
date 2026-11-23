@@ -233,7 +233,7 @@ of $d_h$ multiplications and a weighted sum of $t$ value vectors of
 $d_h$ components, so $2td_h$ multiplications, and the $h$ heads give
 $2td_hh = 2td$. With the cache the model processes each position once, for a
 total of $\sum_{t=1}^n 2td = d\,n(n+1)$. Without it, step $t$ recomputes
-positions $1, \dots, t$, at a cost of $\sum_{\tau=1}^t 2\tau d = d\,t(t+1)$,
+positions $1, \dots, t$, at a cost of $\sum_{j=1}^t 2jd = d\,t(t+1)$,
 and the total is
 $$
 d\sum_{t=1}^n t(t+1) = \frac{d\,n(n+1)(n+2)}{3},

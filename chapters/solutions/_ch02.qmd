@@ -220,10 +220,10 @@ The Hessian is
 $$
 \nabla^2 f(x, y) = \begin{pmatrix} 12x^2 & -4\\ -4 & 12y^2\end{pmatrix}.
 $$
-At the origin $AC - B^2 = -16 < 0$, so by @cor-test-2d the origin is a
+At the origin $f_{xx}f_{yy} - f_{xy}^2 = -16 < 0$, so by @cor-test-2d the origin is a
 saddle point. At $(1, 1)$ and at $(-1, -1)$ the Hessian is
 $\begin{pmatrix} 12 & -4\\ -4 & 12\end{pmatrix}$, with
-$AC - B^2 = 128 > 0$ and $A = 12 > 0$ (its eigenvalues are $8$ and
+$f_{xx}f_{yy} - f_{xy}^2 = 128 > 0$ and $f_{xx} = 12 > 0$ (its eigenvalues are $8$ and
 $16$), so both are strict local minima, where $f = -2$.
 
 ```{python}

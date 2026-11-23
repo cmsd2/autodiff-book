@@ -25,8 +25,8 @@ def c9_softmax(z):
 **@exr-ch9-tokens.** (a) With $\mathtt{a} = 0$, $\mathtt{d} = 3$ and
 $\diamond = 26$, `ada` is $(26, 0, 3, 0, 26)$.
 
-(b) A name with $\ell$ letters is wrapped into $\ell + 2$ tokens, and
-every token except the first is predicted, so it gives $\ell + 1$
+(b) A name with $n$ letters is wrapped into $n + 2$ tokens, and
+every token except the first is predicted, so it gives $n + 1$
 predictions. Adding over the $m$ names gives $M + m$. The five names
 have $M = 4 + 3 + 4 + 3 + 3 = 17$ letters and $m = 5$, so $22$
 predictions.

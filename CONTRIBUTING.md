@@ -81,12 +81,18 @@ chapter 1 ("Changing several inputs at once") is the model.
 | standard basis | $\mathbf{e}_1,\dots,\mathbf{e}_n$ |
 | norm, dot product | $\|\mathbf{x}\|$ (Euclidean), $\mathbf{x}\cdot\mathbf{y}$ |
 | derivative, Jacobian, gradient | $Df(\mathbf{a})$, $J_f(\mathbf{a})$, $\nabla f(\mathbf{a})$ |
-| Hessian | $\nabla^2 f(\mathbf{a})$ |
-| parameters, loss | $\boldsymbol{\theta}\in\mathbb{R}^p$, $L(\boldsymbol{\theta})$ |
+| Hessian; its entries in two variables | $\nabla^2 f(\mathbf{a})$; $f_{xx}$, $f_{xy}$, $f_{yy}$ (never capitals, which are matrices) |
+| eigenvalues of a symmetric matrix | $\lambda_1 \ge \dots \ge \lambda_n$, orthonormal eigenvectors $\mathbf{u}_1,\dots,\mathbf{u}_n$ |
+| parameters, loss | $\boldsymbol{\theta}\in\mathbb{R}^p$, $L(\boldsymbol{\theta})$; in chapters 5 and 6 the function minimised is $f$, because $L$ is the smoothness constant there |
+| loss of one example or one prediction | $\ell$ (a function of the output, or $\ell_t$ at position $t$) |
+| layers of a network | $l = 1,\dots,D$, widths $n_l$ (not $\ell$, which is a loss) |
 | learning rate, step | $\eta$, $k = 0, 1, 2, \dots$ |
-| probability, expectation, variance | $P$, $\mathbb{E}$, $\operatorname{Var}$ |
-| vocabulary, its size | $V$, $|V|$ |
-| sequence positions | $t = 1,\dots,T$; tokens $x_t$ |
+| probability, expectation, variance | $P$, $\mathbb{E}$, $\operatorname{Var}$, written $\mathbb{E}[X]$ and $\operatorname{Var}[X]$ with square brackets |
+| normal distribution | $N(\mu, s^2)$ with density $\varphi$ (`def-nn-density`); a weight's standard deviation in chapter 11 is $\sigma_w$ |
+| likelihood, log-likelihood | $\mathcal{L}(\boldsymbol{\theta})$, $\ln\mathcal{L}(\boldsymbol{\theta})$ |
+| vocabulary, its size, boundary token | $V$, $|V|$, $\diamond$; letters in typewriter type, $\mathtt{a}$ |
+| sequence positions | $t = 1,\dots,T$; tokens $x_t$, with $x_1 = \diamond$; the prediction at position $t$ is of $x_{t+1}$ |
+| attention | key positions $j$ (so weights $a_{tj}$, written $\alpha_{tj}$ in chapter 11), heads $i = 1,\dots,h$; in chapter 10 $V$ is also the matrix of values, which the chapter states |
 | embedding width, heads, head width | $d$, $h$, $d_h = d/h$ |
 | softmax | $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$ |
 | adjoint in reverse mode | $\bar v = \partial L/\partial v$ |

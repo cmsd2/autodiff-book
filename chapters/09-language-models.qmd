@@ -243,17 +243,24 @@ every model in this book is built.
 
 Let $V$ be a vocabulary containing a boundary token $\diamond$. A
 *language model* over $V$ gives, for each finite sequence
-$(x_0, x_1, \dots, x_{t-1})$ of tokens with $x_0 = \diamond$, a
-probability distribution $p(\,\cdot \mid x_0, \dots, x_{t-1})$ on $V$.
-The sequence $(x_0, \dots, x_{t-1})$ is the *context*. A *document*
+$(x_1, \dots, x_t)$ of tokens with $x_1 = \diamond$, a
+probability distribution $p(\,\cdot \mid x_1, \dots, x_t)$ on $V$
+for the next token.
+The sequence $(x_1, \dots, x_t)$ is the *context*. A *document*
 (a name, in our examples) is a finite sequence
 $w = (w_1, \dots, w_n)$ of tokens other than $\diamond$. It is wrapped as
-$x = (\diamond, w_1, \dots, w_n, \diamond)$ and receives the
-probability
+$x = (x_1, \dots, x_{n+2}) = (\diamond, w_1, \dots, w_n, \diamond)$
+and receives the probability
 $$
-P(w) = \prod_{t=1}^{n+1} p(x_t \mid x_0, \dots, x_{t-1}) .
+P(w) = \prod_{t=1}^{n+1} p(x_{t+1} \mid x_1, \dots, x_t) .
 $$ {#eq-lm-document-probability}
 :::
+
+Position $t$ of the wrapped sequence holds the token $x_t$, and the
+prediction made at position $t$ is the distribution of $x_{t+1}$, so
+positions and predictions are both numbered $t = 1, \dots, n + 1$.
+Positions are numbered the same way in @sec-attention
+and @sec-small-gpt.
 
 The product has one factor for each of the $n + 1$ predictions: the
 probability that the model gives to the token that actually comes
@@ -292,7 +299,7 @@ English text.
 
 A *bigram model* is a language model whose next-token distribution
 depends only on the last token of the context:
-$p(b \mid x_0, \dots, x_{t-1}) = p(b \mid x_{t-1})$. It is given by
+$p(b \mid x_1, \dots, x_t) = p(b \mid x_t)$. It is given by
 $|V|^2$ numbers $p(b \mid a)$, the *transition probabilities*, with
 $$
 p(b \mid a) \ge 0, \qquad \sum_{b\in V} p(b \mid a) = 1
@@ -321,21 +328,21 @@ pairs. The names are treated as independent, so the probability of the
 corpus is the product over all names. @sec-probability-loss calls the
 probability that a model gives to the observed data, viewed as a
 function of the model's parameters with the data held fixed, the
-*likelihood* (@def-likelihood). There the observations were
+likelihood (@def-likelihood). There the observations were
 independent draws from one distribution; here each factor is a
 transition probability, but the idea is the same. Gathering equal
 factors, the likelihood of the bigram model is
 $$
-\prod_{a, b\in V} p(b \mid a)^{n_{ab}} ,
+\mathcal{L}(p) = \prod_{a, b\in V} p(b \mid a)^{n_{ab}} ,
 $$
 in which each transition probability appears once for every time its
 pair occurs. Maximising the likelihood is the same as maximising its
-logarithm, the *log-likelihood*
+logarithm, the log-likelihood
 $$
-\ell(p) = \sum_{a, b\in V} n_{ab}\ln p(b\mid a) ,
+\ln\mathcal{L}(p) = \sum_{a, b\in V} n_{ab}\ln p(b\mid a) ,
 $$ {#eq-lm-log-likelihood}
 where $p$ stands for the whole table of transition probabilities,
-terms with $n_{ab} = 0$ count as $0$, and $\ell(p) = -\infty$ if
+terms with $n_{ab} = 0$ count as $0$, and $\ln\mathcal{L}(p) = -\infty$ if
 $p(b\mid a) = 0$ for a pair with $n_{ab} > 0$.
 
 Counting the pairs takes a few lines of code. Here the boundary token
@@ -420,18 +427,19 @@ row: the fraction of the pairs starting with $a$ that continue with
 $b$.
 
 ::: {.proof}
-The log-likelihood is a sum over rows, $\ell(p) = \sum_a \ell_a(p)$
-with $\ell_a(p) = \sum_b n_{ab}\ln p(b\mid a)$, and $\ell_a$ depends
-only on row $a$ of $p$. The constraints of @def-bigram also act on
-each row separately. So $p$ maximises $\ell$ exactly when each row
-maximises its own $\ell_a$. If $n_a = 0$ then $\ell_a = 0$ whatever
-the row is. If $n_a > 0$, take as observations the $n_a$ tokens that
-follow $a$ in the corpus, of which $n_{ab}$ equal $b$. Their
-likelihood under the distribution $p(\,\cdot\mid a)$ is
-$\prod_b p(b\mid a)^{n_{ab}} = e^{\ell_a(p)}$, with $e^{-\infty} = 0$.
-By @thm-prob-categorical-mle it is largest exactly when
-$p(b\mid a) = n_{ab}/n_a$ for every $b$, and since the exponential is
-increasing, so is $\ell_a$.
+The likelihood is a product over rows,
+$\mathcal{L}(p) = \prod_a\mathcal{L}_a(p)$ with
+$\mathcal{L}_a(p) = \prod_b p(b\mid a)^{n_{ab}}$, so
+$\ln\mathcal{L}(p) = \sum_a\ln\mathcal{L}_a(p)$, and $\mathcal{L}_a$
+depends only on row $a$ of $p$. The constraints of @def-bigram also
+act on each row separately. So $p$ maximises $\ln\mathcal{L}$ exactly
+when each row maximises its own $\ln\mathcal{L}_a$. If $n_a = 0$ then
+$\mathcal{L}_a = 1$ whatever the row is. If $n_a > 0$, take as
+observations the $n_a$ tokens that follow $a$ in the corpus, of which
+$n_{ab}$ equal $b$. Then $\mathcal{L}_a(p)$ is their likelihood under
+the distribution $p(\,\cdot\mid a)$, so by @thm-prob-categorical-mle
+it is largest exactly when $p(b\mid a) = n_{ab}/n_a$ for every $b$,
+and since $\ln$ is increasing, so is $\ln\mathcal{L}_a$.
 :::
 
 Fitting the model needs no optimisation, only counting. The rows sum
@@ -570,10 +578,10 @@ The loss is the average, over the predictions, of how surprised the
 model is by the correct token ($-\ln p_i$ is $0$ when $p_i = 1$ and
 grows as $p_i$ falls), and the perplexity is the reciprocal of the
 geometric mean of the $p_i$. The loss $L$ is the average negative
-log-likelihood of @sec-probability-loss, the loss that every model in
+log-likelihood of @eq-prob-nll, the loss that every model in
 the book uses, and training minimises it. For a bigram model on
-a corpus with pair counts $n_{ab}$, the loss is $-\ell(p)/N$, with
-$N = \sum_{a,b} n_{ab}$ and $\ell$ from @eq-lm-log-likelihood, so
+a corpus with pair counts $n_{ab}$, the loss is $-\ln\mathcal{L}(p)/N$, with
+$N = \sum_{a,b} n_{ab}$ and $\ln\mathcal{L}$ from @eq-lm-log-likelihood, so
 minimising the loss and maximising the likelihood are the same
 problem.
 
@@ -620,7 +628,7 @@ loss near 3.30, and every improvement shows as a loss below that.
 On the 22 predictions of the training corpus, the maximum-likelihood
 model of @exm-bigram-fit has log-likelihood
 $$
-\ell = 3\ln\tfrac35 + 2\ln\tfrac25 + 5\ln\tfrac58 + 3\ln\tfrac18 + 6\ln\tfrac12
+\ln\mathcal{L}(p) = 3\ln\tfrac35 + 2\ln\tfrac25 + 5\ln\tfrac58 + 3\ln\tfrac18 + 6\ln\tfrac12
 \approx -16.11 ,
 $$
 one term for each non-zero entry of @tbl-lm-bigram-counts, grouped by
