@@ -1,0 +1,187 @@
+## Chapter 7 {#sec-solutions-7}
+
+```{python}
+#| include: false
+from checks import num_grad
+
+s7_rng = np.random.default_rng(70)
+```
+
+**@exr-ch7-count.** (a) Layer $l$ has an $n_l\times n_{l-1}$ weight
+matrix and $n_l$ biases, so $n_l(n_{l-1} + 1)$ parameters. For widths
+$3, 4, 4, 2$ the total is $4\cdot4 + 4\cdot5 + 2\cdot5 = 46$.
+
+(b) The forward pass computes $W_1\mathbf{x}$ and $W_2\mathbf{a}_1$,
+with $64\cdot16 + 16\cdot64 = 2048$ multiplications. The backward pass
+computes the outer products $\boldsymbol{\delta}_2\mathbf{a}_1^\top$
+and $\boldsymbol{\delta}_1\mathbf{x}^\top$ ($1024$ each),
+$W_2^\top\boldsymbol{\delta}_2$ ($1024$), the product with
+$\sigma'(\mathbf{z}_1)$ ($64$), and the input gradient
+$W_1^\top\boldsymbol{\delta}_1$ ($1024$): $4160$ multiplications,
+about $2.03$ times the forward pass.
+
+```{python}
+#| include: false
+check(4*4 + 4*5 + 2*5 == 46, "46 parameters")
+check(sum(w * (v + 1) for v, w in zip([3, 4, 4], [4, 4, 2])) == 46, "general formula gives 46")
+check(64*16 + 16*64 == 2048, "forward 2048")
+s7_back = 16*64 + 64*16 + 16*64 + 64 + 64*16
+check(s7_back == 4160, "backward 4160")
+close(s7_back / 2048, 2.03, "ratio 2.03", tol=1e-3)
+```
+
+**@exr-ch7-layer.** At $\mathbf{x} = \mathbf{0}$ the pre-activation is
+$\mathbf{z} = \mathbf{b} = (0, 1)$, and $\tanh' = 1 - \tanh^2$. By
+@eq-nn-layer-jacobian,
+$$
+J_F(\mathbf{0}) = \begin{pmatrix} 1 & 0\\ 0 & 1 - \tanh^21 \end{pmatrix}
+\begin{pmatrix} 1 & 2\\ 0 & -1 \end{pmatrix}
+= \begin{pmatrix} 1 & 2\\ 0 & -(1 - \tanh^21) \end{pmatrix}
+\approx \begin{pmatrix} 1 & 2\\ 0 & -0.420 \end{pmatrix}.
+$$
+
+```{python}
+#| include: false
+s7_x = sp.Matrix(sp.symbols("x1:3", real=True))
+s7_F = (sp.Matrix([[1, 2], [0, -1]]) * s7_x + sp.Matrix([0, 1])).applyfunc(sp.tanh)
+s7_J = s7_F.jacobian(s7_x).subs({s7_x[0]: 0, s7_x[1]: 0})
+check(sp.simplify(s7_J - sp.Matrix([[1, 2], [0, -(1 - sp.tanh(1)**2)]])) == sp.zeros(2, 2), "J_F(0)")
+close(float(1 - sp.tanh(1)**2), 0.420, "sech^2 1", tol=1e-3)
+```
+
+**@exr-ch7-backprop.** Forward:
+$\mathbf{z}_1 = (1, -2)^\top + (1, 1)^\top = (2, -1)^\top$,
+$\mathbf{a}_1 = (2, 0)^\top$, $z_2 = 3\cdot2 + 0 = 6$, and
+$L = \tfrac12(6 - 2)^2 = 8$. Backward: $\delta_2 = z_2 - 2 = 4$,
+$$
+\boldsymbol{\delta}_1 = \bigl(W_2^\top\delta_2\bigr)\odot\operatorname{relu}'(\mathbf{z}_1)
+= (12, 4)^\top\odot(1, 0)^\top = (12, 0)^\top .
+$$
+By @eq-nn-backprop-params,
+$\partial L/\partial W_2 = \delta_2\mathbf{a}_1^\top = (8, 0)$,
+$\partial L/\partial b_2 = 4$,
+$\partial L/\partial W_1 = \boldsymbol{\delta}_1x = (12, 0)^\top$ and
+$\partial L/\partial\mathbf{b}_1 = (12, 0)^\top$. The second hidden
+unit is inactive, so its weight and bias get partial derivative $0$,
+and so does the output weight that reads it, because its input
+$(\mathbf{a}_1)_2$ is $0$.
+
+```{python}
+#| include: false
+def s7_loss(th):
+    W1_, b1_, W2_, b2_ = th[0:2], th[2:4], th[4:6], th[6]
+    a = np.maximum(W1_ * 1.0 + b1_, 0)
+    return 0.5 * (W2_ @ a + b2_ - 2) ** 2
+s7_th = np.array([1.0, -2.0, 1.0, 1.0, 3.0, 1.0, 0.0])
+close(s7_loss(s7_th), 8, "loss 8")
+close(num_grad(s7_loss, s7_th), [12, 0, 12, 0, 8, 0, 4], "seven partial derivatives", tol=1e-7)
+```
+
+**@exr-ch7-programs.** (a) For $f_1$ the engine multiplies along each
+path from $x$ to the output and adds:
+$1\cdot g\cdot 1 + (-1)\cdot g\cdot(-1) = 2g$. For $f_2$, the path
+through $\operatorname{relu}(\operatorname{relu}(x))$ meets two ReLUs
+whose inputs are both $0$, giving $g\cdot g$, and the path through
+$-\operatorname{relu}(-x)$ gives $(-1)\cdot g\cdot(-1) = g$. The total
+is $g^2 + g$.
+
+(b) For $x \ge 0$, $f_2(x) = \operatorname{relu}(x) - 0 = x$; for
+$x < 0$, $f_2(x) = \operatorname{relu}(0) - (-x) = x$. @exm-relu-ad-wrong
+showed $f_1(x) = x$. So both derivatives at $0$ are $1$. The engine is
+right for $f_1$ only if $2g = 1$, that is $g = \tfrac12$, and right
+for $f_2$ only if $g^2 + g = 1$, whose roots are
+$(-1\pm\sqrt5)/2$, neither of which is $\tfrac12$.
+
+```{python}
+#| include: false
+s7_g = sp.symbols("g", real=True)
+check(sp.solve(sp.Eq(2*s7_g, 1), s7_g) == [sp.Rational(1, 2)], "f1 needs g = 1/2")
+check(set(sp.solve(sp.Eq(s7_g**2 + s7_g, 1), s7_g)) == {(-1 + sp.sqrt(5))/2, (-1 - sp.sqrt(5))/2},
+      "f2 needs g^2 + g = 1")
+check(sp.Rational(1, 2)**2 + sp.Rational(1, 2) != 1, "1/2 fails for f2")
+for s7_v in np.linspace(-3, 3, 61):
+    close(max(max(s7_v, 0), 0) - max(-s7_v, 0), s7_v, "f2(x) = x")
+```
+
+**@exr-ch7-hat.** The function has breakpoints $0$, $1$, $2$ and
+slopes $0$, $1$, $-1$, $0$ on the four pieces of the real line, so the
+slope changes by $+1$, $-2$ and $+1$:
+$$
+h(x) = \operatorname{relu}(x) - 2\operatorname{relu}(x - 1) + \operatorname{relu}(x - 2).
+$$
+For $x \le 0$ all terms are $0$. For $x \ge 2$ the sum is
+$x - 2(x - 1) + (x - 2) = 0$. Between, the argument of
+@lem-relu-sum shows $h$ is affine on $[0, 1]$ and $[1, 2]$ with the
+right values at $0$, $1$, $2$.
+
+```{python}
+#| include: false
+s7_xs = np.linspace(-4, 6, 10001)
+s7_hat = np.maximum(s7_xs, 0) - 2*np.maximum(s7_xs - 1, 0) + np.maximum(s7_xs - 2, 0)
+close(s7_hat, np.maximum(1 - np.abs(s7_xs - 1), 0), "hat function")
+```
+
+**@exr-ch7-max.** (a) For each $x$, one of $\operatorname{relu}(x)$
+and $\operatorname{relu}(-x)$ is $|x|$ and the other is $0$. If
+$x \ge y$, $y + \operatorname{relu}(x - y) = y + x - y = x$; if
+$x < y$, it is $y + 0 = y$.
+
+(b) Write $y = \operatorname{relu}(y) - \operatorname{relu}(-y)$, as
+in @exm-relu-ad-wrong. Then
+$$
+\max(x, y) = \operatorname{relu}(x - y) + \operatorname{relu}(y) - \operatorname{relu}(-y),
+$$
+a network with hidden weight matrix
+$\begin{pmatrix} 1 & -1\\ 0 & 1\\ 0 & -1 \end{pmatrix}$, zero
+hidden biases, output weights $(1, 1, -1)$ and output bias $0$.
+
+```{python}
+#| include: false
+s7_P = s7_rng.normal(size=(2, 1000)) * 5
+s7_W = np.array([[1.0, -1.0], [0.0, 1.0], [0.0, -1.0]])
+close(np.array([1.0, 1.0, -1.0]) @ np.maximum(s7_W @ s7_P, 0), np.maximum(s7_P[0], s7_P[1]), "max network")
+close(np.maximum(s7_P[0], 0) + np.maximum(-s7_P[0], 0), np.abs(s7_P[0]), "|x|")
+```
+
+**@exr-ch7-units.** (a) The error is $1/(4N^2) \le 10^{-6}$ when
+$N^2 \ge 250000$, so the least $N$ is $500$.
+
+(b) On $[0, 1/N]$ the interpolant is the chord from $(0, 0)$ to
+$(1/N, 1/\sqrt N)$, so $\ell(x) = \sqrt N\,x$ there. At
+$x = 1/(4N)$, $\sqrt x = 1/(2\sqrt N)$ and $\ell(x) = 1/(4\sqrt N)$,
+so $f(x) - \ell(x) = 1/(4\sqrt N)$. For this to be at most $10^{-6}$
+we need $\sqrt N \ge 250000$, so $N \ge 6.25\times10^{10}$. The
+function $\sqrt x$ has an infinite slope at $0$, and the interpolant
+is worst there.
+
+```{python}
+#| include: false
+check(1/(4*500**2) <= 1e-6 < 1/(4*499**2), "least N = 500")
+s7_N = sp.symbols("N", positive=True)
+s7_xq = 1 / (4 * s7_N)
+sym_equal(sp.sqrt(s7_xq) - sp.sqrt(s7_N) * s7_xq, 1 / (4 * sp.sqrt(s7_N)), "sqrt error at 1/(4N)")
+close((1 / (4e-6))**2, 6.25e10, "N >= 6.25e10")
+for s7_n in (4, 100):
+    s7_grid = np.arange(s7_n + 1) / s7_n
+    close(np.sqrt(1/(4*s7_n)) - np.interp(1/(4*s7_n), s7_grid, np.sqrt(s7_grid)), 1/(4*np.sqrt(s7_n)),
+          "numerical sqrt interpolation error")
+```
+
+**@exr-ch7-he.** (a) By @eq-nn-relu-layer-norm with $m = n$,
+$\mathbb{E}\|\operatorname{relu}(W\mathbf{x})\|^2 = \tfrac{ns^2}{2}\|\mathbf{x}\|^2$,
+which equals $\|\mathbf{x}\|^2$ when $s = \sqrt{2/n}$: $s \approx 0.354$
+for $n = 16$ and $s \approx 0.177$ for $n = 64$.
+
+(b) The factor is $64\times0.08^2/2 = 0.2048$. Since
+$0.2048^8 \approx 3.1\times10^{-6}$ and
+$0.2048^9 \approx 6.3\times10^{-7}$, nine layers are needed.
+
+```{python}
+#| include: false
+close(np.sqrt(2/16), 0.354, "s for n = 16", tol=1e-3); close(np.sqrt(2/64), 0.177, "s for n = 64", tol=1e-3)
+close(64 * 0.08**2 / 2, 0.2048, "factor 0.2048")
+close(0.2048**8, 3.1e-6, "eight layers", tol=1e-7); close(0.2048**9, 6.3e-7, "nine layers", tol=1e-8)
+check(0.2048**8 >= 1e-6 > 0.2048**9, "nine is the least")
+s7_Wm = s7_rng.normal(0, np.sqrt(2/16), size=(20000, 16, 16)); s7_x0 = s7_rng.normal(size=16)
+close(np.mean(np.sum(np.maximum(s7_Wm @ s7_x0, 0)**2, axis=1)) / (s7_x0 @ s7_x0), 1, "He keeps the norm", tol=0.015)
+```

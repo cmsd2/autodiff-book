@@ -1,13 +1,937 @@
 # Probability and loss functions {#sec-probability-loss}
 
-::: {.callout-note}
-## Not yet written
+A language model does not predict the next character; it assigns a
+probability to every possible next character. Training compares those
+probabilities with the character that actually came next, and the
+number that measures the mismatch is the loss. This chapter derives
+that loss from one principle, maximum likelihood: choose the
+parameters under which the observed data were most probable. Taking
+logarithms turns the likelihood into a sum, and its negative average
+is the cross-entropy between the data and the model.
 
-This chapter will cover:
+Two pieces of mathematics carry the chapter. Gibbs' inequality says
+that the Kullback–Leibler divergence between two distributions is
+never negative, and from it follows that the best categorical model of
+a sequence of observations is the table of relative frequencies, the
+result that @sec-language-models uses to build a first language
+model. The softmax function turns a vector of real scores into a
+distribution, and the gradient of the cross-entropy loss with respect
+to those scores is the difference between the predicted and the
+observed distributions. That difference is the vector
+$\boldsymbol{\delta}_D$ with which backpropagation (@thm-backprop-matrix)
+starts.
 
-- discrete distributions and likelihood
-- maximum likelihood estimation
-- entropy, cross-entropy and Kullback–Leibler divergence
-- the softmax function and its Jacobian
-- numerical stability through log-sum-exp
+```{python}
+#| include: false
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+from checks.ch07 import initial_losses
+
+rng = np.random.default_rng(8)
+
+def softmax(z):
+    z = np.asarray(z, dtype=float)
+    e = np.exp(z - z.max())
+    return e / e.sum()
+
+def lse(z):
+    z = np.asarray(z, dtype=float)
+    m = z.max()
+    return m + np.log(np.sum(np.exp(z - m)))
+
+def H(p, q=None):
+    """Entropy H(p), or cross-entropy H(p, q), with 0 ln 0 = 0."""
+    p = np.asarray(p, dtype=float); q = p if q is None else np.asarray(q, dtype=float)
+    s = p > 0
+    return -np.sum(p[s] * np.log(q[s]))
+```
+
+## Distributions on a finite set {#sec-prob-distributions}
+
+The outcomes in this book form a finite set: the 27 tokens of the
+vocabulary $V$, or the faces of a die. @def-finite-probability sets up
+probability on a finite sample space. Here we need only the
+probabilities of the outcomes themselves. A *probability
+distribution* on a finite set $V$ is a function $p\colon V\to[0, 1]$
+with $\sum_{v\in V}p(v) = 1$. If the elements of $V$ are numbered
+$1, \dots, n$, we also write $p$ as the vector
+$\mathbf{p} = (p_1, \dots, p_n)^\top$ with $p_i = p(i)$. A random
+variable $X$ with values in $V$ has distribution $p$ if
+$P(X = v) = p(v)$ for each $v$, and we write $X \sim p$.
+
+A distribution on $V$ is also called a *categorical* distribution.
+The set of all of them is the *probability simplex*
+$\{\mathbf{p}\in\mathbb{R}^n : p_i \ge 0,\ \sum_ip_i = 1\}$; for
+$n = 3$ it is the triangle with corners $\mathbf{e}_1$,
+$\mathbf{e}_2$ and $\mathbf{e}_3$. The *uniform* distribution has
+$p(v) = 1/|V|$ for every $v$. For a function $f$ on $V$, the
+expectation of $f(X)$ is
+$\mathbb{E}[f(X)] = \sum_{v\in V}p(v)f(v)$, as in @sec-stochastic.
+
+## Likelihood {#sec-prob-likelihood}
+
+Suppose we observe a sequence of outcomes and want to choose, among
+several candidate distributions, the one that explains it best. A
+natural score for a candidate is the probability it gives to exactly
+what we saw.
+
+::: {#exm-likelihood}
+Let $V = \{\mathtt{a}, \mathtt{b}, \mathtt{c}\}$ and observe
+$\mathtt{a}, \mathtt{b}, \mathtt{a}, \mathtt{c}, \mathtt{a}$. If the
+five observations are independent draws from a distribution $p$, the
+probability of this sequence is
+$p(\mathtt{a})p(\mathtt{b})p(\mathtt{a})p(\mathtt{c})p(\mathtt{a}) = p(\mathtt{a})^3p(\mathtt{b})p(\mathtt{c})$.
+The uniform distribution gives $3^{-5} = 1/243 \approx 0.00412$, and
+$p = (0.6, 0.2, 0.2)$ gives $0.6^3\times0.2^2 = 0.00864$, about twice
+as much. The second candidate explains the data better.
+:::
+
+A *model* is a family of distributions $p_{\boldsymbol{\theta}}$
+indexed by parameters $\boldsymbol{\theta}$; in the example the
+parameters are the three probabilities themselves. Reading the
+probability of the observed sequence as a function of the parameters
+gives the likelihood.
+
+::: {#def-likelihood}
+## Likelihood
+
+Let $p_{\boldsymbol{\theta}}$ be a distribution on $V$ for each
+$\boldsymbol{\theta}$ in a set $\Theta$, and let
+$x_1, \dots, x_N\in V$ be observations. The *likelihood* of
+$\boldsymbol{\theta}$ is
+$$
+\mathcal{L}(\boldsymbol{\theta}) = \prod_{i=1}^N p_{\boldsymbol{\theta}}(x_i),
+$$
+and when $\mathcal{L}(\boldsymbol{\theta}) > 0$ the
+*log-likelihood* is
+$\ln\mathcal{L}(\boldsymbol{\theta}) = \sum_{i=1}^N\ln p_{\boldsymbol{\theta}}(x_i)$.
+A *maximum likelihood estimate* is a $\boldsymbol{\theta}$ that
+maximises $\mathcal{L}$ over $\Theta$.
+:::
+
+The likelihood is the probability of the observed sequence when the
+observations are independent draws from $p_{\boldsymbol{\theta}}$. It
+is a function of the parameters, with the data held fixed. The
+logarithm is increasing, so $\mathcal{L}$ and $\ln\mathcal{L}$ have
+the same maximisers wherever $\mathcal{L} > 0$; in
+@exm-likelihood the log-likelihoods are $-5\ln3 \approx -5.493$ and
+$\ln 0.00864 \approx -4.751$. Training minimises rather than
+maximises, and works with averages so that the scale does not depend
+on $N$. The loss used throughout the rest of the book is the *average
+negative log-likelihood*
+$$
+L(\boldsymbol{\theta}) = -\frac{1}{N}\ln\mathcal{L}(\boldsymbol{\theta})
+= \frac{1}{N}\sum_{i=1}^N\bigl(-\ln p_{\boldsymbol{\theta}}(x_i)\bigr) ,
+$$ {#eq-prob-nll}
+the average, over the observations, of minus the log-probability the
+model gave each one.
+
+Logarithms are also a practical necessity. The probability of a
+sequence of $1000$ observations, each with probability $1/27$, is
+$27^{-1000} \approx 10^{-1431}$, far below the smallest positive
+double-precision number (about $4.9\times10^{-324}$), so the product
+rounds to $0$ (@sec-floating-point). Its logarithm,
+$-1000\ln27 \approx -3295.8$, is an ordinary number.
+
+```{python}
+#| include: false
+close(3.0**-5, 1/243, "1/243"); close(1/243, 0.00412, "0.00412", tol=1e-5)
+close(0.6**3 * 0.2**2, 0.00864, "0.00864", tol=1e-12)
+close(-5*np.log(3), -5.493, "log 1/243", tol=1e-4); close(np.log(0.00864), -4.751, "log 0.00864", tol=1e-4)
+close(0.00864 / (1/243), 2.1, "about twice", tol=0.01)
+check(np.prod(np.full(1000, 1/27)) == 0.0, "product underflows to 0")
+close(-1000 * np.log10(27), -1431.36, "27^-1000 ~ 10^-1431", tol=1e-5)
+close(np.nextafter(0, 1), 4.9e-324, "smallest positive double", tol=1e-3)
+close(-1000 * np.log(27), -3295.8, "log-likelihood -3295.8", tol=2e-5)
+```
+
+## Entropy and divergence {#sec-prob-information}
+
+How unpredictable is a distribution? Measure how unexpected each
+outcome is by $-\ln p(v)$, its *information content* (also called its
+*surprisal*): $0$ for an outcome of probability $1$, and large for a
+rare one. A coin that lands heads with probability $0.9$ gives heads
+information content $-\ln0.9 \approx 0.105$ and tails
+$-\ln0.1 \approx 2.303$. Weighting by the probabilities, its average
+information content is $0.9\times0.105 + 0.1\times2.303 \approx 0.325$.
+A fair coin gives both outcomes $\ln2 \approx 0.693$, so its average
+is $0.693$: the fair coin is harder to predict.
+
+The definitions below use the natural logarithm and the convention
+$0\ln 0 = 0$, which matches the limit $x\ln x \to 0$ as $x \to 0^+$.
+In each sum, terms with $p(v) = 0$ are $0$.
+
+::: {#def-entropy}
+## Entropy
+
+The *entropy* of a distribution $p$ on a finite set $V$ is
+$$
+H(p) = -\sum_{v\in V}p(v)\ln p(v) = \mathbb{E}_{X\sim p}\bigl[-\ln p(X)\bigr] .
+$$
+:::
+
+Entropy is the expected information content of an outcome drawn from
+$p$. Each term $-p(v)\ln p(v)$ is non-negative, because $p(v)\le1$,
+so $H(p) \ge 0$, and $H(p) = 0$ exactly when one outcome has
+probability $1$ (@exr-ch8-entropy).
+
+::: {#exm-entropy}
+The distribution $(0.6, 0.2, 0.2)$ has entropy
+$-0.6\ln0.6 - 0.4\ln0.2 \approx 0.950$. The uniform distribution on
+$n$ outcomes has entropy $-n\cdot\frac1n\ln\frac1n = \ln n$, which is
+$\ln 3 \approx 1.099$ for three outcomes and
+$\ln 27 \approx 3.296$ for the vocabulary of the book's model.
+:::
+
+```{python}
+#| include: false
+close(-np.log(0.9), 0.105, "info heads", tol=1e-3); close(-np.log(0.1), 2.303, "info tails", tol=1e-3)
+close(H([0.9, 0.1]), 0.325, "biased coin entropy", tol=1e-3)
+close(H([0.5, 0.5]), np.log(2), "fair coin"); close(np.log(2), 0.693, "ln 2", tol=1e-3)
+close(H([0.6, 0.2, 0.2]), -0.6*np.log(0.6) - 0.4*np.log(0.2), "H(0.6,0.2,0.2) formula")
+close(H([0.6, 0.2, 0.2]), 0.950, "H(0.6,0.2,0.2)", tol=1e-3)
+close(np.log(3), 1.099, "ln 3", tol=1e-3)
+close(H(np.full(27, 1/27)), np.log(27), "uniform entropy"); close(np.log(27), 3.296, "ln 27", tol=1e-4)
+xs_ = sp.symbols("x", positive=True)
+check(sp.limit(xs_ * sp.log(xs_), xs_, 0, "+") == 0, "x ln x -> 0")
+```
+
+A model rarely knows the true distribution. Suppose the data follow
+$p = (0.6, 0.2, 0.2)$ but a model predicts the uniform distribution
+$q$. The model assigns each outcome information content $\ln 3$, so
+on data drawn from $p$ its average is
+$0.6\ln3 + 0.2\ln3 + 0.2\ln3 = \ln3 \approx 1.099$, more than the
+$0.950$ that the model $q = p$ would achieve.
+
+::: {#def-cross-entropy}
+## Cross-entropy
+
+The *cross-entropy* of a distribution $q$ relative to a distribution
+$p$, both on $V$, is
+$$
+H(p, q) = -\sum_{v\in V}p(v)\ln q(v) = \mathbb{E}_{X\sim p}\bigl[-\ln q(X)\bigr],
+$$
+with $H(p, q) = +\infty$ if $q(v) = 0$ for some $v$ with $p(v) > 0$.
+:::
+
+If data are drawn from $p$ and a model predicts $q$, then $H(p, q)$ is
+the average information content that the model assigns to the data.
+In particular, if $\hat p$ is the *empirical distribution* of
+observations $x_1, \dots, x_N$, the fraction $\hat p(v) = c_v/N$ of
+them equal to $v$, where $c_v$ is the number of observations equal to
+$v$, then
+$$
+H(\hat p, q) = -\sum_{v\in V}\frac{c_v}{N}\ln q(v) = -\frac1N\sum_{i=1}^N\ln q(x_i) ,
+$$ {#eq-prob-ce-empirical}
+because $\ln q(v)$ appears once in the second sum for each
+observation equal to $v$. So the loss @eq-prob-nll is the cross-entropy
+from the empirical distribution to the model.
+
+The excess of the cross-entropy over the entropy, $1.099 - 0.950 \approx 0.148$
+in the example above, measures what the model loses by predicting
+$q$ instead of $p$.
+
+::: {#def-kl}
+## Kullback–Leibler divergence
+
+The *Kullback–Leibler divergence* of $q$ from $p$ is
+$$
+D_{\mathrm{KL}}(p\,\|\,q) = \sum_{v :\, p(v) > 0}p(v)\ln\frac{p(v)}{q(v)},
+$$
+with $D_{\mathrm{KL}}(p\,\|\,q) = +\infty$ if $q(v) = 0$ for some $v$
+with $p(v) > 0$. Whenever it is finite,
+$D_{\mathrm{KL}}(p\,\|\,q) = H(p, q) - H(p)$.
+:::
+
+The divergence measures the extra information content from using
+$q$ when the
+data follow $p$. It is not symmetric: for $p = (0.6, 0.2, 0.2)$ and
+the uniform $u$ on three outcomes,
+$D_{\mathrm{KL}}(p\,\|\,u) \approx 0.148$ and
+$D_{\mathrm{KL}}(u\,\|\,p) \approx 0.145$. Its central property rests
+on an inequality for the logarithm.
+
+```{python}
+#| include: false
+def KL(p, q):
+    p, q = np.asarray(p, float), np.asarray(q, float); s = p > 0
+    return np.sum(p[s] * np.log(p[s] / q[s]))
+p3, u3 = np.array([0.6, 0.2, 0.2]), np.full(3, 1/3)
+close(KL(p3, u3), 0.148, "D(p||u)", tol=1e-3); close(KL(u3, p3), 0.145, "D(u||p)", tol=1e-3)
+for _ in range(200):
+    p, q = rng.dirichlet(np.ones(5)), rng.dirichlet(np.ones(5))
+    close(KL(p, q), H(p, q) - H(p), "D = H(p,q) - H(p)")
+```
+
+::: {#lem-prob-log-bound}
+For every $x > 0$, $\ln x \le x - 1$, with equality only at $x = 1$.
+:::
+
+::: {.proof}
+Let $h(x) = x - 1 - \ln x$ on $(0, \infty)$. Then $h(1) = 0$ and
+$h'(x) = 1 - 1/x$, which is negative for $x < 1$ and positive for
+$x > 1$. For $x \ne 1$, the mean value theorem gives a $\xi$ strictly
+between $1$ and $x$ with $h(x) = h(x) - h(1) = h'(\xi)(x - 1)$. Since
+$\xi - 1$ has the same sign as $x - 1$, so does $h'(\xi)$, and the
+product is positive. So $h(x) > 0$ for $x \ne 1$.
+:::
+
+::: {#thm-gibbs}
+## Gibbs' inequality
+
+For distributions $p$ and $q$ on a finite set,
+$D_{\mathrm{KL}}(p\,\|\,q) \ge 0$, with equality if and only if
+$p = q$.
+:::
+
+::: {.proof}
+If $q(v) = 0$ for some $v$ with $p(v) > 0$ the divergence is
+$+\infty$ and $p \ne q$, so there is nothing to prove. Otherwise let
+$S = \{v : p(v) > 0\}$; then $q(v) > 0$ on $S$. By @lem-prob-log-bound
+with $x = q(v)/p(v)$,
+$$
+-D_{\mathrm{KL}}(p\,\|\,q) = \sum_{v\in S}p(v)\ln\frac{q(v)}{p(v)}
+\le \sum_{v\in S}p(v)\Bigl(\frac{q(v)}{p(v)} - 1\Bigr)
+= \sum_{v\in S}q(v) - 1 \le 0 ,
+$$ {#eq-prob-gibbs}
+because $\sum_{v\in S}p(v) = 1$ and $\sum_{v\in S}q(v) \le 1$. So
+$D_{\mathrm{KL}}(p\,\|\,q) \ge 0$.
+
+If $p = q$, every logarithm in the definition is $\ln1 = 0$. If
+$D_{\mathrm{KL}}(p\,\|\,q) = 0$, both inequalities in @eq-prob-gibbs are
+equalities. The first one is a sum of term-by-term inequalities with
+positive weights $p(v)$, so each term is an equality, and by
+@lem-prob-log-bound $q(v)/p(v) = 1$ for every $v\in S$. The second gives
+$\sum_{v\in S}q(v) = 1$, so $q(v) = 0 = p(v)$ for $v \notin S$. Hence
+$q = p$.
+:::
+
+```{python}
+#| include: false
+# Gibbs' inequality on random distributions, including ones with zeros in p
+# (the theorem is also checked in Lean).
+for n in (2, 3, 10, 27):
+    for _ in range(300):
+        p = rng.dirichlet(np.ones(n) * 0.5); q = rng.dirichlet(np.ones(n) * 0.5)
+        p[rng.random(n) < 0.2] = 0; p = p / p.sum() if p.sum() > 0 else np.full(n, 1/n)
+        check(KL(p, q) >= -1e-12, "Gibbs")
+        check(KL(p, p) == 0, "D(p||p) = 0")
+xx = np.linspace(1e-3, 10, 100001)
+check(np.all(np.log(xx) <= xx - 1 + 1e-15), "ln x <= x - 1")
+check(np.all(np.log(xx[np.abs(xx - 1) > 1e-3]) < xx[np.abs(xx - 1) > 1e-3] - 1), "strict away from 1")
+```
+
+::: {#cor-prob-entropy-bounds}
+For every distribution $p$ on a set $V$ with $n$ elements,
+$0 \le H(p) \le \ln n$, with $H(p) = \ln n$ only for the uniform
+distribution. For every distribution $q$ on $V$,
+$H(p, q) \ge H(p)$, with equality only for $q = p$.
+:::
+
+::: {.proof}
+$H(p) \ge 0$ was shown after @def-entropy. For the uniform
+distribution $u$, $D_{\mathrm{KL}}(p\,\|\,u) = \sum_v p(v)\ln(np(v)) = \ln n - H(p)$,
+which is non-negative, and zero only if $p = u$, by @thm-gibbs. For
+the last statement, if $H(p, q) = +\infty$ there is nothing to prove,
+and otherwise $H(p, q) - H(p) = D_{\mathrm{KL}}(p\,\|\,q)$.
+:::
+
+## Maximum likelihood for a categorical distribution {#sec-prob-mle}
+
+The simplest model of a sequence of observations from $V$ treats them
+as independent draws from an unknown distribution $q$ on $V$, with
+the $|V|$ values of $q$ as parameters. In @exm-likelihood the
+candidate $(0.6, 0.2, 0.2)$, which beat the uniform distribution, is
+the list of relative frequencies $\tfrac35, \tfrac15, \tfrac15$ of
+the three outcomes. Moving towards the uniform distribution, to
+$(0.5, 0.25, 0.25)$, lowers the likelihood to
+$0.5^3\times0.25^2 \approx 0.0078$. No other candidate does better
+than the relative frequencies.
+
+::: {#thm-prob-categorical-mle}
+## Maximum likelihood is relative frequency
+
+Let $x_1, \dots, x_N$ be observations in a finite set $V$, let $c_v$
+be the number of them equal to $v$, and let $\hat p(v) = c_v/N$. Over
+all distributions $q$ on $V$, the likelihood
+$\mathcal{L}(q) = \prod_{i=1}^Nq(x_i)$ is largest at $q = \hat p$ and
+nowhere else. Equivalently, $\hat p$ is the unique minimiser of the
+loss $H(\hat p, q)$.
+:::
+
+::: {.proof}
+Group the factors of the likelihood by outcome:
+$\mathcal{L}(q) = \prod_{v\in V}q(v)^{c_v}$. At $q = \hat p$ every
+factor with $c_v > 0$ is positive, so $\mathcal{L}(\hat p) > 0$. If
+$q(v) = 0$ for some $v$ with $c_v > 0$ then $\mathcal{L}(q) = 0 <
+\mathcal{L}(\hat p)$. Otherwise $\mathcal{L}(q) > 0$ and, by
+@eq-prob-ce-empirical and @def-kl,
+$$
+\ln\mathcal{L}(q) = \sum_{v\in V}c_v\ln q(v) = -N\,H(\hat p, q)
+= -N\bigl(H(\hat p) + D_{\mathrm{KL}}(\hat p\,\|\,q)\bigr) .
+$$
+By @thm-gibbs the right side is at most $-N\,H(\hat p)$, which is its
+value at $q = \hat p$, with equality only when $q = \hat p$. Since
+$\ln$ is increasing, the same holds for $\mathcal{L}$.
+:::
+
+In @exm-likelihood the counts are $3, 1, 1$, so the maximum
+likelihood estimate is $\hat p = (0.6, 0.2, 0.2)$, and the largest
+possible likelihood is $0.00864 = e^{-5H(\hat p)}$. The proof uses no
+calculus: setting derivatives to zero would need a Lagrange
+multiplier for the constraint $\sum_vq(v) = 1$, and would not show on
+its own that the critical point is a maximum. @thm-bigram-mle applies
+the theorem once for each preceding character.
+
+```{python}
+#| include: false
+obs = ["a", "b", "a", "c", "a"]
+phat = np.array([obs.count(v) for v in "abc"]) / len(obs)
+close(phat, [0.6, 0.2, 0.2], "empirical distribution")
+close(0.5**3 * 0.25**2, 0.0078, "(0.5, 0.25, 0.25) likelihood", tol=2e-5)
+close(np.exp(-5 * H(phat)), 0.00864, "max likelihood e^{-5H}", tol=1e-12)
+lik = lambda q: np.prod([q["abc".index(o)] for o in obs])
+for _ in range(2000):
+    q = rng.dirichlet(np.ones(3))
+    check(lik(q) <= lik(phat) + 1e-15, "no q beats phat")
+    close(H(phat, q), -np.mean([np.log(q["abc".index(o)]) for o in obs]), "eq-prob-ce-empirical")
+# Symbolic: with q = (a, b, 1-a-b), the only critical point of the log-likelihood is (3/5, 1/5).
+a_, b_ = sp.symbols("a b", positive=True)
+ll = 3*sp.log(a_) + sp.log(b_) + sp.log(1 - a_ - b_)
+check(sp.solve([sp.diff(ll, a_), sp.diff(ll, b_)], [a_, b_], dict=True) ==
+      [{a_: sp.Rational(3, 5), b_: sp.Rational(1, 5)}], "critical point (3/5, 1/5)")
+```
+
+## The softmax function {#sec-prob-softmax}
+
+A network produces a vector of real numbers, and a probabilistic
+model needs a distribution: non-negative numbers with sum $1$. Take
+the scores $(2, 1, 0)$. Exponentiating makes every score positive,
+giving about $7.389$, $2.718$ and $1$, and dividing by their sum
+$11.107$ gives $(0.665, 0.245, 0.090)$, a distribution in which a
+higher score means a higher probability. The obvious alternative,
+dividing each score by the sum of the scores, fails: $(2, -1)$ would
+give $(2, -1)$, which has a negative entry, and $(1, -1)$ has sum $0$.
+
+::: {#def-softmax}
+## Softmax
+
+The *softmax* of $\mathbf{z}\in\mathbb{R}^n$ is the vector
+$\operatorname{softmax}(\mathbf{z})\in\mathbb{R}^n$ with entries
+$$
+\operatorname{softmax}(\mathbf{z})_i = \frac{e^{z_i}}{\sum_{j=1}^ne^{z_j}} .
+$$
+The entries $z_i$ are called *logits*.
+:::
+
+Every entry of $\mathbf{p} = \operatorname{softmax}(\mathbf{z})$ is
+positive and the entries sum to $1$, so $\mathbf{p}$ is a distribution
+on $\{1, \dots, n\}$ that gives every outcome some probability. The
+exponential is increasing, so softmax preserves order: $p_i > p_j$
+exactly when $z_i > z_j$. Every distribution with positive entries
+arises, from $z_i = \ln p_i$, because then $\sum_je^{z_j} = 1$. For
+$n = 2$, dividing numerator and denominator by $e^{z_1}$ gives
+$\operatorname{softmax}(\mathbf{z})_1 = 1/(1 + e^{-(z_1 - z_2)})$, the
+logistic function of the difference of the logits.
+
+Adding the same number $c$ to every logit multiplies the numerator
+and the denominator by $e^c$, so
+$$
+\operatorname{softmax}(\mathbf{z} + c\mathbf{1}) = \operatorname{softmax}(\mathbf{z}),
+$$ {#eq-prob-softmax-shift}
+where $\mathbf{1} = (1, \dots, 1)^\top$. Only differences of logits
+matter. @exr-ch8-softmax-inverse shows that these are the only
+changes of $\mathbf{z}$ that leave the softmax alone. The identity has
+a practical use: computing $e^{1000}$ overflows in double precision,
+but subtracting the largest logit first makes every exponent at most
+$0$. @thm-softmax-shift and @sec-floating-point analyse that
+computation.
+
+::: {#exm-softmax}
+The computation at the start of this section says
+$\operatorname{softmax}(2, 1, 0) \approx (0.665, 0.245, 0.090)$. The
+logits $(1002, 1001, 1000)$ give the same distribution by
+@eq-prob-softmax-shift, although evaluating $e^{1002}$ directly gives
+infinity in double precision.
+:::
+
+```{python}
+#| include: false
+pz = softmax([2, 1, 0])
+close(np.exp([2, 1, 0]), [7.389, 2.718, 1], "exponentials", tol=1e-4)
+close(np.exp([2, 1, 0]).sum(), 11.107, "sum", tol=1e-4)
+close(pz, [0.665, 0.245, 0.090], "softmax(2,1,0)", tol=1e-3)
+close(softmax([1002, 1001, 1000]), pz, "shifted logits")
+with np.errstate(over="ignore"):
+    check(np.isinf(np.exp(1002.0)), "e^1002 overflows")
+for _ in range(100):
+    z, c = rng.normal(size=6) * 3, rng.normal() * 10
+    close(softmax(z + c), softmax(z), "eq-prob-softmax-shift")
+    p = rng.dirichlet(np.ones(6))
+    close(softmax(np.log(p)), p, "z = ln p recovers p")
+z1, z2 = sp.symbols("z1 z2", real=True)
+sym_equal(sp.exp(z1) / (sp.exp(z1) + sp.exp(z2)), 1 / (1 + sp.exp(-(z1 - z2))), "two-class softmax is logistic")
+```
+
+The logarithm of the denominator appears so often that it has a name.
+
+::: {#def-prob-lse}
+## Log-sum-exp
+
+The *log-sum-exp* function is
+$\operatorname{lse}(\mathbf{z}) = \ln\sum_{j=1}^ne^{z_j}$ for
+$\mathbf{z}\in\mathbb{R}^n$.
+:::
+
+For $\mathbf{z} = (2, 1, 0)$, $\operatorname{lse}(\mathbf{z}) = \ln11.107 \approx 2.408$,
+a little above the largest logit $2$. From the definitions,
+$$
+\ln\operatorname{softmax}(\mathbf{z})_i = z_i - \operatorname{lse}(\mathbf{z}) .
+$$ {#eq-prob-log-softmax}
+With $m = \max_jz_j$, the sum $\sum_je^{z_j}$ lies between $e^m$ (one
+of its terms) and $ne^m$ (its $n$ terms are each at most $e^m$), so
+$$
+\max_jz_j \le \operatorname{lse}(\mathbf{z}) \le \max_jz_j + \ln n .
+$$ {#eq-prob-lse-bounds}
+Log-sum-exp is a smooth version of the maximum. The bound also gives
+the stable way to compute it,
+$\operatorname{lse}(\mathbf{z}) = m + \ln\sum_je^{z_j - m}$, in which
+the sum lies between $1$ and $n$.
+
+::: {#thm-prob-lse-gradient}
+Log-sum-exp is differentiable on $\mathbb{R}^n$, and
+$\nabla\operatorname{lse}(\mathbf{z}) = \operatorname{softmax}(\mathbf{z})$.
+:::
+
+::: {.proof}
+By the chain rule for one variable,
+$\partial\operatorname{lse}/\partial z_k = e^{z_k}/\sum_je^{z_j}$, which
+is continuous on $\mathbb{R}^n$. By @thm-continuous-partials,
+$\operatorname{lse}$ is differentiable, and by @thm-jacobian its
+gradient is the vector of these partial derivatives.
+:::
+
+```{python}
+#| include: false
+zz = sp.symbols("z1:5", real=True)
+L_lse = sp.log(sum(sp.exp(v) for v in zz))
+S = sum(sp.exp(v) for v in zz)
+for k in range(4):
+    sym_equal(sp.diff(L_lse, zz[k]), sp.exp(zz[k]) / S, "grad lse = softmax")
+for _ in range(100):
+    z = rng.normal(size=5) * 4
+    close(np.log(softmax(z)), z - lse(z), "eq-prob-log-softmax")
+    check(z.max() <= lse(z) <= z.max() + np.log(5) + 1e-12, "eq-prob-lse-bounds")
+    close(num_grad(lse, z), softmax(z), "grad lse numerically", tol=1e-7)
+close(lse([2, 1, 0]), 2.408, "lse(2,1,0)", tol=1e-3)
+close(lse([1000.0, 0.0]), 1000.0, "stable lse")
+```
+
+How does the distribution respond when one logit changes? At
+$\mathbf{z} = (2, 1, 0)$, increase $z_1$ by $0.01$. The probabilities
+change by about $(0.00222, -0.00163, -0.00060)$: $p_1$ rises, and the
+other two fall, by amounts proportional to their own size, since
+$0.00163/0.245 \approx 0.00060/0.090 \approx 0.0066$. The increases
+and decreases cancel, because the probabilities still sum to $1$. The
+next theorem gives these rates exactly: the change is about
+$0.01\,p_1(\mathbf{e}_1 - \mathbf{p})$.
+
+::: {#thm-softmax-jacobian}
+## Jacobian of softmax
+
+Softmax is differentiable on $\mathbb{R}^n$. With
+$\mathbf{p} = \operatorname{softmax}(\mathbf{z})$,
+$$
+\frac{\partial p_i}{\partial z_k} = p_i(\delta_{ik} - p_k),
+\qquad\text{that is,}\qquad
+J_{\operatorname{softmax}}(\mathbf{z}) = \operatorname{diag}(\mathbf{p}) - \mathbf{p}\mathbf{p}^\top ,
+$$
+where $\delta_{ik}$ is $1$ if $i = k$ and $0$ otherwise. The matrix
+$J = J_{\operatorname{softmax}}(\mathbf{z})$ has these properties:
+
+(a) $J$ is symmetric;
+
+(b) $J\mathbf{1} = \mathbf{0}$: each row sums to $0$, so $J$ is
+singular;
+
+(c) $\mathbf{v}^\top J\mathbf{v} = \sum_ip_iv_i^2 - \bigl(\sum_ip_iv_i\bigr)^2 \ge 0$
+for every $\mathbf{v}$, with equality exactly when $\mathbf{v}$ is a
+multiple of $\mathbf{1}$. So $J$ is positive semidefinite, $0$ is an
+eigenvalue with eigenvector $\mathbf{1}$, and every other eigenvalue
+is positive.
+:::
+
+Column $k$ of $J$ lists how every probability responds to an
+increment of the logit $z_k$: $p_k$ rises at rate $p_k(1 - p_k)$ and
+each other $p_i$ falls at rate $p_ip_k$. Row $i$ lists how $p_i$
+responds to each logit. Entry $(i, k)$ is the rate of change of $p_i$
+per unit increment of $z_k$.
+
+::: {.proof}
+Write $S = \sum_je^{z_j}$, so $p_i = e^{z_i}/S$ and
+$\partial S/\partial z_k = e^{z_k}$. By the quotient rule,
+$$
+\frac{\partial p_i}{\partial z_k}
+= \frac{\delta_{ik}e^{z_i}S - e^{z_i}e^{z_k}}{S^2}
+= \delta_{ik}p_i - p_ip_k .
+$$
+These partial derivatives are continuous, so softmax is differentiable
+by @thm-continuous-partials, and @thm-jacobian identifies $J$. Entry
+$(i, k)$ of $\operatorname{diag}(\mathbf{p})$ is $\delta_{ik}p_i$ and
+entry $(i, k)$ of $\mathbf{p}\mathbf{p}^\top$ is $p_ip_k$.
+
+(a) Both $\operatorname{diag}(\mathbf{p})$ and
+$\mathbf{p}\mathbf{p}^\top$ are symmetric.
+
+(b) $J\mathbf{1} = \mathbf{p} - \mathbf{p}(\mathbf{p}\cdot\mathbf{1}) = \mathbf{p} - \mathbf{p} = \mathbf{0}$,
+since the entries of $\mathbf{p}$ sum to $1$.
+
+(c) $\mathbf{v}^\top\operatorname{diag}(\mathbf{p})\mathbf{v} = \sum_ip_iv_i^2$
+and $\mathbf{v}^\top\mathbf{p}\mathbf{p}^\top\mathbf{v} = (\mathbf{p}\cdot\mathbf{v})^2$.
+Apply @thm-cauchy-schwarz to the vectors $\mathbf{a}$ and $\mathbf{b}$
+with $a_i = \sqrt{p_i}$ and $b_i = \sqrt{p_i}\,v_i$:
+$$
+\Bigl(\sum_ip_iv_i\Bigr)^2 = (\mathbf{a}\cdot\mathbf{b})^2
+\le \|\mathbf{a}\|^2\|\mathbf{b}\|^2 = 1\cdot\sum_ip_iv_i^2 .
+$$
+Equality holds exactly when one of $\mathbf{a}$, $\mathbf{b}$ is a
+multiple of the other. Since $\mathbf{a} \ne \mathbf{0}$, that means
+$\mathbf{b} = c\mathbf{a}$ for some $c$, that is,
+$\sqrt{p_i}v_i = c\sqrt{p_i}$ for all $i$, and since every
+$p_i > 0$, $v_i = c$ for all $i$. For an eigenvector $\mathbf{v}$
+with eigenvalue $\lambda$, $\mathbf{v}^\top J\mathbf{v} = \lambda\|\mathbf{v}\|^2$,
+so $\lambda \ge 0$, with $\lambda = 0$ only when $\mathbf{v}$ is a
+multiple of $\mathbf{1}$.
+:::
+
+The quantity in (c) has a probabilistic reading: if $I$ is a random
+index with distribution $\mathbf{p}$, then
+$\mathbf{v}^\top J\mathbf{v} = \mathbb{E}[v_I^2] - (\mathbb{E}[v_I])^2 = \operatorname{Var}(v_I)$.
+By @thm-prob-lse-gradient, $J$ is also the Hessian of log-sum-exp
+(@def-hessian), so (c) says that the Hessian of
+$\operatorname{lse}$ is positive semidefinite everywhere. Property
+(b) restates @eq-prob-softmax-shift: moving $\mathbf{z}$ along
+$\mathbf{1}$ does not change $\mathbf{p}$, so the derivative in that
+direction is $\mathbf{0}$.
+
+For $n = 2$, $J = p_1p_2\begin{pmatrix}1 & -1\\ -1 & 1\end{pmatrix}$,
+with eigenvalues $0$ and $2p_1p_2$; with $p_1 = \sigma(z_1 - z_2)$ for
+the logistic function $\sigma$, entry $(1,1)$ is the familiar
+$\sigma' = \sigma(1 - \sigma)$.
+
+```{python}
+#| include: false
+pz0 = softmax([2, 1, 0]); dp = softmax([2.01, 1, 0]) - pz0
+close(dp, [0.00222, -0.00163, -0.00060], "increment of z_1 by 0.01", tol=1e-5)
+close(dp[1] / pz0[1], -0.0066, "proportional fall", tol=1e-4); close(dp[2] / pz0[2], -0.0066, "proportional fall", tol=1e-4)
+close(dp, 0.01 * pz0[0] * (np.eye(3)[0] - pz0), "0.01 p1 (e1 - p)", tol=5e-5)
+# Softmax Jacobian in dimension 4 (SymPy) and dimension 3 (Maxima); also checked in Lean.
+P = [sp.exp(v) / S for v in zz]
+Jsym = sp.Matrix(4, 4, lambda i, k: sp.diff(P[i], zz[k]))
+Pv = sp.Matrix(P)
+check(sp.simplify(Jsym - (sp.diag(*P) - Pv * Pv.T)) == sp.zeros(4, 4), "J = diag(p) - p p^T")
+check(sp.simplify(Jsym - Jsym.T) == sp.zeros(4, 4), "J symmetric")
+check(sp.simplify(Jsym * sp.ones(4, 1)) == sp.zeros(4, 1), "rows sum to 0")
+# Maxima: the sum of the squared entries of J - (diag(p) - p p^T) for n = 3 is 0.
+maxima_zero("block([s: exp(a)+exp(b)+exp(c), J, D], "
+            "J: jacobian([exp(a)/s, exp(b)/s, exp(c)/s], [a, b, c]), "
+            "D: J - (diag_matrix(exp(a)/s, exp(b)/s, exp(c)/s) "
+            "- transpose(matrix([exp(a)/s, exp(b)/s, exp(c)/s])) . matrix([exp(a)/s, exp(b)/s, exp(c)/s])), "
+            "apply(\"+\", map(lambda([e], e^2), flatten(args(D)))))",
+            "softmax Jacobian in Maxima")
+for _ in range(200):
+    z = rng.normal(size=5) * 2; p = softmax(z); J = np.diag(p) - np.outer(p, p)
+    v = rng.normal(size=5)
+    close(v @ J @ v, p @ v**2 - (p @ v)**2, "quadratic form = variance")
+    ev = np.linalg.eigvalsh(J)
+    check(abs(ev[0]) < 1e-12 and ev[1] > 0, "one zero eigenvalue, the rest positive")
+    close(J, np.column_stack([num_grad(lambda zz_: softmax(zz_)[i], z) for i in range(5)]).T,
+          "Jacobian vs finite differences", tol=1e-7)
+p1_, p2_ = sp.symbols("p1 p2", positive=True)
+J2 = sp.Matrix([[p1_ - p1_**2, -p1_*p2_], [-p1_*p2_, p2_ - p2_**2]]).subs(p2_, 1 - p1_)
+check(sp.simplify(J2 - p1_*(1 - p1_)*sp.Matrix([[1, -1], [-1, 1]])) == sp.zeros(2, 2), "n = 2 form")
+check(set(sp.simplify(e) for e in J2.eigenvals()) == {0, sp.simplify(2*p1_*(1 - p1_))}, "eigenvalues 0, 2 p1 p2")
+```
+
+## Cross-entropy loss for a softmax model {#sec-prob-softmax-ce}
+
+A classifier, or a language model predicting the next token, computes
+logits $\mathbf{z}$, turns them into probabilities
+$\mathbf{p} = \operatorname{softmax}(\mathbf{z})$, and is scored on
+the observed outcome $y$ by the information content $-\ln p_y$. By
+@eq-prob-nll, the loss on a data set is the average of these numbers,
+so the gradient of the loss is the average of their gradients.
+
+With the logits $(2, 1, 0)$ and observed outcome $y = 2$, the loss is
+$-\ln0.245 \approx 1.408$. Increasing $z_2$ by $0.01$ lowers it by
+about $0.0075 \approx 0.01(1 - p_2)$, and increasing $z_1$ by $0.01$
+raises it by about $0.0067 \approx 0.01\,p_1$. So the partial
+derivatives appear to be $p_i$ for the wrong outcomes and $p_y - 1$
+for the observed one.
+
+::: {#thm-softmax-ce-gradient}
+## Gradient of the cross-entropy loss
+
+For $y\in\{1, \dots, n\}$ let
+$L(\mathbf{z}) = -\ln\operatorname{softmax}(\mathbf{z})_y$. Then
+$L(\mathbf{z}) = \operatorname{lse}(\mathbf{z}) - z_y$, $L$ is
+differentiable on $\mathbb{R}^n$, and
+$$
+\nabla L(\mathbf{z}) = \mathbf{p} - \mathbf{e}_y,
+\qquad \mathbf{p} = \operatorname{softmax}(\mathbf{z}).
+$$
+More generally, for any distribution $\mathbf{y}$ on
+$\{1, \dots, n\}$, the loss
+$L(\mathbf{z}) = H(\mathbf{y}, \operatorname{softmax}(\mathbf{z})) = -\sum_iy_i\ln p_i$
+has gradient $\mathbf{p} - \mathbf{y}$; the first case is the one-hot
+target $\mathbf{y} = \mathbf{e}_y$.
+:::
+
+::: {.proof}
+By @eq-prob-log-softmax,
+$-\sum_iy_i\ln p_i = \sum_iy_i\bigl(\operatorname{lse}(\mathbf{z}) - z_i\bigr)
+= \operatorname{lse}(\mathbf{z}) - \mathbf{y}\cdot\mathbf{z}$,
+since $\sum_iy_i = 1$. For $\mathbf{y} = \mathbf{e}_y$ this is
+$\operatorname{lse}(\mathbf{z}) - z_y$. By @thm-prob-lse-gradient and
+@exm-affine, $L$ is differentiable with gradient
+$\operatorname{softmax}(\mathbf{z}) - \mathbf{y}$.
+:::
+
+The same result follows from @thm-softmax-jacobian by the chain rule:
+$\nabla L = -\frac{1}{p_y}\nabla p_y = -\frac{1}{p_y}p_y(\mathbf{e}_y - \mathbf{p}) = \mathbf{p} - \mathbf{e}_y$,
+using row $y$ of $J$. The proof above is shorter because log-sum-exp
+absorbs the quotient.
+
+The gradient is simple to read. Gradient descent changes the logits
+by $-\eta(\mathbf{p} - \mathbf{e}_y)$: it raises the logit of the
+observed outcome by $\eta(1 - p_y)$ and lowers every other logit $z_i$
+by $\eta p_i$, so the outcomes that took the most probability away
+from $y$ lose the most. Every component lies strictly between $-1$
+and $1$, and the components sum to $0$, as (b) of
+@thm-softmax-jacobian requires. The gradient is never $\mathbf{0}$,
+since $p_y < 1$, and $L(\mathbf{z}) > 0$ for every $\mathbf{z}$; the
+loss tends to $0$ only as $z_y - z_i \to \infty$ for every $i \ne y$.
+In the notation of @thm-backprop-matrix, an MLP whose output
+$\mathbf{z}_D$ is read as logits has $\boldsymbol{\delta}_D = \mathbf{p} - \mathbf{e}_y$.
+
+::: {#exm-ce-gradient}
+Take the logits $\mathbf{z} = (2, 1, 0)$ of @exm-softmax and observed
+outcome $y = 2$. Then $L = -\ln 0.245 \approx 1.408$ and
+$\nabla L \approx (0.665, -0.755, 0.090)$. A gradient step with
+$\eta = 1$ moves the logits to about $(1.335, 1.755, -0.090)$, where
+the probability of outcome $2$ is about $0.55$ and the loss about
+$0.60$.
+:::
+
+```{python}
+#| include: false
+ce = lambda z, y: lse(z) - z[y]
+close(ce(np.array([2.0, 1.01, 0.0]), 1) - ce(np.array([2.0, 1.0, 0.0]), 1), -0.0075, "lowers by 0.0075", tol=1e-4)
+close(ce(np.array([2.01, 1.0, 0.0]), 1) - ce(np.array([2.0, 1.0, 0.0]), 1), 0.0067, "raises by 0.0067", tol=1e-4)
+zc = np.array([2.0, 1.0, 0.0]); yc = 1   # outcome 2 is index 1
+close(ce(zc, yc), -np.log(softmax(zc)[yc]), "L = lse - z_y")
+close(ce(zc, yc), 1.408, "loss 1.408", tol=1e-3)
+gc = softmax(zc) - np.eye(3)[yc]
+close(gc, [0.665, -0.755, 0.090], "gradient p - e_y", tol=1e-3)
+close(num_grad(lambda z: ce(z, yc), zc), gc, "gradient vs finite differences", tol=1e-8)
+z_new = zc - gc
+close(z_new, [1.335, 1.755, -0.090], "after one step", tol=1e-3)
+close(softmax(z_new)[yc], 0.55, "new probability", tol=5e-3)
+close(ce(z_new, yc), 0.60, "new loss", tol=5e-3)
+# Soft targets: gradient p - y, symbolic in dimension 4.
+yy = sp.symbols("y1:5", positive=True)
+Lsoft = -sum(yy[i] * sp.log(P[i]) for i in range(4))
+for k in range(4):
+    sym_equal(sp.diff(Lsoft, zz[k]).subs(yy[3], 1 - yy[0] - yy[1] - yy[2]),
+              (P[k] - yy[k]).subs(yy[3], 1 - yy[0] - yy[1] - yy[2]), "grad H(y, softmax z) = p - y")
+maxima_zero("diff(-log(exp(b)/(exp(a)+exp(b)+exp(c))), a) - exp(a)/(exp(a)+exp(b)+exp(c))",
+            "dL/dz_a = p_a in Maxima")
+maxima_zero("diff(-log(exp(b)/(exp(a)+exp(b)+exp(c))), b) - (exp(b)/(exp(a)+exp(b)+exp(c)) - 1)",
+            "dL/dz_b = p_b - 1 in Maxima")
+for _ in range(100):
+    z = rng.normal(size=7) * 3; y = rng.integers(7); g = softmax(z) - np.eye(7)[y]
+    check(np.all(np.abs(g) < 1) and abs(g.sum()) < 1e-12 and ce(z, y) > 0, "gradient properties")
+```
+
+::: {#exm-uniform-loss}
+## The loss of a uniform model
+
+If all logits are equal, $\mathbf{p}$ is uniform and
+$L = -\ln(1/n) = \ln n$ whatever the observed outcome. For the
+book's vocabulary, $\ln 27 \approx 3.30$. A model whose average loss
+is above $\ln|V|$ does worse than one that predicts nothing at all.
+
+The book's model starts close to the uniform model. Its last layer
+applies a $27\times16$ matrix with entries drawn from
+$N(0, 0.08^2)$ to a vector of squared norm about $16$, so by
+@thm-nn-init-variance each logit has mean $0$ and variance about
+$0.08^2\times16 \approx 0.10$, a standard deviation of about $0.32$.
+Near a constant vector $c\mathbf{1}$, the second-order Taylor
+expansion (@thm-taylor-second) of log-sum-exp, with gradient
+$\frac1n\mathbf{1}$ and Hessian
+$\frac1nI - \frac1{n^2}\mathbf{1}\mathbf{1}^\top$ there, gives
+$$
+\operatorname{lse}(\mathbf{z}) \approx \ln n + \bar z + \frac12\cdot\frac1n\sum_i(z_i - \bar z)^2,
+\qquad \bar z = \frac1n\sum_iz_i .
+$$
+The observed logit $z_y$ has the same mean as $\bar z$, so the
+expected loss is about $\ln 27$ plus half the spread of the logits,
+$\ln 27 + \frac12\cdot\frac{26}{27}\cdot0.10 \approx 3.35$. Averaged
+over 2000 freshly initialised models, each run on a random sequence
+of tokens, the simulated initial loss is also $3.35$.
+:::
+
+```{python}
+#| include: false
+close(np.log(27), 3.30, "ln 27 ~ 3.30", tol=2e-3)
+for y in range(27):
+    close(ce(np.full(27, 0.7), y), np.log(27), "uniform logits give ln 27")
+close(0.08**2 * 16, 0.10, "logit variance 0.10", tol=3e-3); close(np.sqrt(0.1024), 0.32, "logit sd 0.32")
+# Gradient and Hessian of lse at c*1, and the quadratic approximation.
+n_ = 27; Hc = np.eye(n_) / n_ - np.ones((n_, n_)) / n_**2
+pc = softmax(np.full(n_, 0.3))
+close(pc, np.full(n_, 1 / n_), "gradient at c1 is 1/n")
+close(np.diag(pc) - np.outer(pc, pc), Hc, "Hessian at c1")
+vsmall = rng.normal(0, 0.05, size=n_)
+close(lse(0.3 + vsmall), np.log(n_) + 0.3 + vsmall.mean() + 0.5 * np.mean((vsmall - vsmall.mean())**2),
+      "quadratic approximation of lse", tol=1e-4)
+close(np.log(27) + 0.5 * 26 / 27 * 0.1024, 3.35, "predicted initial loss 3.35", tol=2e-3)
+losses0, sds0 = initial_losses(np.random.default_rng(2026), n_models=2000)
+close(losses0.mean(), 3.35, "simulated initial loss 3.35", tol=2e-3)
+close(sds0.mean(), 0.32, "simulated logit sd 0.32", tol=3e-3)
+```
+
+## Where squared error comes from {#sec-prob-mse}
+
+Not every loss in machine learning is a cross-entropy, but most are
+negative log-likelihoods of some model. The squared error is the
+standard example. Suppose a real-valued observation $y$ is modelled as
+$f(\mathbf{x}; \boldsymbol{\theta})$ plus noise drawn from the normal
+distribution $N(0, s^2)$, whose density is
+$\varphi(t) = (2\pi s^2)^{-1/2}e^{-t^2/(2s^2)}$. For continuous
+observations the likelihood uses the density in place of the
+probability [@wasserman2004all, sec. 9.3], so for independent
+observations $(\mathbf{x}_i, y_i)$, $i = 1, \dots, N$,
+$$
+-\ln\mathcal{L}(\boldsymbol{\theta})
+= \frac{1}{2s^2}\sum_{i=1}^N\bigl(y_i - f(\mathbf{x}_i; \boldsymbol{\theta})\bigr)^2 + \frac N2\ln(2\pi s^2) .
+$$
+For fixed $s$, maximising the likelihood is the same as minimising
+the sum of squared errors, because the two differ by a positive factor
+and a constant. The choice of loss is a choice of noise model: normal
+noise gives squared error, and a categorical model with softmax
+outputs gives cross-entropy.
+
+```{python}
+#| include: false
+ys_, fs_, s_ = sp.symbols("y f s", positive=True)
+dens = 1 / sp.sqrt(2 * sp.pi * s_**2) * sp.exp(-(ys_ - fs_)**2 / (2 * s_**2))
+sym_equal(sp.expand_log(-sp.log(dens), force=True),
+          (ys_ - fs_)**2 / (2 * s_**2) + sp.log(2 * sp.pi * s_**2) / 2, "Gaussian NLL")
+```
+
+## Notes and further reading {#sec-prob-notes}
+
+@mackay2003information [ch. 2] introduces entropy, relative entropy
+and Gibbs' inequality, which it proves in sec. 2.6, and
+@cover2006elements [ch. 2] gives a fuller treatment of the same
+quantities. @goodfellow2016deep [ch. 3] collects the probability and
+information theory used in deep learning, [ch. 5] discusses maximum
+likelihood, and [ch. 6] discusses softmax output units and the
+cross-entropy loss. @wasserman2004all [ch. 9] covers maximum
+likelihood estimation in general, and @deisenroth2020mathematics
+[ch. 9] derives least squares from a normal noise model as in
+@sec-prob-mse.
+
+## Exercises {#sec-prob-exercises}
+
+::: {#exr-ch8-entropy}
+(a) Show that $H(p) = 0$ if and only if $p(v) = 1$ for some $v$.
+
+(b) For $p = (\tfrac12, \tfrac14, \tfrac14)$ and the uniform $u$ on
+three outcomes, compute $H(p)$, $D_{\mathrm{KL}}(p\,\|\,u)$ and
+$D_{\mathrm{KL}}(u\,\|\,p)$ exactly.
+:::
+
+::: {#exr-ch8-bernoulli}
+A coin lands heads with unknown probability $\theta$. In $N$ tosses
+it lands heads $k$ times, with $0 < k < N$. Maximise
+$\theta^k(1 - \theta)^{N-k}$ over $0 \le \theta \le 1$ by calculus,
+and check the answer against @thm-prob-categorical-mle. What happens when
+$k = 0$?
+:::
+
+::: {#exr-ch8-softmax-inverse}
+(a) Show that $\operatorname{softmax}(\mathbf{z}) = \operatorname{softmax}(\mathbf{z}')$
+if and only if $\mathbf{z} - \mathbf{z}' = c\mathbf{1}$ for some
+real $c$.
+
+(b) Find the logits $\mathbf{z}$ with $z_1 = 0$ and
+$\operatorname{softmax}(\mathbf{z}) = (\tfrac12, \tfrac13, \tfrac16)$.
+:::
+
+::: {#exr-ch8-jacobian}
+Let $\mathbf{z} = (0, \ln 2, \ln 3)$. Find
+$\mathbf{p} = \operatorname{softmax}(\mathbf{z})$ and
+$J_{\operatorname{softmax}}(\mathbf{z})$, check that its rows sum to
+$0$, and compute $\mathbf{v}^\top J\mathbf{v}$ for
+$\mathbf{v} = (1, 0, 0)$ and for $\mathbf{v} = (1, 1, 1)$.
+:::
+
+::: {#exr-ch8-logistic}
+Let $\sigma(t) = 1/(1 + e^{-t})$, and for a label $y\in\{0, 1\}$ let
+$L(t) = -y\ln\sigma(t) - (1 - y)\ln(1 - \sigma(t))$, the *binary
+cross-entropy*.
+
+(a) Show that $\sigma'(t) = \sigma(t)(1 - \sigma(t))$ and that
+$1 - \sigma(t) = \sigma(-t)$.
+
+(b) Show that $L'(t) = \sigma(t) - y$, and explain how this is the
+case $n = 2$ of @thm-softmax-ce-gradient.
+:::
+
+::: {#exr-ch8-soft-target}
+Let $\mathbf{y}$ be a distribution on $\{1, \dots, n\}$ with every
+$y_i > 0$, and $L(\mathbf{z}) = H(\mathbf{y}, \operatorname{softmax}(\mathbf{z}))$.
+
+(a) Using @cor-prob-entropy-bounds, show that $L$ attains its minimum
+value $H(\mathbf{y})$, exactly at the $\mathbf{z}$ with
+$\operatorname{softmax}(\mathbf{z}) = \mathbf{y}$, and find those
+$\mathbf{z}$.
+
+(b) Show that for the one-hot target $\mathbf{e}_y$ the infimum of
+$L$ is $0$ but is not attained.
+
+(c) *Label smoothing* replaces $\mathbf{e}_y$ by
+$\mathbf{y} = (1 - \alpha)\mathbf{e}_y + \frac{\alpha}{n}\mathbf{1}$
+with $0 < \alpha < 1$. For $n = 27$ and $\alpha = 0.1$, find the
+difference $z_y - z_i$ ($i \ne y$) at the minimiser.
+:::
+
+::: {#exr-ch8-gaussian}
+Observations $y_1, \dots, y_N$ are modelled as independent draws from
+$N(\mu, s^2)$, with $s > 0$ and $\mu$ unknown.
+
+(a) Show that the negative log-likelihood, as a function of $\mu$ for
+fixed $s$, is minimised at the mean
+$\bar y = \frac1N\sum_iy_i$.
+
+(b) Suppose the $y_i$ are not all equal, and let $s$ vary too. Show
+that at $\mu = \bar y$ the negative log-likelihood is minimised over
+$s > 0$ at
+$s^2 = \frac1N\sum_i(y_i - \bar y)^2$.
+:::
+
+::: {#exr-ch8-uniform-bound}
+Prove that for every $\mathbf{z}\in\mathbb{R}^n$ and every $y$,
+$$
+-\ln\operatorname{softmax}(\mathbf{z})_y \ge \ln n + \bar z - z_y,
+\qquad \bar z = \frac1n\sum_iz_i ,
+$$
+with equality when all $z_i$ are equal. (Use $\ln x \le x - 1$, or
+compare the arithmetic and geometric means of the $e^{z_i}$.) Deduce
+that if the logits of a randomly initialised model satisfy
+$\mathbb{E}[z_i] = \mathbb{E}[z_y]$ for all $i$, its expected loss is
+at least $\ln n$.
 :::
