@@ -35,6 +35,30 @@ Use Quarto's cross-referenceable blocks: `::: {#def-...}`,
 name, and `::: {.proof}` for proofs. Number displayed equations that
 are referred to: `$$ ... $$ {#eq-...}`.
 
+## Introducing new material
+
+Every new idea is led into before it is formalised. Section 1.1 of
+chapter 1 ("Changing several inputs at once") is the model.
+
+- Order: motivation (what question the idea answers), then a small
+  concrete example with numbers that shows the idea at work, then the
+  definition, then theorems and proofs, then further examples.
+- Define every term before using it: in a `def-` block when the book
+  uses the object or property again, otherwise in italics where it
+  first appears. Introduce each symbol where it is defined, and never
+  use one before that.
+- Use standard mathematical terminology: increment, perturbation,
+  partial derivative, Jacobian, adjoint, expectation, and so on. Avoid
+  informal coinages such as "nudge". If an everyday word helps the
+  intuition, pair it with the standard term the first time.
+- When a definition is subtle, say why it is the right one by showing
+  what goes wrong with the obvious alternative, as chapter 1 does with
+  partial derivatives and differentiability.
+- After displaying a formula, say in words what it means. For a matrix,
+  say what its rows, columns and entries represent.
+- Theorem statements stand on their own: restate the hypotheses rather
+  than writing "under the assumptions above".
+
 ## Mathematics
 
 - Prove what can be proved at this level, in full. When a proof is out
@@ -129,7 +153,12 @@ Entries already in `bib/main.bib` can be cited from any chapter.
 
 Each chapter defines at least these labels, with these meanings, so
 that chapters written in parallel can refer to each other. Add more
-labels freely; only these are guaranteed to exist.
+labels freely; only these are guaranteed to exist. Labels are global
+across the book, so give section and equation labels a prefix naming
+the chapter's topic (for example `sec-chain-...`, `eq-gd-...`), and
+before adding a generic label such as `def-finite-probability` check
+that no other chapter defines it. Chapter 6 owns
+`def-finite-probability`.
 
 | Chapter | Labels |
 |---|---|
