@@ -158,27 +158,36 @@ Entries already in `bib/main.bib` can be cited from any chapter.
 ## Labels other chapters may cite
 
 Each chapter defines at least these labels, with these meanings, so
-that chapters written in parallel can refer to each other. Add more
-labels freely; only these are guaranteed to exist. Labels are global
-across the book, so give section and equation labels a prefix naming
-the chapter's topic (for example `sec-chain-...`, `eq-gd-...`), and
-before adding a generic label such as `def-finite-probability` check
-that no other chapter defines it. Chapter 6 owns
-`def-finite-probability`.
+that chapters can refer to each other. The table lists every
+theorem-like and equation label that another chapter (or another
+chapter's solutions) cites, together with the labels that were
+promised when the chapters were planned. Keep them; if one must be
+renamed, update every reference and this table. Add more labels
+freely. Labels are global across the book, so give section and
+equation labels a prefix naming the chapter's topic (for example
+`sec-chain-...`, `eq-gd-...`), and before adding a generic label such
+as `def-finite-probability` check that no other chapter defines it.
+Every chapter's title label (`sec-several-variables`,
+`sec-chain-rule`, ...) and its section labels may also be cited.
+
+A concept is defined once, in the earliest chapter that needs it.
+Later chapters recall it in a sentence and cite the label below; they
+do not repeat the definition in italics or in a new block. A recap
+must agree with the definition it recalls.
 
 | Chapter | Labels |
 |---|---|
-| 1 (written) | `thm-cauchy-schwarz`, `lem-linear-bound`, `def-differentiable`, `thm-jacobian`, `thm-continuous-partials`, `def-gradient`, `thm-directional`, `thm-steepest`, `exm-affine`, `exm-elementwise`, `exm-quadratic` |
-| 2 | `thm-chain-rule` (chain rule for maps between $\mathbb{R}^n$ and $\mathbb{R}^m$, $J_{g\circ f} = J_g J_f$), `thm-chain-rule-paths` (derivative as a sum over paths in a composition), `def-hessian`, `thm-taylor-second` (second-order Taylor in several variables), `thm-second-derivative-test` (via Hessian eigenvalues) |
-| 3 | `def-computational-graph`, `def-evaluation-trace`, `def-dual-numbers`, `thm-dual-numbers` ($f(a + b\varepsilon) = f(a) + f'(a)b\varepsilon$), `thm-forward-mode` (forward mode computes $J\mathbf{v}$) |
+| 1 | `thm-cauchy-schwarz` (Cauchy–Schwarz), `lem-linear-bound` ($\|A\mathbf{x}\| \le \|A\|_F\|\mathbf{x}\|$), `def-differentiable`, `eq-derivative` (the limit defining the derivative), `thm-differentiable-continuous`, `thm-jacobian` (the derivative is the Jacobian matrix of partial derivatives), `thm-continuous-partials` (continuous partial derivatives imply differentiability), `def-gradient`, `thm-directional` (directional derivative is $\nabla f\cdot\mathbf{u}$), `thm-steepest` (steepest ascent along the gradient), `exm-partials` ($x^2y + \sin(xy)$), `exm-steepest` (the bowl $x^2 + 3y^2$ at $(1, 1)$), `exm-affine`, `exm-elementwise`, `exm-quadratic` (derivatives of affine maps, componentwise functions and quadratic forms) |
+| 2 | `lem-components` (differentiate component by component), `thm-chain-rule` ($J_{g\circ f} = J_g J_f$), `def-intermediate-variables`, `thm-chain-rule-paths` (derivative as a sum over paths), `eq-paths-step` (one step of the path recursion), `thm-product-rule`, `def-hessian`, `thm-mixed-partials` (the Hessian of a $C^2$ function is symmetric), `thm-taylor-second`, `eq-taylor-lagrange` and `eq-taylor-peano` (its two remainder forms), `def-local-extremum` (local extrema and critical points), `thm-critical-point` (gradient zero at a local extremum), `thm-spectral` (orthonormal eigenvectors of a symmetric matrix), `cor-quadratic-bounds` ($\lambda_n\|\mathbf{h}\|^2 \le \mathbf{h}^\top A\mathbf{h} \le \lambda_1\|\mathbf{h}\|^2$), `def-positive-definite` (positive and negative definite and semidefinite), `thm-second-derivative-test` (via Hessian eigenvalues) |
+| 3 | `def-evaluation-trace`, `def-computational-graph`, `thm-topological-order`, `lem-trace-open` (the trace's domain is open), `eq-fwd-tangent` (the tangent recursion), `thm-forward-mode` (forward mode computes $J\mathbf{v}$), `exm-fwd-pass`, `def-dual-numbers`, `thm-dual-numbers` ($f(a + b\varepsilon) = f(a) + f'(a)b\varepsilon$) |
 | 4 | `def-adjoint`, `thm-reverse-mode` (reverse accumulation computes the gradient on any acyclic graph), `thm-cheap-gradient` (gradient costs a constant multiple of evaluating $f$) |
-| 5 | `def-l-smooth`, `lem-descent`, `thm-gd-nonconvex`, `thm-gd-convex`, `thm-gd-strongly-convex`, `thm-gd-quadratic` (rates via eigenvalues and condition number) |
-| 6 | `def-sgd`, `thm-sgd-convergence`, `def-momentum`, `def-ema`, `thm-ema-bias` (bias correction), `def-adam` |
-| 7 | `def-mlp`, `def-relu`, `thm-backprop-matrix` (backpropagation for an MLP in matrix form), `thm-universal-1d` (ReLU networks approximate continuous functions on an interval) |
-| 8 | `def-likelihood`, `def-entropy`, `def-cross-entropy`, `def-kl`, `thm-gibbs` (KL is non-negative), `def-softmax`, `thm-softmax-jacobian`, `thm-softmax-ce-gradient` (gradient is $\mathbf{p} - \mathbf{y}$) |
-| 9 | `thm-sequence-chain-rule` (chain rule of probability), `thm-bigram-mle` (maximum likelihood is relative frequency), `def-perplexity`, `def-embedding` |
-| 10 | `def-attention`, `thm-attention-scale` (variance of $\mathbf{q}\cdot\mathbf{k}$ and the $1/\sqrt{d_h}$ scale), `def-causal-mask`, `def-multi-head`, `thm-permutation-equivariance` |
-| 11 | `def-rmsnorm`, `thm-residual-jacobian`, `thm-parameter-count` (the model has 4192 parameters), `thm-temperature` (limits as temperature tends to 0 and to infinity) |
+| 5 | `def-l-smooth`, `lem-descent`, `thm-gd-nonconvex`, `thm-gd-convex`, `thm-gd-strongly-convex`, `eq-gd-quadratic` (the quadratic $\frac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta}$), `thm-gd-quadratic` (rates via eigenvalues and condition number), `exm-gd-zigzag` |
+| 6 | `def-finite-probability` (finite probability space, random variables and vectors, expectation), `thm-expectation-linear` (linearity, and the formula over values), `def-independent-finite` (independence of two or several random vectors, pairwise independence), `lem-independent-functions` (functions of independent random vectors are independent), `thm-independent-product` ($\mathbb{E}[\mathbf{X}\cdot\mathbf{Y}] = \mathbb{E}[\mathbf{X}]\cdot\mathbb{E}[\mathbf{Y}]$ for independent vectors), `def-variance-finite` (variance and standard deviation), `lem-variance-formula` ($\operatorname{Var}[\mathbf{X}] = \mathbb{E}\|\mathbf{X}\|^2 - \|\mathbb{E}\mathbf{X}\|^2$, $\operatorname{Var}[c\mathbf{X} + \mathbf{v}] = c^2\operatorname{Var}[\mathbf{X}]$), `thm-variance-sum` (variances of pairwise independent vectors add), `def-sgd`, `thm-sgd-convergence`, `def-momentum`, `def-ema`, `thm-ema-bias` (bias correction), `def-adam` |
+| 7 | `def-nn-layer`, `def-relu`, `def-mlp`, `thm-backprop-matrix` (backpropagation for an MLP in matrix form), `thm-universal-1d` (ReLU networks approximate continuous functions on an interval), `def-nn-density` (densities, the normal distribution $N(\mu, s^2)$, independence of real random variables), `thm-nn-init-variance` (variance of $W\mathbf{x}$ for random $W$) |
+| 8 | `def-likelihood`, `eq-prob-nll` (the loss is the average negative log-likelihood), `def-entropy`, `def-cross-entropy`, `def-kl`, `thm-gibbs` (KL is non-negative), `thm-prob-categorical-mle` (maximum likelihood is relative frequency), `def-softmax`, `thm-softmax-jacobian`, `thm-softmax-ce-gradient` (gradient is $\mathbf{p} - \mathbf{y}$), `exm-uniform-loss` (uniform model has loss $\ln|V|$; the book's model starts near $3.35$) |
+| 9 | `def-vocabulary` (tokens, boundary token $\diamond$), `thm-sequence-chain-rule` (chain rule of probability), `def-language-model` (numbering from $x_1 = \diamond$), `thm-bigram-mle` (maximum likelihood is relative frequency, row by row), `def-perplexity` (loss and perplexity of a text), `def-embedding` (one-hot vector and embedding) |
+| 10 | `def-attention`, `eq-attention-matrix` ($\operatorname{Attn}(Q, K, V)$), `thm-attention-scale` (variance of $\mathbf{q}\cdot\mathbf{k}$ and the $1/\sqrt{d_h}$ scale), `def-causal-mask`, `thm-causal-cache` (causal attention at $t$ is attention over positions $1$ to $t$), `def-multi-head`, `thm-permutation-equivariance`, `def-position-embedding` (and the context length) |
+| 11 | `def-rmsnorm`, `thm-residual-jacobian`, `def-small-gpt` (the model), `thm-parameter-count` (the model has 4192 parameters), `thm-initial-loss` (bounds on the expected loss at initialisation), `thm-temperature` (limits as temperature tends to 0 and to infinity), `thm-kv-cache` |
 | A | `thm-fd-error` (truncation and rounding error of finite differences), `thm-softmax-shift` (softmax is unchanged by adding a constant) |
 
 ## The model the book builds
