@@ -8,8 +8,12 @@ derivative answers that question. Near a point $a$,
 $$
 f(a + h) \approx f(a) + f'(a)\,h ,
 $$
-so a small nudge $h$ to the input changes the output by about
-$f'(a)$ times the nudge. This chapter extends that approximation to
+so a small change $h$ in the input changes the output by about
+$f'(a)\,h$. The change $h$ is called the *increment* of the input,
+often written $\Delta x$, and the resulting change
+$\Delta f = f(a + h) - f(a)$ is the increment of the function. The
+approximation says $\Delta f \approx f'(a)\,\Delta x$ when $\Delta x$ is
+small. This chapter extends that approximation to
 functions with many inputs and many outputs. Before the definitions,
 a worked example shows what the extension looks like and why matrices
 appear in it.
@@ -23,46 +27,48 @@ from checks import check, close, maxima_zero, sym_equal
 rng = np.random.default_rng(1)
 ```
 
-## Nudging several inputs at once {#sec-nudging}
+## Changing several inputs at once {#sec-increments}
 
-Take $f(x, y) = x^2y$ at the point $(1, 2)$, where $f(1, 2) = 2$. Nudge
-one input at a time, holding the other fixed.
+Take $f(x, y) = x^2y$ at the point $(1, 2)$, where $f(1, 2) = 2$.
+First change one input at a time, holding the other fixed.
 
-- Nudge $x$ alone. With $y = 2$ held fixed, $f$ is the function
-  $2x^2$ of one variable, whose derivative at $x = 1$ is $4$. So a
-  nudge $h_1$ to $x$ changes $f$ by about $4h_1$: for $h_1 = 0.01$,
-  $f(1.01, 2) = 2.0402$, a change of $0.0402$.
-- Nudge $y$ alone. With $x = 1$ held fixed, $f$ is the function $y$,
-  whose derivative is $1$. So a nudge $h_2$ to $y$ changes $f$ by
-  $1\cdot h_2$: for $h_2 = 0.01$, $f(1, 2.01) = 2.01$, a change of
+- Change $x$ alone. With $y = 2$ held fixed, $f$ is the function
+  $2x^2$ of one variable, whose derivative at $x = 1$ is $4$. So an
+  increment $h_1$ in $x$ changes $f$ by about $4h_1$: for
+  $h_1 = 0.01$, $f(1.01, 2) = 2.0402$, an increment of $0.0402$.
+- Change $y$ alone. With $x = 1$ held fixed, $f$ is the function $y$,
+  whose derivative is $1$. So an increment $h_2$ in $y$ changes $f$ by
+  $1\cdot h_2$: for $h_2 = 0.01$, $f(1, 2.01) = 2.01$, an increment of
   $0.01$.
 
 These two rates, $4$ and $1$, are the *partial derivatives* of $f$ at
 $(1, 2)$, written $\partial f/\partial x$ and $\partial f/\partial y$:
 each is an ordinary derivative, taken with the other input frozen.
 
-Now nudge both inputs together, by $h_1 = h_2 = 0.01$. The two
-separate effects predict a change of about $0.04 + 0.01 = 0.05$, and
-indeed $f(1.01, 2.01) = 2.050401$, a change of $0.050401$. The
-separate effects add up. Expanding shows why:
+Now change both inputs together, with increments
+$h_1 = h_2 = 0.01$. The two separate effects predict an increment of
+about $0.04 + 0.01 = 0.05$ in $f$, and indeed $f(1.01, 2.01) = 2.050401$,
+an increment of $0.050401$. The separate effects add up. Expanding
+shows why:
 $$
 f(1 + h_1, 2 + h_2) - f(1, 2)
 = \underbrace{4h_1 + h_2}_{\text{first order}}
-  + \underbrace{2h_1^2 + 2h_1h_2 + h_1^2h_2}_{\text{products of nudges}} .
+  + \underbrace{2h_1^2 + 2h_1h_2 + h_1^2h_2}_{\text{products of increments}} .
 $$
-The leftover terms are products of two or more nudges. When the
-nudges are small these products are much smaller still: halving both
-nudges halves the first-order part but roughly quarters the leftover.
-So for small nudges
+The leftover terms are products of two or more increments. When the
+increments are small these products are much smaller still: halving
+both increments halves the first-order part but roughly quarters the
+leftover. So for small increments
 $$
 f(1 + h_1, 2 + h_2) \approx f(1, 2) + 4h_1 + 1h_2 .
-$$ {#eq-nudge-one-output}
+$$ {#eq-increment-one-output}
 
-The change on the right is a fixed combination $4h_1 + 1h_2$ of the
-nudges. A function of the nudges of this form, a sum of fixed
-multiples of them, is what @sec-linear-maps calls a *linear map*, and
-it is the several-variable version of "multiply the nudge by
-$f'(a)$". That linear map is the derivative of $f$ at $(1, 2)$.
+The increment of $f$ on the right is a fixed combination
+$4h_1 + 1h_2$ of the increments of the inputs. A function of the
+increments of this form, a sum of fixed multiples of them, is what
+@sec-linear-maps calls a *linear map*, and it is the several-variable
+version of "multiply the increment by $f'(a)$". That linear map is the
+derivative of $f$ at $(1, 2)$.
 
 A model usually has several outputs, so add a second one,
 $g(x, y) = x + 3y$, and treat the pair as one function
@@ -83,19 +89,21 @@ matrix multiplication does the adding up:
   $(\partial f/\partial x,\ \partial f/\partial y) = (4, 1)$, and row 2
   is $(\partial g/\partial x,\ \partial g/\partial y) = (1, 3)$;
 - **column $j$** lists how every output responds to input $j$ alone:
-  nudging only $x$ by $h_1$ multiplies column 1 by $h_1$, and changes
-  $F$ by about $(4h_1, h_1)$;
+  an increment $h_1$ in $x$ alone multiplies column 1 by $h_1$, and
+  changes $F$ by about $(4h_1, h_1)$;
 - **entry $(i, j)$** is the rate at which output $i$ changes per unit
-  nudge of input $j$, with the other inputs frozen.
+  increment of input $j$, with the other inputs frozen.
 
-Multiplying $J$ by the vector of nudges takes each column, scales it
-by its nudge, and adds the results. That is exactly the rule
-"separate effects add up". With the nudge $(0.01, 0.01)$ it predicts
-the change $(0.05, 0.04)$; the true change is $(0.050401, 0.04)$.
+Multiplying $J$ by the vector of increments takes each column, scales
+it by its increment, and adds the results. That is exactly the rule
+"separate effects add up". With the increment $(0.01, 0.01)$ it
+predicts the change $(0.05, 0.04)$; the true change is
+$(0.050401, 0.04)$.
 
-This one example contains the whole chapter. Close to a point, a
-well-behaved function changes by approximately a linear map of the
-nudge, and that linear map is the derivative. A linear map between
+This one example contains the whole chapter. Close to a point, the
+increment of a well-behaved function is approximately a linear map of
+the increment of its input, and that linear map is the derivative. A
+linear map between
 spaces of vectors is always given by a matrix (@thm-matrix-of-linear),
 and for the derivative the entries of that matrix are the partial
 derivatives (@thm-jacobian). When there is a single output the matrix
@@ -106,16 +114,16 @@ book computes and uses.
 
 Two points need care before these statements can be made precise.
 "Approximately" must mean that the error is small compared with the
-nudge, as it was above, where the leftover terms were products of
-nudges. And partial derivatives alone, which look along one input at
-a time, can exist even when nudging several inputs together does not
-behave like this at all (@exm-partials-not-enough). The sections that
+increment, as it was above, where the leftover terms were products of
+increments. And partial derivatives alone, which look along one input
+at a time, can exist even when changing several inputs together does
+not behave like this at all (@exm-partials-not-enough). The sections that
 follow set up the language of vectors and linear maps, and then the
 definitions that make "approximately linear" exact.
 
 ```{python}
 #| include: false
-# The worked example in "Nudging several inputs at once".
+# The worked example in "Changing several inputs at once".
 xs_, ys_, h1_, h2_ = sp.symbols("x y h1 h2", real=True)
 f_n = xs_**2 * ys_
 check(f_n.subs({xs_: 1, ys_: 2}) == 2, "f(1,2) = 2")
@@ -129,7 +137,7 @@ sym_equal(sp.expand(f_n.subs({xs_: 1 + h1_, ys_: 2 + h2_}) - 2),
           4*h1_ + h2_ + 2*h1_**2 + 2*h1_*h2_ + h1_**2*h2_, "expansion of f(1+h1, 2+h2) - f(1,2)")
 maxima_zero("expand((1+h1)^2*(2+h2) - 2) - (4*h1 + h2 + 2*h1^2 + 2*h1*h2 + h1^2*h2)",
             "expansion in Maxima")
-# Halving both nudges halves the first-order part and roughly quarters the rest.
+# Halving both increments halves the first-order part and roughly quarters the rest.
 rest = lambda h: 2*h**2 + 2*h*h + h**2*h
 close(rest(0.01) / rest(0.005), 4, "leftover roughly quarters", tol=0.01)
 Fn = sp.Matrix([xs_**2 * ys_, xs_ + 3*ys_])
