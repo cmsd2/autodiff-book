@@ -8,8 +8,9 @@ of the whole computation is a sum, over paths through the
 intermediate variables, of products of local partial derivatives.
 Automatic differentiation is the bookkeeping that does this combining,
 inside the computer, while it evaluates the formula. It gives
-derivatives that are exact apart from rounding, at a cost proportional
-to the cost of evaluating the function.
+derivatives that are exact apart from rounding, and each pass through
+the computation costs a constant multiple of one evaluation of the
+function.
 
 This chapter writes a function as a list of elementary steps, an
 evaluation trace, and as the directed graph that the list describes.
@@ -158,10 +159,16 @@ P = {3: {1}, 4: {2, 3}, 5: {1, 2}, 6: {5}, 7: {4, 6}}
 check(sorted(edges) == sorted((i, k) for k, ps in P.items() for i in ps), "figure edges match P(k)")
 ```
 
-A program that builds expressions as it runs does not number its
-variables. What it has is the picture: nodes joined by
-arrows, with an operation at each node. The next definition describes such
-pictures without reference to a numbering.
+The figure keeps what the computation needs, namely which values feed
+which operations, and drops the numbering. The numbering of
+@tbl-fwd-trace is one choice among several: $v_5$ could be computed
+before $v_3$, since it uses only the inputs, and the value of $f$
+would not change. A program that records a computation as it runs,
+such as the engine of @sec-rev-engine, does not number its variables
+either; it stores, with each result, links to the arguments it was
+computed from. So we want a description of the figure that does not
+depend on a numbering. Its boxes are called *nodes* and its arrows
+*edges*, and the next definition makes these terms precise.
 
 ::: {#def-computational-graph}
 ## Directed acyclic graph, computational graph
@@ -173,18 +180,42 @@ $i$. A *path* from $j$ to $k$ is a sequence of edges
 $j = i_0 \to i_1 \to \dots \to i_r = k$ with $r \ge 0$, where $r = 0$
 gives the *empty path* from $k$ to itself, as in
 @def-intermediate-variables. A *cycle* is a path with $r \ge 1$ from a
-node to itself. A graph with no cycle is *acyclic*, and a *directed
-acyclic graph* is a DAG for short.
+node to itself. A graph with no cycle is *acyclic*. A directed graph
+that is acyclic is called a *directed acyclic graph*, or *DAG*.
 
 A *computational graph* with inputs $x_1, \dots, x_n$ is a DAG in
 which $n$ nodes, labelled $x_1, \dots, x_n$, have no parents, every
-other node $k$ is labelled with an elementary operation $\varphi_k$ of
-the values at its parents, and some nodes are marked as outputs.
+other node $k$ is labelled with an elementary operation $\varphi_k$
+whose arguments are the values at the parents of $k$ (taken in a fixed
+order, which matters for operations such as $t_1 - t_2$), and some
+nodes are marked as outputs.
 :::
 
-The graph of a trace is a computational graph: an edge $i \to k$
-needs $i < k$, so the numbers strictly increase along every non-empty
-path, and no such path returns to its start.
+In @fig-fwd-trace-graph the nodes are the seven variables. Node $4$
+has parents $2$ and $3$, node $1$ has children $3$ and $5$, and there
+are two paths from node $1$ to node $7$, namely
+$1 \to 3 \to 4 \to 7$ and $1 \to 5 \to 6 \to 7$. Every edge goes from
+a smaller number to a larger one. The graph of any trace has this
+property, because an edge $i \to k$ needs $i < k$. So the numbers
+strictly increase along every non-empty path, no such path returns to
+its start, and the graph of a trace is a computational graph.
+
+```{python}
+#| include: false
+# Parents, children and the paths from 1 to 7 in fig-fwd-trace-graph.
+check({i for i, k in edges if k == 4} == {2, 3}, "parents of node 4")
+check({k for i, k in edges if i == 1} == {3, 5}, "children of node 1")
+
+
+def paths_between(j, k):
+    if j == k:
+        return [[k]]
+    return [[j] + p for i, m in edges if i == j for p in paths_between(m, k)]
+
+
+check(sorted(paths_between(1, 7)) == [[1, 3, 4, 7], [1, 5, 6, 7]], "two paths from 1 to 7")
+check(all(i < k for i, k in edges), "edges increase")
+```
 
 ## Topological orders {#sec-fwd-topological}
 
@@ -225,9 +256,8 @@ which is impossible.
 ::: {#thm-topological-order}
 ## Topological orders exist
 
-Every DAG has a topological order. If some of its nodes have no
-parents, there is a topological order in which those nodes come
-first.
+Every DAG with at least one node has a topological order, and it has
+one in which all the nodes with no parents come first.
 :::
 
 ::: {.proof}
@@ -238,13 +268,17 @@ Let $N \ge 2$ and suppose the result for graphs with $N - 1$ nodes.
 Let $S$ be the set of nodes without parents, which is not empty by
 @lem-dag-source, and choose $s$ in $S$. Remove $s$ and its edges. The
 remaining graph has $N-1$ nodes and no cycle, since a cycle in it
-would be a cycle in the whole graph, and the nodes of $S$ other than
-$s$ still have no parents in it. By the induction hypothesis it has a
-topological order with those nodes first. Number $s$ as $1$ and add
-$1$ to every other number. An edge either leaves $s$, and then goes
-from $1$ to a larger number, or joins two remaining nodes, and then
-goes forward because the order of the remaining graph is topological.
-The nodes of $S$ receive the numbers $1, \dots, |S|$.
+would be a cycle in the whole graph. By the induction hypothesis it
+has a topological order in which its nodes without parents come
+first. These include the nodes of $S$ other than $s$, and possibly
+children of $s$ that had no other parent. No edge ends at a node
+without parents, so rearranging this first block among itself keeps
+the order topological, and we may put the nodes of $S$ other than $s$
+at its start. Number $s$ as $1$ and add $1$ to every other number. An
+edge either leaves $s$, and then goes from $1$ to a larger number, or
+joins two remaining nodes, and then goes forward because the order of
+the remaining graph is topological. The nodes of $S$ receive the
+numbers $1, \dots, |S|$.
 :::
 
 The proof is an algorithm: repeatedly remove a node with no parents
@@ -361,11 +395,35 @@ $\dot v_k = v_l\dot v_i + v_i\dot v_l$. In the example above the seed
 was $\mathbf{u} = \mathbf{e}_1$, and $\dot v_k$ was the rate of change
 of $v_k$.
 
+The seed says in which direction the inputs move. Along the line
+$\mathbf{x} = \mathbf{a} + s\mathbf{u}$, each variable becomes a
+function $s \mapsto F_k(\mathbf{a} + s\mathbf{u})$ of one real
+variable $s$, and @thm-forward-mode below, with @thm-directional,
+shows that $\dot v_k$ is its derivative at $s = 0$: the slope of the tangent line to its graph,
+which is where the name comes from. The dot follows Newton's notation
+for a derivative with respect to a single parameter. With seed
+$\mathbf{u} = (0.3, -1.7)$ in @tbl-fwd-trace, for instance, both
+inputs move at once, and $\dot v_7 = 0.3\,(2 + 0.5\cos 1) - 1.7\,(4 +
+2\cos 1)$ is the rate of change of $f$ along that line.
+
+```{python}
+#| include: false
+# The tangent of v7 for seed (0.3, -1.7) is the derivative of f along the line a + s u.
+s_ = sp.symbols("s", real=True)
+along = f_ex.subs({x: 2 + sp.Rational(3, 10) * s_, y: sp.Rational(1, 2) - sp.Rational(17, 10) * s_},
+                  simultaneous=True)
+sym_equal(sp.diff(along, s_).subs(s_, 0),
+          sp.Rational(3, 10) * (2 + sp.cos(1) / 2) - sp.Rational(17, 10) * (4 + 2 * sp.cos(1)),
+          "tangent of v7 for seed (0.3, -1.7)")
+```
+
 @thm-chain-rule-paths assumes that the inputs range over an open set
 on which every line is defined. The set $D$ is such a set.
 
 ::: {#lem-trace-open}
-The set $D$ on which a trace is defined is open, and each $F_k$ is
+Let $D \subseteq \mathbb{R}^n$ be the set of points at which an
+evaluation trace with inputs $x_1, \dots, x_n$ is defined. Then $D$ is
+open, and each $F_k$ is
 continuous on $D$.
 :::
 
@@ -432,7 +490,7 @@ $\dot v_k = \nabla F_k(\mathbf{a})\cdot\mathbf{u}$ for every $k$.
 
 The components of $f$ are the functions $F_k$ of the output variables.
 Each is differentiable at $\mathbf{a}$, so $f$ is (@lem-components),
-and row $l$ of $J_f(\mathbf{a})\mathbf{u}$ is
+and component $l$ of $J_f(\mathbf{a})\mathbf{u}$ is
 $\nabla F_k(\mathbf{a})\cdot\mathbf{u}$ for the variable $v_k$ that is
 output $y_l$.
 :::
@@ -723,8 +781,10 @@ sym_equal(sp.diff(fs, t), sp.cos(t) * sp.exp(sp.sin(t)), "derivative of e^sin t"
 
 A dual number is a pair of floating-point numbers, and the rules of
 @def-dual-numbers and @eq-dual-extension take a few lines each. The
-class below overloads Python's arithmetic operators, so that an
-ordinary function written with `+`, `*` and `/` works on dual numbers
+class below holds the real part in `a` and the $\varepsilon$-part in
+`b`, and it tells Python what `+`, `-`, `*` and `/` mean for such
+pairs (programmers call this *operator overloading*). An ordinary
+function written with these symbols then works on dual numbers
 unchanged.
 
 ```{python}
@@ -789,9 +849,22 @@ sin = extend(math.sin, math.cos)
 cos = extend(math.cos, lambda a: -math.sin(a))
 ```
 
+The methods `__add__` and `__mul__` are the two formulas of
+@def-dual-numbers. Subtraction adds the negative, and division
+multiplies by the inverse $1/c - (d/c^2)\varepsilon$ found above, so
+it needs a non-zero real part in the divisor. The methods whose names
+begin with `__r` handle a real number on the left, as in `1 - x`, by
+first turning it into the dual number $a + 0\varepsilon$ with
+`as_dual`. The function `extend` takes a function $g$ and its
+derivative $g'$ and returns the extension @eq-dual-extension, and the
+last four lines use it for $\exp$, $\log$, $\sin$ and $\cos$.
+
 One forward pass with seed $\mathbf{u}$ gives $f(\mathbf{a})$ and
 $J_f(\mathbf{a})\mathbf{u}$, by @thm-dual-numbers (c). For a function
-with one output, $n$ passes give the gradient.
+with one output, $n$ passes give the gradient. Below, `jvp` builds the
+inputs $a_j + u_j\varepsilon$, evaluates $f$ on them and returns the
+two parts of the output, and `gradient` calls it once with each seed
+$\mathbf{e}_j$.
 
 ```{python}
 #| label: dual-forward

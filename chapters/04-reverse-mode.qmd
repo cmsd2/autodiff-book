@@ -117,8 +117,19 @@ check(sp.diff(L3, w3) == 1 and sp.diff(L3, w1) == 1, "L_3 = w3 + w1: last-line p
 
 ## The reverse sweep {#sec-rev-sweep}
 
-The reverse sweep computes the adjoints from the output backwards,
-keeping one running total, the *accumulator*, for each variable.
+In the example, the adjoint of $v_1$ was assembled from one
+contribution for each line that uses $v_1$: line $3$ contributed
+$d_{31}\bar v_3$ and line $4$ contributed $d_{41}\bar v_4$. Each
+contribution needs the adjoint of a later variable. So we process the
+lines from the last to the first, and let line $k$ hand its
+contribution $d_{ki}\bar v_k$ to each of its arguments $v_i$. Every
+line that uses $v_k$ has a number larger than $k$, so by the time the
+process reaches line $k$, all of them have handed over their
+contributions, and the adjoint of $v_k$ is complete and ready to
+pass on. A variable may receive contributions from several lines, so
+the method keeps a running total for each variable, called its
+*accumulator*, and adds each contribution to it. This is the reverse
+sweep.
 
 ::: {#def-reverse-sweep}
 ## Reverse sweep
@@ -133,10 +144,8 @@ keeping one running total, the *accumulator*, for each variable.
 4. Return the accumulators of $v_1, \dots, v_n$.
 :::
 
-Step 3 accumulates: a variable that is an argument of several lines
-receives a contribution from each of them, and the sweep adds the
-contributions. The next example shows that adding, rather than
-overwriting, is essential.
+The next example runs the sweep on $L = ab + a$, and shows that step 3
+must add to the accumulators rather than overwrite them.
 
 ::: {#exm-ab-plus-a}
 Run the sweep on $L = ab + a$ at $a = 2$, $b = 3$. It starts with
@@ -275,16 +284,37 @@ $$
 Column $k$ of $C$ holds the local partial derivatives of line $k$
 with respect to its arguments, and row $i$ holds the local partial
 derivatives of the lines that use $v_i$. Since $i \in P(k)$ only when
-$i < k$, the matrix is strictly upper triangular. For
-@exm-ab-plus-a the non-zero entries are $c_{13} = 3$, $c_{23} = 2$,
-$c_{34} = 1$ and $c_{14} = 1$.
+$i < k$, the matrix is strictly upper triangular: every entry on or
+below the diagonal is $0$. For @exm-ab-plus-a,
+$$
+C = \begin{pmatrix}
+0 & 0 & 3 & 1\\
+0 & 0 & 2 & 0\\
+0 & 0 & 0 & 1\\
+0 & 0 & 0 & 0
+\end{pmatrix}.
+$$
+Column $3$ holds $d_{31} = 3$ and $d_{32} = 2$, the local partial
+derivatives of $v_3 = v_1v_2$, and column $4$ holds $d_{41} = 1$ and
+$d_{43} = 1$, those of $v_4 = v_3 + v_1$. Row $1$ says that $v_1$ is
+used by lines $3$ and $4$. Columns $1$ and $2$ are zero because the
+inputs have no arguments, and row $4$ is zero because no line uses
+the output.
 
 The tangent recurrence @eq-fwd-tangent with seed $\mathbf{u}$ says
 $\dot{\mathbf{v}} = \mathbf{s} + C^\top\dot{\mathbf{v}}$ with
 $\mathbf{s} = (u_1, \dots, u_n, 0, \dots, 0)$, because entry $k$ of
 $C^\top\dot{\mathbf{v}}$ is $\sum_{i\in P(k)} d_{ki}\dot v_i$ and the
 inputs have no arguments. The adjoint equations @eq-rev-adjoint say
-$\bar{\mathbf{v}} = \mathbf{e}_N + C\bar{\mathbf{v}}$.
+$\bar{\mathbf{v}} = \mathbf{e}_N + C\bar{\mathbf{v}}$, because entry
+$i$ of $C\bar{\mathbf{v}}$ is $\sum_{k : i\in P(k)} d_{ki}\bar v_k$.
+So forward mode multiplies by $C^\top$, running down the columns of
+$C$, and reverse mode multiplies by $C$, running along its rows. In
+the example, $\bar{\mathbf{v}} = (4, 2, 1, 1)$ and
+$C\bar{\mathbf{v}} = (3 + 1,\; 2,\; 1,\; 0)$, so
+$\mathbf{e}_4 + C\bar{\mathbf{v}} = \bar{\mathbf{v}}$. The next theorem
+shows that two such equations, one with $C^\top$ and one with $C$,
+always produce matching numbers.
 
 ::: {#thm-forward-reverse}
 ## Transposition
@@ -333,6 +363,9 @@ C4 = np.zeros((4, 4))
 C4[0, 2], C4[1, 2], C4[2, 3], C4[0, 3] = 3.0, 2.0, 1.0, 1.0
 vb4 = np.linalg.solve(np.eye(4) - C4, np.eye(4)[3])
 close(vb4, [4, 2, 1, 1], "adjoints of exm-ab-plus-a from the matrix")
+check(np.array_equal(C4, [[0, 0, 3, 1], [0, 0, 2, 0], [0, 0, 0, 1], [0, 0, 0, 0]]), "displayed C")
+close(C4 @ np.array([4.0, 2, 1, 1]), [4, 2, 1, 0], "C vbar = (3 + 1, 2, 1, 0)")
+close(np.eye(4)[3] + C4 @ np.array([4.0, 2, 1, 1]), [4, 2, 1, 1], "e4 + C vbar = vbar")
 t41 = np.linalg.solve(np.eye(4) - C4.T, np.eye(4)[0])
 close(t41, [1, 0, 3, 4], "tangents for seed e1")
 for i in range(2):
@@ -408,9 +441,10 @@ how depth-first search leads to efficient graph algorithms.
 There is a simpler order available to an engine that records
 operations as they happen: the order of creation. An engine creates
 each node after its parents, so creation order is a topological
-order. Keeping it requires a global record of every operation
-performed, often called a *tape*. Depth-first search needs no global
-state and visits only the nodes that the output depends on.
+order. Keeping it requires a separate list of every operation
+performed, in the order performed, often called a *tape*. Depth-first
+search needs only the parent links that the nodes already hold, and
+visits only the nodes that the output depends on.
 
 ## The cost of a gradient {#sec-rev-cost}
 
@@ -450,8 +484,9 @@ arithmetic operation and every evaluation of $\exp$, $\log$, $\sin$,
 $\cos$ or a power costing $1$, we can take $\alpha = 3$: the partial
 derivatives of $t_1 + t_2$ and $t_1 t_2$ are constants or arguments;
 the derivative of $e^t$ is the value already computed; those of
-$\log t$ and $\sin t$ take one operation, and so does that of
-$\cos t$; that of $t^c$ is $c\,t^c/t$, two operations; and those of
+$\log t$ and $\sin t$ take one operation each, and that of $\cos t$,
+which is $-\sin t$, takes two; that of $t^c$ is $c\,t^c/t$, two
+operations; and those of
 $t_1/t_2$ are $1/t_2$ and $-(t_1/t_2)/t_2$, three operations.
 
 ::: {#thm-cheap-gradient}
@@ -594,15 +629,28 @@ order of the matrix multiplications is the same choice
 
 ## Memory and checkpointing {#sec-rev-checkpointing}
 
-Reverse mode pays for its speed in memory. Line $k$ of the sweep needs
-the arguments of line $k$, so the forward pass must keep every value
-until the sweep reaches it: memory in proportion to $N$, the length of
-the computation. Forward mode, by contrast, can discard each value
-once the lines that use it have run.
+Reverse mode pays for its speed in *memory*, by which we mean the
+number of values a method must store at the same time. Line $k$ of the
+sweep needs the arguments of line $k$, so the forward pass must keep
+every value until the sweep reaches it: memory in proportion to $N$,
+the length of the computation. Forward mode, by contrast, can discard
+each value once the lines that use it have run.
 
-*Checkpointing* trades recomputation for memory. Take a computation
-that is a chain of $T$ steps, $\mathbf{s}_t = \Phi_t(\mathbf{s}_{t-1})$
-for $t = 1, \dots, T$, such as the layers of a deep network. During
+Take a computation that is a chain of $T$ steps,
+$\mathbf{s}_t = \Phi_t(\mathbf{s}_{t-1})$ for $t = 1, \dots, T$, such
+as the layers of a deep network, where each *state* $\mathbf{s}_t$ is
+a vector. Sweeping back through step $t$ needs its argument
+$\mathbf{s}_{t-1}$, so the plain sweep stores all the states. With
+$T = 100$ there is a cheaper way. Keep only the ten states
+$\mathbf{s}_0, \mathbf{s}_{10}, \dots, \mathbf{s}_{90}$ during the
+forward pass. To sweep back through steps $100, \dots, 91$, recompute
+$\mathbf{s}_{91}, \dots, \mathbf{s}_{99}$ from $\mathbf{s}_{90}$; once
+the sweep has passed step $91$, discard them, recompute
+$\mathbf{s}_{81}, \dots, \mathbf{s}_{89}$ from $\mathbf{s}_{80}$, and
+so on. At most $20$ states are stored at any moment, against $100$,
+and each $\Phi_t$ is evaluated at most twice.
+
+*Checkpointing* trades recomputation for memory in this way. During
 the forward pass, keep only every $K$th state $\mathbf{s}_0,
 \mathbf{s}_K, \mathbf{s}_{2K}, \dots$, about $T/K$ of them. During the
 sweep, take the segments in reverse order: recompute the states of a
@@ -647,6 +695,10 @@ def checkpoint_cost(T, K):
 for T, K in ((100, 10), (1000, 31), (10**4, 100)):
     peak, rec = checkpoint_cost(T, K)
     check(peak <= math.ceil(T / K) + K and rec <= T, f"checkpoint memory and work for T={T}")
+# The T = 100, K = 10 example of the text: ten checkpoints, at most 20 states,
+# 90 recomputed steps, so each step is evaluated at most twice.
+check(list(range(0, 100, 10)) == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90], "ten checkpoints")
+check(checkpoint_cost(100, 10) == (20, 90), f"T = 100, K = 10: {checkpoint_cost(100, 10)}")
 ```
 
 ## A scalar reverse-mode engine {#sec-rev-engine}
@@ -742,13 +794,20 @@ agrees with $0$ or with $t$ on an interval around its argument, so it
 is differentiable there and @thm-reverse-mode applies.
 
 The sweep itself is the depth-first search of @def-rev-dfs followed by
-step 3 of @def-reverse-sweep. A visit that calls itself for each
-parent would be the most direct translation of @def-rev-dfs, but Python
-allows only about a thousand nested calls, and a chain of a thousand
-operations would exceed that. So `topological_order` keeps the visits
-in progress on an explicit stack: the top entry is the visit being
-carried out, holding the parents it has yet to visit, and a node is
-appended to the list when its visit runs out of parents.
+step 3 of @def-reverse-sweep. The most direct translation of
+@def-rev-dfs is a function `visit` that calls itself once for each
+parent. But a call that has started and not yet finished occupies
+space until it returns, and Python allows only about a thousand such
+calls at once, so a chain of a thousand operations would exceed the
+limit. So `topological_order` keeps its own list of the visits in
+progress. It adds and removes entries only at the end of that list,
+which programmers call a *stack*. The last entry is the visit being
+carried out, together with the parents it has yet to visit. At each
+step that visit takes its next parent and, if the parent is unmarked,
+marks it and starts a visit to it by adding an entry. When a visit has
+no parents left, its entry is removed and its node is appended to the
+order, as @def-rev-dfs prescribes. The set `visited` holds the marked
+nodes.
 
 ```{python}
 #| label: engine-backward
@@ -780,7 +839,14 @@ def backward(root):
             parent.grad += node.grad * d
 ```
 
-The example of @exm-ab-plus-a:
+The function `backward` is @def-reverse-sweep with the order from
+`topological_order` in place of the numbering. It sets every
+accumulator to $0$, which also clears the results of any earlier call,
+and the accumulator of the output to $1$. It then takes the nodes from
+last to first and adds `node.grad * d` to the accumulator of each
+parent, where `d` is the stored local partial derivative. Nodes
+without parents, the inputs and constants, contribute nothing. Running
+it on @exm-ab-plus-a gives the value $8$ and the gradient $(4, 2)$:
 
 ```{python}
 #| echo: true
@@ -802,10 +868,16 @@ contributions to give $2x$. This is @eq-rev-adjoint for the operation
 $t \mapsto t^2$, whose derivative is the sum of the partial
 derivatives of $t_1t_2$ at $t_1 = t_2 = t$.
 
-A small two-layer network shows the engine on the kind of expression
-the rest of the book trains. Two inputs pass through two ReLU units
-and a weighted sum, and the loss is the squared distance to a target
-of $1$.
+A small two-layer network, of the kind @sec-networks studies, shows
+the engine on the kind of expression the rest of the book trains. From
+the inputs $x_1 = 0.5$ and $x_2 = -1.5$, a $2\times 2$ matrix $W$ of
+weights and weights $c_1$, $c_2$, it computes
+$$
+h_i = \max(w_{i1}x_1 + w_{i2}x_2,\; 0) \quad (i = 1, 2), \qquad
+y = c_1h_1 + c_2h_2, \qquad \text{loss} = (y - 1)^2 ,
+$$
+the squared distance of $y$ from a target of $1$. The code finds the
+derivative of the loss with respect to each of the six weights.
 
 ```{python}
 #| echo: true
@@ -824,10 +896,12 @@ print("dloss/dW =", [[round(w.grad, 6) for w in row] for row in W])
 print("dloss/dc =", [round(ci.grad, 6) for ci in c])
 ```
 
-The second unit receives $1.1 \cdot 0.5 + 0.4 \cdot (-1.5) = -0.05$,
-so its ReLU outputs $0$ and passes back adjoint $0$: the weights
-$W_{21}$, $W_{22}$ and $c_2$ get zero gradient at this point. The first
-unit receives $1.35$, and $y = 0.7 \cdot 1.35 = 0.945$.
+For $h_2$ the argument of the maximum is
+$1.1 \cdot 0.5 + 0.4 \cdot (-1.5) = -0.05$, so $h_2 = 0$, the ReLU
+passes back adjoint $0$, and the weights $w_{21}$, $w_{22}$ and $c_2$
+get zero derivative at this point. For $h_1$ it is $1.35$, so
+$y = 0.7 \cdot 1.35 = 0.945$ and the loss is
+$0.055^2 = 0.003025$.
 
 ```{python}
 #| include: false
@@ -993,7 +1067,8 @@ $L = u_k + w_k$.
 (a) Show that the computational graph has $2^{k+1}$ paths from $x$ to
 $L$.
 
-(b) Show that the reverse sweep performs $4k + 4$ multiply-add steps.
+(b) Show that step 3 of the reverse sweep updates an accumulator
+$4k + 4$ times, once for each edge of the graph.
 :::
 
 ::: {#exr-ch4-checkpoint}

@@ -213,7 +213,8 @@ layer $k$), and both nodes of each layer are joined to both nodes of
 the next. Each of the $2^{k+1}$ choices of one node per layer is a
 path, so there are $2^{k+1}$ paths.
 
-(b) The sweep does one multiply-add for each edge. There are $2$ edges
+(b) Step 3 of the sweep updates one accumulator for each edge $i \to k$,
+adding $\bar v_k d_{ki}$ to the accumulator of $v_i$. There are $2$ edges
 from $x$, $4$ into each of the layers $1, \dots, k$, and $2$ into $L$,
 so $4k + 4$ in all.
 
