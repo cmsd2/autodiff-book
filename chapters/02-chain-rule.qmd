@@ -1522,12 +1522,38 @@ $\mathbf{h} \ne \mathbf{0}$ the form, divided by $\|\mathbf{h}\|^2$,
 lies between the smallest and the
 largest eigenvalue.
 
-A symmetric matrix $A$ is *positive definite* if
+The sign of the quadratic form is what the second-derivative test
+needs. The Hessian $\operatorname{diag}(2, 6)$ of the bowl
+$x^2 + 3y^2$ gives $2h_1^2 + 6h_2^2$, positive for every
+$\mathbf{h} \ne \mathbf{0}$, while the form of
+$\begin{pmatrix} 1 & 2\\ 2 & 1\end{pmatrix}$ takes both signs.
+Matrices of the first kind have a name.
+
+::: {#def-positive-definite}
+## Definite matrices
+
+A real symmetric $n\times n$ matrix $A$ is *positive definite* if
 $\mathbf{h}^\top A\mathbf{h} > 0$ for every $\mathbf{h} \ne \mathbf{0}$
-and *negative definite* if $\mathbf{h}^\top A\mathbf{h} < 0$ for every
-$\mathbf{h} \ne \mathbf{0}$. By @cor-quadratic-bounds, $A$ is positive
-definite exactly when all its eigenvalues are positive, and negative
-definite exactly when all are negative.
+in $\mathbb{R}^n$, *positive semidefinite* if
+$\mathbf{h}^\top A\mathbf{h} \ge 0$ for every $\mathbf{h}$,
+*negative definite* if $\mathbf{h}^\top A\mathbf{h} < 0$ for every
+$\mathbf{h} \ne \mathbf{0}$, and *negative semidefinite* if
+$\mathbf{h}^\top A\mathbf{h} \le 0$ for every $\mathbf{h}$.
+:::
+
+By @cor-quadratic-bounds, with $\lambda_1 \ge \dots \ge \lambda_n$ the
+eigenvalues of $A$, the form is at least $\lambda_n\|\mathbf{h}\|^2$
+and equals $\lambda_n$ at $\mathbf{h} = \mathbf{u}_n$. So $A$ is
+positive definite exactly when all its eigenvalues are positive, and
+positive semidefinite exactly when none is negative. Applying this to
+$-A$, it is negative definite exactly when all its eigenvalues are
+negative, and negative semidefinite exactly when none is positive. The
+bowl's Hessian, with eigenvalues $2$ and $6$, is positive definite.
+The matrix $\begin{pmatrix} 1 & 1\\ 1 & 1\end{pmatrix}$ gives the
+form $(h_1 + h_2)^2$ and has eigenvalues $2$ and $0$, so it is
+positive semidefinite but not positive definite. The matrix
+$\begin{pmatrix} 1 & 2\\ 2 & 1\end{pmatrix}$, with eigenvalues $3$
+and $-1$, is neither positive nor negative semidefinite.
 
 ```{python}
 #| include: false
@@ -1551,6 +1577,21 @@ for n_ in (2, 3, 6):
         close(qf, np.sum(lam * (Q.T @ hv) ** 2), "h^T A h as a sum over eigenvalues")
         check(lam[0] * (hv @ hv) - 1e-9 <= qf <= lam[-1] * (hv @ hv) + 1e-9, "quadratic-form bounds")
         close(Q[:, -1] @ S @ Q[:, -1], lam[-1], "equality at the top eigenvector")
+        # def-positive-definite: the sign of the form follows the eigenvalues.
+        hs_many = rng.normal(size=(200, n_))
+        forms = np.einsum("ki,ij,kj->k", hs_many, S, hs_many)
+        if lam[0] > 0:
+            check(np.all(forms > 0), "all eigenvalues positive: positive definite")
+        if lam[-1] < 0:
+            check(np.all(forms < 0), "all eigenvalues negative: negative definite")
+        if lam[0] < 0:
+            check(Q[:, 0] @ S @ Q[:, 0] < 0, "a negative eigenvalue: not positive semidefinite")
+# The two examples in the lead-in to def-positive-definite.
+sym_equal((hs_.T * sp.diag(2, 6) * hs_)[0, 0], 2*hs1**2 + 6*hs2**2, "form of diag(2, 6)")
+check(sp.Matrix([[1, 2], [2, 1]]).eigenvals() == {3: 1, -1: 1}, "eigenvalues 3 and -1")
+psd_ = sp.Matrix([[1, 1], [1, 1]])
+check(psd_.eigenvals() == {2: 1, 0: 1} and sp.factor((hs_.T * psd_ * hs_)[0, 0]) == (hs1 + hs2)**2,
+      "a positive semidefinite matrix that is not positive definite")
 ```
 
 ### The test
@@ -1571,11 +1612,13 @@ twice continuously differentiable on $U$, and $\mathbf{a}$ a critical
 point of $f$. Let $\lambda_1 \ge \dots \ge \lambda_n$ be the
 eigenvalues of the symmetric matrix $\nabla^2 f(\mathbf{a})$.
 
-(a) If every eigenvalue is positive ($\lambda_n > 0$), $\mathbf{a}$ is
-a strict local minimum.
+(a) If $\nabla^2 f(\mathbf{a})$ is positive
+definite (@def-positive-definite), that is, every eigenvalue is positive
+($\lambda_n > 0$), then $\mathbf{a}$ is a strict local minimum.
 
-(b) If every eigenvalue is negative ($\lambda_1 < 0$), $\mathbf{a}$ is
-a strict local maximum.
+(b) If $\nabla^2 f(\mathbf{a})$ is negative definite, that is, every
+eigenvalue is negative ($\lambda_1 < 0$), then $\mathbf{a}$ is a
+strict local maximum.
 
 (c) If $\lambda_1 > 0 > \lambda_n$, then $\mathbf{a}$ is a *saddle
 point*: every disc around $\mathbf{a}$ contains points where

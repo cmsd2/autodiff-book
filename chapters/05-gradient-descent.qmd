@@ -698,8 +698,9 @@ $$
 f(\mathbf{y}) \ge f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
 + \frac{\mu}{2}\|\mathbf{y} - \mathbf{x}\|^2 .
 $$
-In particular (taking $\mu = 0$), a function whose Hessian has no
-negative eigenvalues is convex.
+In particular (taking $\mu = 0$), a function whose Hessian is positive
+semidefinite at every point (@def-positive-definite), that is, has no
+negative eigenvalues, is convex.
 :::
 
 ::: {.proof}
@@ -714,8 +715,8 @@ least $\mu$, so by @cor-quadratic-bounds the last term is at least
 $\frac{\mu}{2}\|\mathbf{d}\|^2$. With $\mu = 0$ the inequality is @eq-gd-tangent, so $f$ is convex by @thm-convex-first-order.
 :::
 
-So the quadratic of @exm-smooth-quadratic is convex when no eigenvalue
-of $A$ is negative, and the function $\ln(1 + e^x)$ of @exm-softplus
+So the quadratic of @exm-smooth-quadratic is convex when $A$ is
+positive semidefinite, and the function $\ln(1 + e^x)$ of @exm-softplus
 is convex because $f'' > 0$. That function also shows that a convex
 function need not have a minimiser: it is positive and tends to $0$ as
 $x \to -\infty$, but never reaches $0$. The next theorem assumes a
@@ -1049,9 +1050,10 @@ eigenvectors of the Hessian they separate in the same way.
 
 So let $A$ be a symmetric $n\times n$ matrix whose eigenvalues all lie
 in an interval $[\mu, L]$ with $\mu > 0$, where $\mu$ and $L$ are the
-smallest and largest eigenvalues. By @thm-spectral, $A$ has an
-orthonormal basis of eigenvectors $\mathbf{u}_1, \dots, \mathbf{u}_n$,
-with $A\mathbf{u}_i = \lambda_i\mathbf{u}_i$. Let
+smallest and largest eigenvalues; such a matrix is positive
+definite (@def-positive-definite). By @thm-spectral, $A$ has an orthonormal
+basis of eigenvectors $\mathbf{u}_1, \dots, \mathbf{u}_n$, with
+$A\mathbf{u}_i = \lambda_i\mathbf{u}_i$. Let
 $\mathbf{b} \in \mathbb{R}^n$ and
 $$
 f(\boldsymbol{\theta}) = \tfrac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta} .

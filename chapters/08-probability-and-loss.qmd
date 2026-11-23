@@ -606,11 +606,10 @@ singular;
 
 (c) $\mathbf{v}^\top J\mathbf{v} = \sum_ip_iv_i^2 - \bigl(\sum_ip_iv_i\bigr)^2 \ge 0$
 for every $\mathbf{v}$, with equality exactly when $\mathbf{v}$ is a
-multiple of $\mathbf{1}$. So $J$ is *positive semidefinite* (a
-symmetric matrix $A$ with $\mathbf{v}^\top A\mathbf{v} \ge 0$ for
-every $\mathbf{v}$), its eigenvalues are real, $0$ is an eigenvalue
-whose eigenvectors are the non-zero multiples of $\mathbf{1}$, and
-every other eigenvalue is positive.
+multiple of $\mathbf{1}$. So $J$ is positive semidefinite in the
+sense of @def-positive-definite, its eigenvalues are real, $0$ is an
+eigenvalue whose eigenvectors are the non-zero multiples of
+$\mathbf{1}$, and every other eigenvalue is positive.
 :::
 
 Column $k$ of $J$ lists how every probability responds to an
