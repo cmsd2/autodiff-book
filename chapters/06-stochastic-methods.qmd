@@ -1,17 +1,18 @@
 # Stochastic and adaptive methods {#sec-stochastic}
 
-The loss of a model is an average over its training examples:
+A model learns from a list of $N$ examples, its *training set*, and
+its loss is the average of the losses on the individual examples:
 $$
 f(\boldsymbol{\theta}) = \frac1N\sum_{i=1}^N f_i(\boldsymbol{\theta}),
 $$ {#eq-stoch-average-loss}
 where $f_i$ measures the error on example $i$. Its gradient is the
 average of the $N$ gradients $\nabla f_i$, and computing it exactly
 means a pass through the whole training set for every step. The model
-in @sec-small-gpt instead takes each step using the gradient of the
-loss on a single name. That gradient is random, because the name is,
-but it is right on average, and the first half of this chapter makes
-"right on average" precise and shows that gradient descent still
-works with such estimates.
+in @sec-small-gpt trains on a list of names, and instead takes each
+step using the gradient of the loss on a single name. That gradient is
+random, because the choice of name is, but it is right on average. The
+first half of this chapter makes "right on average" precise and shows
+that gradient descent still works with such estimates.
 
 The second half builds the method the model actually uses. Momentum
 smooths the zigzag of @exm-gd-zigzag by remembering past steps.
@@ -74,7 +75,10 @@ $$
 $$
 :::
 
-The expectation is the average of the values of $\mathbf{X}$, each
+A random variable is a quantity whose value depends on the outcome,
+such as the gradient of the example picked. Writing it as a function
+on $\Omega$ makes "its value at the outcome $\omega$" precise. The
+expectation is the average of the values of $\mathbf{X}$, each
 weighted by the probability of the outcome that produces it; its
 components are the expectations of the components of $\mathbf{X}$.
 When all outcomes are equally likely, $P(\omega) = 1/|\Omega|$,
@@ -108,6 +112,37 @@ $\mathbf{x}\sum_{\mathbf{X}(\omega)=\mathbf{x}}P(\omega) = \mathbf{x}\,P(\mathbf
 The last holds term by term, since $P(\omega) \ge 0$.
 :::
 
+In the example, let $X$ be the average of the two picked gradients.
+Its six values have unequal probabilities:
+
+| value $x$ | $-1$ | $-1.5$ | $-2$ | $-3.5$ | $-4$ | $-6$ |
+|---|---|---|---|---|---|---|
+| $P(X = x)$ | $\frac19$ | $\frac29$ | $\frac19$ | $\frac29$ | $\frac29$ | $\frac19$ |
+
+The formula over values gives
+$$
+\mathbb{E}[X] = \frac{-1 - 3 - 2 - 7 - 8 - 6}{9} = -\frac{27}{9} = -3 .
+$$
+Linearity gives the same answer at once: $X = \frac12(X_1 + X_2)$,
+where $X_1$ and $X_2$ are the gradients of the first and the second
+pick, each with expectation $-3$, so
+$\mathbb{E}[X] = \frac12(-3 - 3) = -3$. The average of two picks is
+right on average, just as a single pick is.
+
+```{python}
+#| include: false
+# The table of the average of two picks, and its expectation two ways.
+picks_ = [Fr(-1), Fr(-2), Fr(-6)]
+pairs_ = list(itertools.product(picks_, repeat=2))
+avgs_ = [(a + b) / 2 for a, b in pairs_]
+dist2 = {v: Fr(avgs_.count(v), 9) for v in set(avgs_)}
+check(dist2 == {Fr(-1): Fr(1, 9), Fr(-3, 2): Fr(2, 9), Fr(-2): Fr(1, 9), Fr(-7, 2): Fr(2, 9),
+                Fr(-4): Fr(2, 9), Fr(-6): Fr(1, 9)}, "distribution of the average of two picks")
+check(sum(v * p for v, p in dist2.items()) == -3 and -1 - 3 - 2 - 7 - 8 - 6 == -27, "E = -27/9 = -3 over values")
+check(sum(avgs_) / 9 == -3, "E over outcomes")
+check(sum(a for a, _ in pairs_) / 9 == -3 and sum(b for _, b in pairs_) / 9 == -3, "E[X_1] = E[X_2] = -3")
+```
+
 Two picks made one after the other, each from all three examples, do
 not influence each other. In the example, the probability that the
 first pick is example $1$ and the second is example $2$ is
@@ -128,7 +163,12 @@ $\mathbf{X}_i$ and $\mathbf{X}_j$ are independent whenever $i \ne j$.
 :::
 
 In words: knowing the value of $\mathbf{X}$ does not change the
-probabilities of the values of $\mathbf{Y}$.
+probabilities of the values of $\mathbf{Y}$. For more than two random
+vectors, *mutual independence* asks for the product rule for all of
+them at once,
+$P(\mathbf{X}_1 = \mathbf{x}_1 \text{ and } \dots \text{ and } \mathbf{X}_B = \mathbf{x}_B) = P(\mathbf{X}_1 = \mathbf{x}_1)\cdots P(\mathbf{X}_B = \mathbf{x}_B)$.
+Mutual independence implies pairwise independence, and pairwise
+independence is all that the variance calculations below need.
 
 ::: {#lem-independent-functions}
 If $\mathbf{X}$ and $\mathbf{Y}$ are independent, then so are
@@ -176,8 +216,16 @@ deviation measures the spread of the estimate.
 The *variance* of a random vector $\mathbf{X}$ is
 $\operatorname{Var}[\mathbf{X}] = \mathbb{E}\bigl[\|\mathbf{X} - \mathbb{E}[\mathbf{X}]\|^2\bigr]$,
 the mean squared distance from the mean. For a random variable it is
-$\mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$.
+$\mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$. Its square root
+$\sqrt{\operatorname{Var}[\mathbf{X}]}$ is the *standard deviation*.
 :::
+
+The mean absolute deviation $\mathbb{E}\bigl[\|\mathbf{X} - \mathbb{E}[\mathbf{X}]\|\bigr]$
+would also measure spread, but squares can be expanded, and that
+makes the variance of a sum of independent random vectors the sum of
+their variances (@thm-variance-sum). The standard deviation has the
+same units as $\mathbf{X}$; for the single pick above it is
+$\sqrt{14/3} \approx 2.16$.
 
 ::: {#lem-variance-formula}
 For a random vector $\mathbf{X}$, a real number $c$ and a fixed vector
@@ -199,7 +247,8 @@ $c\mathbf{X} + \mathbf{v} - \mathbb{E}[c\mathbf{X} + \mathbf{v}] = c(\mathbf{X} 
 :::
 
 ::: {#thm-variance-sum}
-If $\mathbf{X}_1, \dots, \mathbf{X}_B$ are pairwise independent, then
+If $\mathbf{X}_1, \dots, \mathbf{X}_B$ are pairwise independent random
+vectors in $\mathbb{R}^n$ on the same finite probability space, then
 $$
 \operatorname{Var}[\mathbf{X}_1 + \dots + \mathbf{X}_B] = \operatorname{Var}[\mathbf{X}_1] + \dots + \operatorname{Var}[\mathbf{X}_B] .
 $$
@@ -241,6 +290,7 @@ faces = [Fr(i) for i in range(1, 7)]
 EX = sum(faces) / 6
 EX2 = sum(f * f for f in faces) / 6
 check(EX == Fr(7, 2) and EX2 == Fr(91, 6) and EX2 - EX**2 == Fr(35, 12), "die mean and variance")
+check(f"{math.sqrt(14 / 3):.3g}" == "2.16", "standard deviation sqrt(14/3)")
 check(sum((f - EX)**2 for f in faces) / 6 == Fr(35, 12), "variance by the definition")
 # Mean of B independent throws, by enumerating all 6^B equally likely outcomes.
 for B in (1, 2, 3):
@@ -254,7 +304,8 @@ for B in (1, 2, 3):
 
 Return to the average loss @eq-stoch-average-loss. By linearity of the
 gradient, $\nabla f = \frac1N\sum_i\nabla f_i$. Choosing an example
-uniformly at random and using its gradient gives an estimate of
+*uniformly at random*, each with probability $1/N$, and using its
+gradient gives an estimate of
 $\nabla f$; averaging the gradients of several random examples gives a
 better one. In the example that opened @sec-stoch-probability, a
 single pick has variance $\frac{14}{3}$, and the average of two
@@ -301,10 +352,12 @@ $B\sigma^2$, and by @lem-variance-formula dividing by $B$ divides the
 variance by $B^2$.
 :::
 
-An estimate whose expectation is the quantity it estimates is
-*unbiased*. A batch of $B$ examples costs $B$ gradient computations and
-cuts the variance by a factor of $B$, so the typical error, measured by
-the square root of the variance, falls only like $1/\sqrt B$.
+The *bias* of a random estimate is its expectation minus the quantity
+it estimates, and an estimate with bias zero is *unbiased*. So the
+minibatch gradient is an unbiased estimate of $\nabla f$. A batch of
+$B$ examples costs $B$ gradient computations and cuts the variance by a
+factor of $B$, so the typical error, measured by the standard
+deviation, falls only like $1/\sqrt B$.
 
 ::: {#exm-minibatch}
 Take $N = 3$ examples with targets $y = 1, 2, 6$, one parameter
@@ -365,7 +418,8 @@ gradient descent step with $\eta = 0.1$ goes to $0.3$. A step that
 uses the gradient of one randomly chosen example instead goes to
 $0.1$, $0.2$ or $0.6$, each with probability $\frac13$; on average it
 goes to $0.3$, the same place. Repeating such random steps is
-stochastic gradient descent. Each step is a fresh random choice,
+stochastic gradient descent, "stochastic" being the standard word for
+random. Each step is a fresh random choice,
 independent of the earlier ones, so the definition has to describe a
 sequence of draws.
 
@@ -392,7 +446,11 @@ $(\xi_0, \dots, \xi_{K-1})$, with
 $P(\xi_0, \dots, \xi_{K-1}) = p(\xi_0)\cdots p(\xi_{K-1})$.
 :::
 
-Minibatches fit this definition: $\Xi$ is the set of lists of $B$
+The condition says that at every point $\boldsymbol{\theta}$,
+$\mathbf{g}(\boldsymbol{\theta}, \xi)$ is an unbiased estimate of
+$\nabla f(\boldsymbol{\theta})$: $\xi$ records the random choice, such
+as which example was picked, and $\mathbf{g}$ is the gradient that
+choice produces. Minibatches fit this definition: $\Xi$ is the set of lists of $B$
 examples, all equally likely, and $\mathbf{g}$ is the batch average of
 @thm-minibatch. The iterate $\boldsymbol{\theta}_k$ is a random vector
 that depends only on the first $k$ draws $\xi_0, \dots, \xi_{k-1}$.
@@ -479,9 +537,10 @@ Divide by $\eta K/2$.
 
 With $\sigma = 0$ this is @thm-gd-nonconvex. The noise adds the term
 $\eta L\sigma^2$, which does not shrink as $K$ grows: with a fixed
-learning rate SGD keeps bouncing around, and the bound only says that
-the average squared gradient ends up of order $\eta L\sigma^2$. A
-smaller $\eta$ lowers that floor but slows the first term. Given a
+learning rate the random steps never die away, and the bound only says
+that the average squared gradient ends up of order $\eta L\sigma^2$, a
+level called the *noise floor*. A smaller $\eta$ lowers the noise
+floor but slows the first term. Given a
 target $\varepsilon > 0$, the choice $\eta = \min\bigl(1/L, \varepsilon/(2L\sigma^2)\bigr)$
 makes the second term at most $\varepsilon/2$, and then
 $K \ge 4\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)/(\eta\varepsilon)$
@@ -569,9 +628,14 @@ $$
 $$ {#eq-stoch-momentum}
 :::
 
-With $\beta = 0$ this is gradient descent. Each new point depends on
-the two before it, so on a quadratic the iteration is a second-order
-linear recurrence, and the reader's method for those applies. Start
+The step $\boldsymbol{\theta}_{k+1} - \boldsymbol{\theta}_k$ is the
+gradient step $-\eta\nabla f(\boldsymbol{\theta}_k)$ plus $\beta$
+times the previous step; the number $\beta$ is the *momentum
+coefficient*. Setting $\boldsymbol{\theta}_{-1} = \boldsymbol{\theta}_0$
+makes the first step a plain gradient step, and with $\beta = 0$
+every step is. Each new point depends on the two before it, so on a
+quadratic the iteration is a second-order linear recurrence, and the
+usual method for those, through the characteristic equation, applies. Start
 with one variable: $f(\theta) = \frac{\lambda}{2}\theta^2$ with
 $\lambda > 0$, so $f'(\theta) = \lambda\theta$ and @eq-stoch-momentum
 becomes
@@ -652,7 +716,8 @@ $$
 \beta = \Bigl(\frac{\sqrt\kappa - 1}{\sqrt\kappa + 1}\Bigr)^2 .
 $$
 Then each coefficient $c_{k,i} = \mathbf{u}_i\cdot(\boldsymbol{\theta}_k - \boldsymbol{\theta}^*)$
-of the error satisfies $|c_{k,i}| \le (C_i + D_ik)\,\rho^k$ with
+of the error satisfies $|c_{k,i}| \le (C_i + D_ik)\,\rho^k$, for
+constants $C_i$ and $D_i$ that depend on $\boldsymbol{\theta}_0$, with
 $$
 \rho = \frac{\sqrt\kappa - 1}{\sqrt\kappa + 1} < \frac{\kappa - 1}{\kappa + 1} \quad\text{when } \kappa > 1 .
 $$
@@ -880,8 +945,9 @@ Let $k \ge 1$.
 2. If $g_j = g$ for every $j$, then $m_k = (1 - \beta^k)\,g$.
 3. The *bias-corrected* average $\hat m_k = m_k/(1 - \beta^k)$ is a
    weighted average of $g_1, \dots, g_k$ with weights that add up to
-   $1$. If the $g_j$ are random with $\mathbb{E}[g_j] = g$ for every
-   $j$, then $\mathbb{E}[\hat m_k] = g$.
+   $1$. If the $g_j$ are random variables on a finite probability
+   space with $\mathbb{E}[g_j] = g$ for every $j$, then
+   $\mathbb{E}[\hat m_k] = g$.
 :::
 
 ::: {.proof}
@@ -892,6 +958,12 @@ up to $1$. By @thm-expectation-linear,
 $\mathbb{E}[\hat m_k] = \frac{1 - \beta}{1 - \beta^k}\sum_j\beta^{k-j}\,\mathbb{E}[g_j] = g$
 by (1).
 :::
+
+In the language of @sec-stoch-minibatch: if every $g_j$ has
+expectation $g$, then $\mathbb{E}[m_k] = (1 - \beta^k)g$, so the
+uncorrected average has bias $-\beta^kg$. The bias shrinks as $k$
+grows, but slowly when $\beta$ is close to $1$, and dividing by
+$1 - \beta^k$ removes it at every step.
 
 ::: {#exm-ema}
 With $\beta = 0.85$, the first average is $m_1 = 0.15\,g_1$, and the
@@ -912,6 +984,16 @@ def ema(beta, gs):
         out.append(m)
     return out
 check(ema(0.5, [4.0] * 4)[1:] == [2.0, 3.0, 3.5, 3.75], "lead-in: 2, 3, 3.5, 3.75")
+# E[m_k] = (1 - beta^k) g: g_j independent, each 0 or 2 with probability 1/2, so g = 1.
+for beta in (Fr(1, 2), Fr(17, 20)):
+    for k in (1, 2, 5):
+        Em = Fr(0)
+        for seq in itertools.product([Fr(0), Fr(2)], repeat=k):
+            m = Fr(0)
+            for gv in seq:
+                m = beta * m + (1 - beta) * gv
+            Em += m / 2**k
+        check(Em == 1 - beta**k, "E[m_k] = (1 - beta^k) g, bias -beta^k g")
 check([m / (1 - 0.5**k) for k, m in enumerate(ema(0.5, [4.0] * 4)) if k] == [4.0] * 4, "corrected to 4")
 gs = rng.normal(size=30)
 for beta in (0.0, 0.5, 0.85, 0.99):
@@ -938,15 +1020,19 @@ Adam [@kingma2015adam] keeps two exponential moving averages for every
 parameter: one of its gradient and one of the square of its gradient.
 It divides the first by the square root of the second, so that each
 parameter's step is measured against the typical size of its own
-gradient.
+gradient. (The name abbreviates "adaptive moment estimation": the
+expectations of a random variable and of its square are its first two
+*moments*.)
 
 At $(1, 1)$ on $x^2 + 3y^2$ the gradient is $(2, 6)$. Gradient descent
 moves the second coordinate three times as far as the first, which is
 what produced the zigzag. Dividing each component by its own size
 gives $(1, 1)$, and a step against that points from $(1, 1)$ straight
 at the minimum. Adam does this division with averages: each component
-of the gradient is divided by the root mean square of its recent
-values.
+of the gradient is divided by the *root mean square* of its recent
+values, the square root of the mean of their squares. The root mean
+square of $3$ and $-4$, for example, is
+$\sqrt{(9 + 16)/2} \approx 3.54$, and that of $2$ and $-2$ is $2$.
 
 ::: {#def-adam}
 ## Adam
@@ -967,6 +1053,13 @@ v_{k,i} &= \beta_2 v_{k-1,i} + (1 - \beta_2)\,g_{k,i}^2, &
 \end{aligned}
 $$
 :::
+
+In words: $\mathbf{m}_k$ is the exponential moving average of the
+gradients and $\mathbf{v}_k$ that of their squared components, the
+hats mark the bias corrections of @thm-ema-bias, and each coordinate
+moves by $-\eta_k$ times the ratio of the corrected mean to the
+corrected root mean square. The small number $\epsilon$ keeps the
+denominator positive when a coordinate's gradients have all been zero.
 
 The model of @sec-small-gpt uses $\beta_1 = 0.85$, $\beta_2 = 0.99$,
 $\epsilon = 10^{-8}$, and $1000$ steps with learning rate
@@ -1001,8 +1094,10 @@ small compared with the root mean square and the step is small.
 ::: {#thm-adam-step}
 ## Size of an Adam step
 
-Suppose $0 \le \beta_1 < 1$, $0 < \beta_2 < 1$ and $\beta_1^2 < \beta_2$.
-Then for every $k \ge 1$ and every coordinate $i$,
+Run Adam (@def-adam) with $0 \le \beta_1 < 1$, $0 < \beta_2 < 1$,
+$\beta_1^2 < \beta_2$, $\epsilon > 0$ and learning rates $\eta_k > 0$,
+on any vectors $\mathbf{g}_1, \mathbf{g}_2, \dots$ in place of the
+gradients. Then for every $k \ge 1$ and every coordinate $i$,
 $$
 |\theta_{k,i} - \theta_{k-1,i}| \le \eta_k\,\frac{1 - \beta_1}{\sqrt{(1 - \beta_2)(1 - \beta_1^2/\beta_2)}} .
 $$
@@ -1028,7 +1123,7 @@ Write $a = \gamma^k$ and $b = \beta_2^k$, so that $ab = \beta_1^{2k}$.
 Since $a + b \ge 2\sqrt{ab}$,
 $(1 - a)(1 - b) = 1 - (a + b) + ab \le 1 - 2\sqrt{ab} + ab = (1 - \beta_1^k)^2$,
 so the last fraction is at most $1$. Finally
-$|\theta_{k} - \theta_{k-1}| = \eta_k|\hat m_k|/(\sqrt{\hat v_k} + \epsilon) < \eta_k|\hat m_k|/\sqrt{\hat v_k}$.
+$|\theta_{k} - \theta_{k-1}| = \eta_k|\hat m_k|/(\sqrt{\hat v_k} + \epsilon) \le \eta_k|\hat m_k|/\sqrt{\hat v_k}$.
 :::
 
 For the model's values, $\beta_1^2/\beta_2 = 0.7225/0.99$ and the bound
@@ -1077,6 +1172,7 @@ def adam(grad, theta0, K=1000, lr=0.01, b1=0.85, b2=0.99, eps=1e-8, decay=True):
     return np.array(out)
 grad_bowl6 = lambda p: np.array([2 * p[0], 6 * p[1]])
 close(grad_bowl6(np.array([1.0, 1.0])) / np.abs(grad_bowl6(np.array([1.0, 1.0]))), [1, 1], "lead-in: (1, 1)")
+check(f"{math.sqrt((9 + 16) / 2):.3g}" == "3.54" and math.sqrt((4 + 4) / 2) == 2, "root mean squares")
 ad = adam(grad_bowl6, [1, 1])
 close(ad[1], [1 - 0.01 * 2 / (2 + 1e-8), 1 - 0.01 * 6 / (6 + 1e-8)], "first Adam step", tol=1e-15)
 close(ad[0] - ad[1], [0.01, 0.01], "first step about (0.01, 0.01)", tol=1e-9)
@@ -1160,7 +1256,8 @@ $$
 If $\sum_k\eta_k$ grows without bound while $\sum_k\eta_k^2$ stays
 bounded, this tends to $0$ as $K \to \infty$: the noise floor
 disappears. These are the conditions that @robbins1951stochastic
-introduced for stochastic approximation, and $\eta_k = \eta_0/(k + 1)$
+introduced for *stochastic approximation*, the study of methods that
+find a root or a minimum from noisy measurements, and $\eta_k = \eta_0/(k + 1)$
 satisfies them, since the harmonic series diverges and
 $\sum 1/(k+1)^2$ converges.
 
