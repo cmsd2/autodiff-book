@@ -23,7 +23,7 @@ rng11 = np.random.default_rng(111)
 **@exr-ch11-rmsnorm-example.** Here $\mu = (9 + 16)/2 = 12.5$, so
 $\mu + \varepsilon = 13$ and $s = 1/\sqrt{13}$. Then
 $\operatorname{rms}(\mathbf{x}) = (3, 4)/\sqrt{13} \approx (0.8321, 1.1094)$.
-With $\|\mathbf{x}\|^2 + n\varepsilon = 26$, @eq-rmsnorm-jacobian
+With $\|\mathbf{x}\|^2 + n\varepsilon = 26$, @eq-gpt-rmsnorm-jacobian
 gives
 $$
 J = \frac{1}{\sqrt{13}}\Bigl(I - \frac{1}{26}\begin{pmatrix}9 & 12\\ 12 & 16\end{pmatrix}\Bigr)

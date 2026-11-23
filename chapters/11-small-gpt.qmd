@@ -37,61 +37,119 @@ def rms_np(x, eps=EPS):
     return x / np.sqrt(np.mean(x * x) + eps)
 ```
 
-## RMS normalisation {#sec-rmsnorm}
+## RMS normalisation {#sec-gpt-rmsnorm}
 
 The vectors inside a network change size as they pass through it. A
 linear map with large weights stretches them, and a sum of many terms
-grows with the number of terms. Normalisation divides a vector by a
-measure of its size, so that the next layer always receives inputs on
-the same scale.
+grows with the number of terms. If the next layer is to receive
+inputs on the same scale whatever happened before, something has to
+divide each vector by a measure of its size. The question is which
+measure, and what to do with vectors whose size is close to zero.
+
+A natural measure for a vector of $n$ components is the *root mean
+square* of its components: the square root of the mean of their
+squares. For $\mathbf{x} = (1, -1, 2, 0)$ the squares are
+$1, 1, 4, 0$, their mean is $1.5$, and the root mean square is
+$\sqrt{1.5} \approx 1.2247$. Dividing by it gives
+$$
+\frac{\mathbf{x}}{\sqrt{1.5}} \approx (0.8165, -0.8165, 1.6330, 0),
+$$
+a vector whose components have root mean square exactly 1. The vector
+$10\mathbf{x} = (10, -10, 20, 0)$ has root mean square $10\sqrt{1.5}$,
+and dividing gives the same result: the division removes the size of
+the vector and keeps its direction.
+
+The obvious definition, $\mathbf{x}$ divided by its root mean square,
+fails at $\mathbf{0}$, where it divides by zero, and it cannot be
+repaired there by a choice of value. Along the line
+$\mathbf{x} = (t, 0, 0, 0)$ the root mean square is $|t|/2$, so the
+quotient is $(2, 0, 0, 0)$ for every $t > 0$ and $(-2, 0, 0, 0)$ for
+every $t < 0$: it jumps as $t$ passes through $0$, and so it is not
+continuous, let alone differentiable, at $\mathbf{0}$. A gradient
+method needs a differentiable function, and the remedy is to add a
+small positive constant under the square root.
 
 ::: {#def-rmsnorm}
 ## RMS normalisation
 
-For $\varepsilon > 0$, the *RMS normalisation* of
-$\mathbf{x}\in\mathbb{R}^n$ is
+Let $n \ge 1$ and $\varepsilon > 0$. For $\mathbf{x}\in\mathbb{R}^n$
+let $\mu(\mathbf{x}) = \frac1n\sum_{i=1}^n x_i^2 = \|\mathbf{x}\|^2/n$,
+the mean of the squares of the components. The *RMS normalisation* of
+$\mathbf{x}$ is
 $$
 \operatorname{rms}(\mathbf{x})
-= \frac{\mathbf{x}}{\sqrt{\mu(\mathbf{x}) + \varepsilon}},
-\qquad
-\mu(\mathbf{x}) = \frac{1}{n}\sum_{i=1}^n x_i^2 = \frac{\|\mathbf{x}\|^2}{n} .
+= \frac{\mathbf{x}}{\sqrt{\mu(\mathbf{x}) + \varepsilon}} .
 $$
-The number $\sqrt{\mu(\mathbf{x})}$ is the *root mean square* of the
-components of $\mathbf{x}$. The model of this chapter uses $n = 16$
-and $\varepsilon = 10^{-5}$, and multiplies the result by nothing:
-there is no learned gain.
 :::
 
-Without $\varepsilon$, the components of $\operatorname{rms}(\mathbf{x})$
-would have root mean square exactly 1. The constant $\varepsilon$
-keeps the denominator at least $\sqrt\varepsilon$, so that
-$\operatorname{rms}$ is defined and differentiable on all of
-$\mathbb{R}^n$, including at $\mathbf{0}$, where it equals
-$\mathbf{0}$. Since
+In words: divide every component of $\mathbf{x}$ by the same positive
+number, the root mean square of the components with $\varepsilon$
+added under the square root. The denominator is at least
+$\sqrt\varepsilon$, so $\operatorname{rms}$ is defined on all of
+$\mathbb{R}^n$, and $\operatorname{rms}(\mathbf{0}) = \mathbf{0}$. The
+model of this chapter uses $n = 16$ and $\varepsilon = 10^{-5}$, and
+multiplies the result by nothing: there is no learned gain, a vector
+of weights that some models multiply the result by componentwise.
+Since
 $\mu(\operatorname{rms}(\mathbf{x})) = \mu(\mathbf{x})/(\mu(\mathbf{x}) + \varepsilon)$,
 the root mean square of the output is slightly below 1, and far below
 1 when $\mu(\mathbf{x})$ is comparable with $\varepsilon$.
 
-::: {#exm-rmsnorm}
-Take $n = 4$ and $\mathbf{x} = (1, -1, 2, 0)$, and ignore
-$\varepsilon$ for a moment. Then $\mu(\mathbf{x}) = 6/4 = 1.5$, and
-$\mathbf{x}/\sqrt{1.5} \approx (0.8165, -0.8165, 1.6330, 0)$. With
-$\varepsilon = 10^{-5}$ the denominator becomes $\sqrt{1.50001}$, and
-each component changes by a factor
-$\sqrt{1.5/1.50001} \approx 1 - 3.3\times10^{-6}$.
+::: {#exm-gpt-rmsnorm}
+For $\mathbf{x} = (1, -1, 2, 0)$ and $\varepsilon = 10^{-5}$, the
+denominator is $\sqrt{1.50001}$ instead of $\sqrt{1.5}$, so each
+component of the result above changes by a factor
+$\sqrt{1.5/1.50001} \approx 1 - 3.3\times10^{-6}$. For
+$\mathbf{x} = (t, 0, 0, 0)$ the result is
+$(t/\sqrt{t^2/4 + \varepsilon}, 0, 0, 0)$, which passes continuously
+through $\mathbf{0}$ at $t = 0$ and is close to $(\pm2, 0, 0, 0)$ once
+$|t|$ is large compared with $\sqrt\varepsilon$.
 :::
 
 ```{python}
 #| include: false
 xe = np.array([1.0, -1.0, 2.0, 0.0])
 close(np.mean(xe**2), 1.5, "mu = 1.5")
+close(np.sqrt(1.5), 1.2247, "root mean square 1.2247", tol=1e-4)
 close(xe / np.sqrt(1.5), [0.8165, -0.8165, 1.6330, 0], "x / sqrt(1.5)", tol=1e-4)
+close(np.sqrt(np.mean((xe / np.sqrt(1.5))**2)), 1.0, "unit root mean square")
+close(np.sqrt(np.mean((10 * xe)**2)), 10 * np.sqrt(1.5), "rms of 10x")
+close(10 * xe / np.sqrt(np.mean((10 * xe)**2)), xe / np.sqrt(1.5), "10x gives the same result")
+for tv in (1e-9, 0.3, 5.0):
+    e1 = np.array([tv, 0, 0, 0])
+    close(e1 / np.sqrt(np.mean(e1**2)), [2, 0, 0, 0], "quotient (2,0,0,0) for t > 0")
+    close(-e1 / np.sqrt(np.mean(e1**2)), [-2, 0, 0, 0], "quotient (-2,0,0,0) for t < 0")
 factor = np.sqrt(1.5 / 1.50001)
 close(1 - factor, 3.3e-6, "factor 1 - 3.3e-6", tol=1e-7)
 close(rms_np(xe), factor * xe / np.sqrt(1.5), "eps changes each component by that factor")
+ts = np.linspace(-1e-2, 1e-2, 2001)
+vals = ts / np.sqrt(ts**2 / 4 + EPS)
+check(np.all(np.diff(vals) > 0) and abs(vals[1000]) < 1e-12, "continuous and increasing through 0")
+close(rms_np(np.array([3.0, 0, 0, 0])), [2, 0, 0, 0], "close to (2,0,0,0) for large t", tol=1e-5)
 ```
 
-### The Jacobian {#sec-rmsnorm-jacobian}
+### The Jacobian {#sec-gpt-rmsnorm-jacobian}
+
+Reverse mode (@thm-reverse-mode) passes the gradient of the loss back
+through every function in the model, and for that it needs each
+function's Jacobian. For RMS normalisation the Jacobian treats
+increments in two directions differently, and a small case shows how.
+Take $n = 2$, a deliberately large $\varepsilon = 1$ so that the
+effect is visible, and $\mathbf{x} = (1, 0)$. Then
+$\mu(\mathbf{x}) = 1/2$ and
+$\operatorname{rms}(\mathbf{x}) = (1, 0)/\sqrt{3/2} \approx (0.8165, 0)$.
+
+- An increment of $0.01$ in $x_2$, perpendicular to $\mathbf{x}$,
+  changes the output by about $(0.0000, 0.008165)$: the increment
+  passes through multiplied by $0.8165 = (3/2)^{-1/2}$, because to
+  first order it does not change $\mu$.
+- An increment of $0.01$ in $x_1$, along $\mathbf{x}$, changes the
+  output by about $(0.005416, 0)$: a factor $0.54$, smaller, because
+  enlarging $\mathbf{x}$ also enlarges the denominator.
+
+With $\varepsilon = 0$ the second factor would be exactly $0$, since
+then scaling $\mathbf{x}$ does not change the output at all. The
+theorem gives both factors in general.
 
 ::: {#thm-rmsnorm-jacobian}
 ## Jacobian of RMS normalisation
@@ -104,11 +162,20 @@ J_{\operatorname{rms}}(\mathbf{x})
 = s\,I - \frac{s^3}{n}\,\mathbf{x}\mathbf{x}^\top
 = s\Bigl(I - \frac{\mathbf{x}\mathbf{x}^\top}{\|\mathbf{x}\|^2 + n\varepsilon}\Bigr),
 \qquad s = s(\mathbf{x}).
-$$ {#eq-rmsnorm-jacobian}
+$$ {#eq-gpt-rmsnorm-jacobian}
 The matrix is symmetric. For $\mathbf{x} \ne \mathbf{0}$ it has
 eigenvalue $s$ on every vector perpendicular to $\mathbf{x}$, and
 eigenvalue $\varepsilon s^3$ on $\mathbf{x}$ itself.
 :::
+
+Entry $(i, j)$ of this matrix is the rate at which output component
+$i$ changes per unit increment of input component $j$. The term $sI$
+says that each input component, on its own, passes to the same output
+component scaled by $s$; the term $-(s^3/n)\mathbf{x}\mathbf{x}^\top$,
+whose entry $(i, j)$ is $-s^3x_ix_j/n$, corrects every output component
+for the change in the common denominator. In the example above,
+$s = (3/2)^{-1/2} \approx 0.8165$ and $\varepsilon s^3 = (2/3)^{3/2}
+\approx 0.5443$.
 
 ::: {.proof}
 Component $i$ of $\operatorname{rms}(\mathbf{x})$ is $x_i\,s(\mathbf{x})$.
@@ -124,7 +191,7 @@ $\partial(x_is)/\partial x_j = \delta_{ij}s - s^3x_ix_j/n$, where
 $\delta_{ij}$ is $1$ if $i = j$ and $0$ otherwise. These partial
 derivatives are continuous, so by @thm-continuous-partials and
 @thm-jacobian $\operatorname{rms}$ is differentiable with the
-Jacobian in @eq-rmsnorm-jacobian. The second form follows from
+Jacobian in @eq-gpt-rmsnorm-jacobian. The second form follows from
 $s^2 = n/(\|\mathbf{x}\|^2 + n\varepsilon)$.
 
 If $\mathbf{y}\cdot\mathbf{x} = 0$ then
@@ -150,6 +217,14 @@ itself only changes its size, and normalisation removes size.
 
 ```{python}
 #| include: false
+# The worked example with n = 2, eps = 1, x = (1, 0).
+r1 = lambda v: v / np.sqrt(np.mean(v * v) + 1.0)
+x10 = np.array([1.0, 0.0])
+close(r1(x10), [0.8165, 0], "rms(1,0) with eps = 1", tol=1e-4)
+close(r1(x10 + [0, 0.01]) - r1(x10), [0.0, 0.008165], "perpendicular increment", tol=2e-5)
+close(r1(x10 + [0.01, 0]) - r1(x10), [0.005416, 0.0], "increment along x", tol=1e-6)
+close(np.sqrt(2 / 3), 0.8165, "s = (3/2)^(-1/2)", tol=1e-4)
+close((2 / 3)**1.5, 0.5443, "eps s^3 = (2/3)^(3/2)", tol=1e-4)
 # The Jacobian formula: SymPy in dimension 3, Maxima in dimension 2, and
 # finite differences in dimension 16 at the model's epsilon.
 xs3 = sp.Matrix(sp.symbols("x1:4", real=True))
@@ -188,13 +263,21 @@ for scale in (1.0, 0.1, 0.003):
     close(rms_jac(x16).T @ yb, s16 * yb - s16**3 / 16 * (x16 @ yb) * x16, "adjoint formula")
 ```
 
-### Scaling and the effect of $\varepsilon$ {#sec-rmsnorm-scaling}
+### Scaling and the effect of $\varepsilon$ {#sec-gpt-rmsnorm-scaling}
 
 The point of normalising is that the output should not depend on the
-size of the input. With $\varepsilon = 0$ that would hold exactly. The
-next theorem says precisely what $\varepsilon$ changes. Write
-$\operatorname{rms}_\varepsilon$ when the value of $\varepsilon$
-matters.
+size of the input. With $\varepsilon = 0$ that would hold exactly; the
+question is how much $\varepsilon$ spoils it. Take again
+$\mathbf{x} = (1, -1, 2, 0)$, with $\mu(\mathbf{x}) = 1.5$, and
+$\varepsilon = 10^{-5}$. For $10\mathbf{x}$ the denominator is
+$\sqrt{150 + 10^{-5}} = 10\sqrt{1.5 + 10^{-7}}$, so the output is
+$\mathbf{x}/\sqrt{1.5 + 10^{-7}}$: the same as normalising
+$\mathbf{x}$ with $\varepsilon$ replaced by $10^{-7}$. For
+$0.001\mathbf{x}$ the output is $\mathbf{x}/\sqrt{1.5 + 10}$, the same
+as normalising $\mathbf{x}$ with $\varepsilon = 10$, and it is only
+$\sqrt{1.5/11.5} \approx 0.36$ times the output for $\mathbf{x}$
+itself. Write $\operatorname{rms}_\varepsilon$ when the value of
+$\varepsilon$ matters.
 
 ::: {#thm-rmsnorm-scaling}
 ## Scaling
@@ -255,6 +338,10 @@ $\varepsilon/(2\mu) \approx 3.9\times10^{-4}$.
 
 ```{python}
 #| include: false
+close(rms_np(10 * xe), xe / np.sqrt(1.5 + 1e-7), "10x: eps becomes 1e-7")
+close(rms_np(0.001 * xe), xe / np.sqrt(11.5), "0.001x: eps becomes 10")
+close(np.sqrt(1.5 / 11.5), 0.36, "factor 0.36", tol=3e-3)
+close(rms_np(0.001 * xe), np.sqrt(1.5 / 11.5) * (xe / np.sqrt(1.5)), "0.36 times the unit output")
 xsc = rng.normal(size=16)
 for c in (0.01, 0.5, 3.0, 100.0):
     close(rms_np(c * xsc, EPS), rms_np(xsc, EPS / c**2), f"rms_eps(c x) = rms_(eps/c^2)(x), c={c}")
@@ -276,27 +363,38 @@ close(2 * INIT_STD**2, 0.0128, "variance 2 * 0.08^2")
 close(EPS / (2 * 0.0128), 3.9e-4, "eps / (2 mu)", tol=1e-5)
 ```
 
-### Layer normalisation {#sec-layernorm}
+### Layer normalisation {#sec-gpt-layernorm}
 
 RMS normalisation is a simplification of the older *layer
 normalisation* [@ba2016layer], which GPT-2 uses [@radford2019language].
+The difference shows when the same constant is added to every
+component. Ignoring $\varepsilon$, RMS normalisation sends
+$(1, 2, 3)$ to about $(0.463, 0.926, 1.389)$ and $(11, 12, 13)$ to
+about $(0.915, 0.998, 1.081)$: the shift by 10 changes the result.
+Layer normalisation first subtracts the mean of the components, which
+turns both vectors into $(-1, 0, 1)$, and then divides by the root
+mean square of what remains, $\sqrt{2/3}$, giving
+$(-1.225, 0, 1.225)$ for both.
 
 ::: {#def-layernorm}
 ## Layer normalisation
 
-For $\mathbf{x}\in\mathbb{R}^n$ let
-$m(\mathbf{x}) = \frac1n\sum_i x_i$ and
-$v(\mathbf{x}) = \frac1n\sum_i (x_i - m(\mathbf{x}))^2$. The *layer
-normalisation* of $\mathbf{x}$, with gain $\mathbf{g}$ and bias
-$\mathbf{b}$ in $\mathbb{R}^n$, has components
+Let $n \ge 1$ and $\varepsilon > 0$. For $\mathbf{x}\in\mathbb{R}^n$
+let $m(\mathbf{x}) = \frac1n\sum_i x_i$ be the mean of the components
+and $v(\mathbf{x}) = \frac1n\sum_i (x_i - m(\mathbf{x}))^2$ their
+variance. The *layer normalisation* of $\mathbf{x}$, with *gain*
+$\mathbf{g}$ and *bias* $\mathbf{b}$ in $\mathbb{R}^n$, is the vector
+with components
 $$
-\operatorname{ln}(\mathbf{x})_i
+\operatorname{LN}(\mathbf{x})_i
 = g_i\,\frac{x_i - m(\mathbf{x})}{\sqrt{v(\mathbf{x}) + \varepsilon}} + b_i .
 $$
 :::
 
-Layer normalisation subtracts the mean before dividing, and then
-applies a learned gain and bias. With $\mathbf{g} = \mathbf{1}$ and
+In words: subtract the mean, divide by the standard deviation (with
+$\varepsilon$ added to the variance), then scale component $i$ by
+$g_i$ and shift it by $b_i$. In a network $\mathbf{g}$ and
+$\mathbf{b}$ are parameters, learned with the rest. With $\mathbf{g} = \mathbf{1}$ and
 $\mathbf{b} = \mathbf{0}$ it is RMS normalisation applied to the
 centred vector $\mathbf{x} - m(\mathbf{x})\mathbf{1}$, because the
 variance of $\mathbf{x}$ is the mean square of the centred vector
@@ -315,6 +413,13 @@ def layer_norm(x, g, b, eps=EPS):
     return g * (x - m) / np.sqrt(np.mean((x - m) ** 2) + eps) + b
 
 
+rms0 = lambda v: v / np.sqrt(np.mean(v * v))
+close(rms0(np.array([1.0, 2, 3])), [0.463, 0.926, 1.389], "rms(1,2,3)", tol=1e-3)
+close(rms0(np.array([11.0, 12, 13])), [0.915, 0.998, 1.081], "rms(11,12,13)", tol=1e-3)
+for v3 in (np.array([1.0, 2, 3]), np.array([11.0, 12, 13])):
+    close(v3 - v3.mean(), [-1, 0, 1], "centred vector")
+    close(rms0(v3 - v3.mean()), [-1.225, 0, 1.225], "layer normalisation without eps", tol=1e-3)
+close(np.sqrt(np.mean(np.array([-1.0, 0, 1])**2)), np.sqrt(2 / 3), "sqrt(2/3)")
 xl = rng.normal(size=16)
 ones, zeros = np.ones(16), np.zeros(16)
 close(layer_norm(xl, ones, zeros), rms_np(xl - xl.mean()), "LN = rms of centred vector")
@@ -324,14 +429,34 @@ xz = xl - xl.mean()
 close(layer_norm(xz, ones, zeros), rms_np(xz), "LN = rms on mean-zero vectors")
 ```
 
-## Residual connections {#sec-residual}
+## Residual connections {#sec-gpt-residual}
 
-A *residual connection* wraps a map $F\colon\mathbb{R}^n\to\mathbb{R}^n$
-into the map $\mathbf{x}\mapsto\mathbf{x} + F(\mathbf{x})$. The block
-$F$ computes a correction to its input instead of a replacement for
-it. @he2016deep introduced the idea for image recognition, where it
-made networks with over a hundred layers trainable. Its effect on
-derivatives takes one line.
+A deep network is a composition of many functions, one per block, and
+by the chain rule (@thm-chain-rule) the derivative of the loss with
+respect to the input of the first block is a product of one Jacobian
+per block. A product of many factors can be very small. In one
+dimension, ten blocks $x \mapsto 0.1x$ in a row have derivative
+$0.1^{10} = 10^{-10}$: an increment at the bottom of the stack has
+almost no effect at the top, and gradient descent barely changes the
+parameters of the early blocks. Now let each block add its output to
+its input instead, $x \mapsto x + 0.1x$. Ten of these have derivative
+$1.1^{10} \approx 2.59$, of the same order as $1$, because each factor
+is $1$ plus something small instead of something small.
+
+::: {#def-residual}
+## Residual connection
+
+Let $U \subseteq \mathbb{R}^n$ and $F\colon U\to\mathbb{R}^n$. The
+*residual block* built from $F$ is the map
+$R\colon U\to\mathbb{R}^n$, $R(\mathbf{x}) = \mathbf{x} + F(\mathbf{x})$.
+The added term $\mathbf{x}$ is the *residual connection*, and $F$ is
+the *block*.
+:::
+
+The block $F$ computes a correction to its input instead of a
+replacement for it. @he2016deep introduced residual connections for
+image recognition, where they made networks with over a hundred
+layers trainable. Their effect on derivatives takes one line.
 
 ::: {#thm-residual-jacobian}
 ## Jacobian of a residual block
@@ -347,7 +472,7 @@ If $L = \ell(R(\mathbf{x}))$ for a function $\ell$ differentiable at
 $R(\mathbf{a})$, then with $\bar{\mathbf{y}} = \nabla\ell(R(\mathbf{a}))$,
 $$
 \nabla L(\mathbf{a}) = \bar{\mathbf{y}} + J_F(\mathbf{a})^\top\bar{\mathbf{y}} .
-$$ {#eq-residual-adjoint}
+$$ {#eq-gpt-residual-adjoint}
 :::
 
 ::: {.proof}
@@ -360,7 +485,7 @@ The right side is the remainder of $F$, which divided by
 $\|\mathbf{h}\|$ tends to $\mathbf{0}$, so $I + J_F(\mathbf{a})$
 satisfies @eq-derivative for $R$. By @thm-chain-rule,
 $J_L(\mathbf{a}) = J_\ell(R(\mathbf{a}))\,(I + J_F(\mathbf{a}))$, and
-transposing this row gives @eq-residual-adjoint.
+transposing this row gives @eq-gpt-residual-adjoint.
 :::
 
 In the language of reverse mode, the adjoint $\bar{\mathbf{y}}$
@@ -459,6 +584,8 @@ which is invertible.
 
 ```{python}
 #| include: false
+check(abs(0.1**10 - 1e-10) < 1e-25, "0.1^10")
+close(1.1**10, 2.59, "1.1^10", tol=3e-3)
 N2 = sp.Matrix([[0, 1], [0, 0]])
 check(N2 * N2 == sp.zeros(2, 2), "N^2 = 0")
 check((sp.eye(2) + N2)**2 == sp.Matrix([[1, 2], [0, 1]]), "(I+N)^2 = I + 2N")
@@ -496,10 +623,14 @@ JR = np.array([num_grad(lambda v, i=i: (v + Fr(v))[i], ar) for i in range(5)])
 close(JR, np.eye(5) + np.diag(1 - np.tanh(Wr @ ar)**2) @ Wr, "J_R = I + J_F", tol=1e-7)
 ```
 
-## The complete model {#sec-model}
+## The complete model {#sec-gpt-model}
 
-The model reads a sequence of tokens and, at each position, produces a
-vector of 27 logits for the next token. Its vocabulary $V$ has
+The previous chapters supply every part of the model; this section
+says exactly how they fit together, as one function from a sequence of
+tokens to predictions. The model reads a sequence of tokens and, at
+each position, produces a vector of 27 *logits*, real numbers whose
+softmax (@def-softmax) is its probability distribution for the next
+token. Its vocabulary $V$ has
 $|V| = 27$ tokens: the letters a to z, numbered $0$ to $25$ in
 alphabetical order, and a *boundary token*, numbered 26 and written
 $\mathtt{B}$, which marks the start and the end of a name. The name
@@ -507,17 +638,25 @@ $\mathtt{B}$, which marks the start and the end of a name. The name
 $\mathtt{B}, \mathrm{e}, \mathrm{m}, \mathrm{m}, \mathrm{a}, \mathtt{B}$,
 that is, $26, 4, 12, 12, 0, 26$.
 
-The model has width $d = 16$, $h = 4$ attention heads of width
+The model has width $d = 16$ (every position is represented by a
+vector in $\mathbb{R}^{16}$), $h = 4$ attention heads of width
 $d_h = 4$, a context length of 16 positions, a single layer, and an
-MLP of width $64 = 4d$. Its parameters are nine matrices, with no
-bias vectors and no normalisation gains:
+MLP (@def-mlp) with a hidden layer of width $64 = 4d$. Its parameters
+are nine matrices, with no bias vectors and no normalisation gains:
 
-- $E$ ($27\times16$) and $P$ ($16\times16$): token and position
-  embeddings (@def-embedding). Row $x$ of $E$, written as a column, is
-  $E_x$; row $t$ of $P$ is $P_t$.
-- $W_Q$, $W_K$, $W_V$, $W_O$ (each $16\times16$): attention.
-- $W_1$ ($64\times16$) and $W_2$ ($16\times64$): the MLP.
-- $W_U$ ($27\times16$): the output matrix.
+- $E$ ($27\times16$), the token embedding (@def-embedding): row $x$
+  is the vector that represents token $x$, and $E_x$ denotes that row
+  written as a column.
+- $P$ ($16\times16$), the position embedding: row $t$, written $P_t$,
+  is the vector added at position $t$.
+- $W_Q$, $W_K$, $W_V$ (each $16\times16$): row $i$ of $W_Q$ gives
+  component $i$ of a query as a weighted sum of the 16 input
+  components, and likewise for keys and values.
+- $W_O$ ($16\times16$): mixes the outputs of the four heads.
+- $W_1$ ($64\times16$) and $W_2$ ($16\times64$): the two layers of
+  the MLP.
+- $W_U$ ($27\times16$), the output matrix: row $i$, dotted with the
+  final vector at a position, gives the logit of token $i$.
 
 A vector $\mathbf{q}\in\mathbb{R}^{16}$ splits into four heads,
 $\mathbf{q}^{(j)} = (q_{4j-3}, \dots, q_{4j})$ for $j = 1, \dots, 4$,
@@ -526,8 +665,10 @@ and $\operatorname{relu}$ (@def-relu) acts on each component.
 ::: {#def-small-gpt}
 ## The model
 
-For tokens $x_1, \dots, x_T$ with $T \le 16$, and each position
-$t = 1, \dots, T$, the model computes:
+Let the parameters be matrices $E$, $P$, $W_Q$, $W_K$, $W_V$, $W_O$,
+$W_1$, $W_2$, $W_U$ of the shapes listed above. For tokens
+$x_1, \dots, x_T$ in $\{0, \dots, 26\}$ with $T \le 16$, and each
+position $t = 1, \dots, T$, the model computes:
 $$
 \begin{aligned}
 \mathbf{r}^{(0)}_t &= \operatorname{rms}(E_{x_t} + P_t)
@@ -554,10 +695,20 @@ $$
 &&\text{logits}
 \end{aligned}
 $$
-with $\operatorname{rms}$ as in @def-rmsnorm ($\varepsilon = 10^{-5}$).
-The model's distribution for the next token is
-$\mathbf{p}_t = \operatorname{softmax}(\mathbf{z}_t)$.
+with $\operatorname{rms}$ as in @def-rmsnorm ($n = 16$,
+$\varepsilon = 10^{-5}$), $\alpha^{(j)}_{t\tau}$ component $\tau$ of
+$\boldsymbol\alpha^{(j)}_t$, and $\mathbf{o}_t\in\mathbb{R}^{16}$ the
+four head outputs placed one after another. The model's distribution
+for the next token is $\mathbf{p}_t = \operatorname{softmax}(\mathbf{z}_t)$.
 :::
+
+Read from top to bottom, the equations say: represent token $x_t$ at
+position $t$ by the sum of two embedding rows and normalise it; let
+each head compare the query of position $t$ with the keys of positions
+$1$ to $t$ and average their values with the resulting weights; add
+the mixed head outputs to the vector; add the output of the MLP; and
+multiply by $W_U$ to get one logit per token. Only the attention line
+lets position $t$ see other positions.
 
 The divisor 2 in the attention scores is $\sqrt{d_h}$
 (@thm-attention-scale). The attention line is causal multi-head
@@ -583,7 +734,7 @@ normalisation without gain, and GELU by ReLU. It has no biases. The
 output matrix $W_U$ is a separate parameter, not a copy
 of $E$.
 
-The two blocks are residual blocks in the sense of @sec-residual.
+The two blocks are residual blocks in the sense of @sec-gpt-residual.
 For the attention block the map $F$ acts on the whole sequence
 $(\mathbf{r}^{(0)}_1, \dots, \mathbf{r}^{(0)}_T)\in\mathbb{R}^{16T}$,
 because position $t$ attends to earlier positions, and
@@ -668,7 +819,7 @@ r2 = r1 + theta["W2"] @ np.maximum(theta["W1"] @ rms_np(r1), 0)
 close(theta["WU"] @ r2, logits(theta, toks)[t3], "equations of the model at position 3")
 ```
 
-### Counting the parameters {#sec-parameter-count}
+### Counting the parameters {#sec-gpt-parameter-count}
 
 ::: {#thm-parameter-count}
 ## Parameter count
@@ -720,17 +871,29 @@ check(sum(a * b for a, b in src) == 4192, "count from the source's shapes")
 check(sorted(src) == sorted(SHAPES.values()), "shapes match the source")
 ```
 
-## Training {#sec-training}
+## Training {#sec-gpt-training}
 
-A name $c_1c_2\cdots c_m$ becomes the token sequence
+Training adjusts the parameters so that the model's predictions match
+real names, and it needs a single number that measures the mismatch.
+For "emma" the model makes five predictions, one per position:
+$\mathtt{B}$ followed by e, then e by m, m by m, m by a, and a by
+$\mathtt{B}$. If it gave each correct token probability $1/2$, the
+average of $-\ln$ of these probabilities would be
+$\ln 2 \approx 0.693$; if it gave each probability $1/27$, as a model
+that knows nothing might, the average would be $\ln 27 \approx 3.296$.
+That average is the loss.
+
+In general, a name $c_1c_2\cdots c_m$ becomes the token sequence
 $x_1 = \mathtt{B}$, $x_{i+1} = c_i$ for $i = 1, \dots, m$, and
 $x_{m+2} = \mathtt{B}$. The model predicts each token from those
 before it. With $T = \min(16, m + 1)$ predictions, the loss on the
 name is the average cross-entropy (@def-cross-entropy)
 $$
 L(\boldsymbol\theta) = \frac1T\sum_{t=1}^T -\ln p_{t,\,x_{t+1}},
-$$ {#eq-document-loss}
-where $p_{t,\,x}$ is component $x$ of $\mathbf{p}_t$. The names in
+$$ {#eq-gpt-document-loss}
+where $p_{t,\,x}$ is component $x$ of $\mathbf{p}_t$ and
+$\boldsymbol\theta\in\mathbb{R}^{4192}$ is the parameter vector of
+@sec-gpt-parameter-count. The names in
 the training list have at most 15 letters (the source notes this), so
 $T = m + 1$ and the last prediction is always the closing boundary
 token: the model learns where names end as well as how they start.
@@ -800,15 +963,23 @@ sm = lambda z: np.exp(z) / np.exp(z).sum()
 close(sm(zs - zs.max()), sm(zs), "shifted softmax")
 ```
 
-### The loss before training {#sec-initial-loss}
+### The loss before training {#sec-gpt-initial-loss}
 
-Every weight starts as an independent sample from the normal
-distribution $N(0, \sigma_w^2)$ with $\sigma_w = 0.08$. The logits are
-then small and the softmax is close to uniform, so the loss is close
-to
+Before training, the loss tells us nothing about names, but its value
+is a useful test of an implementation: it should be close to
 $\ln 27 \approx 3.296$, the loss of a model that gives each of the 27
-tokens probability $1/27$. The next theorem makes this precise. It
-needs one fact about the normal distribution: if $w$ has distribution
+tokens probability $1/27$. Every weight starts as an independent
+sample from the normal distribution $N(0, \sigma_w^2)$ with
+$\sigma_w = 0.08$, the logits are then small, and the softmax is close
+to uniform. Close, but on average slightly above, as a two-token case
+shows. Suppose the logits are $(a, -a)$ or $(-a, a)$ with equal
+probability and the correct token is the first. The loss is
+$\ln(1 + e^{-2a})$ in the first case and $\ln(1 + e^{2a})$ in the
+second; for $a = 0.33$ these are $0.417$ and $1.077$, with average
+$0.747$, which exceeds $\ln 2 \approx 0.693$ by $0.053$, close to
+$a^2/2 \approx 0.054$. Random logits raise the expected loss above
+$\ln|V|$ by about half their variance. The next theorem makes this
+precise for the model. It needs one fact about the normal distribution: if $w$ has distribution
 $N(0, \sigma^2)$ and $c$ is a real number, then, completing the square,
 $$
 \mathbb{E}\bigl[e^{cw}\bigr]
@@ -816,21 +987,22 @@ $$
 = e^{c^2\sigma^2/2}\int_{-\infty}^\infty
 \frac{e^{-(w - c\sigma^2)^2/(2\sigma^2)}}{\sqrt{2\pi}\,\sigma}\,dw
 = e^{c^2\sigma^2/2},
-$$ {#eq-normal-mgf}
+$$ {#eq-gpt-normal-mgf}
 since the last integrand is the density of $N(c\sigma^2, \sigma^2)$.
 
 ::: {#thm-initial-loss}
 ## Loss at initialisation
 
-Fix every parameter except $W_U$, and fix the tokens. Let the entries
-of $W_U$ be independent with distribution $N(0, \sigma_w^2)$. Then at
+In the model of @def-small-gpt, fix the tokens and every parameter
+except $W_U$, and let the entries of $W_U$ be independent random
+variables with distribution $N(0, \sigma_w^2)$, $\sigma_w > 0$. Then at
 each position $t$, with $\mathbf{r} = \mathbf{r}^{(2)}_t$ and
 $\ell_t = -\ln p_{t,\,x_{t+1}}$,
 $$
 \ln 27 \;\le\; \mathbb{E}[\ell_t] \;\le\; \ln 27 + \frac{\sigma_w^2\|\mathbf{r}\|^2}{2} .
 $$
 The same bounds hold for the expected loss $\mathbb{E}[L]$ of
-@eq-document-loss, with $\|\mathbf{r}\|^2$ replaced by the average of
+@eq-gpt-document-loss, with $\|\mathbf{r}\|^2$ replaced by the average of
 $\|\mathbf{r}^{(2)}_t\|^2$ over $t$.
 :::
 
@@ -855,7 +1027,7 @@ gives $\mathbb{E}[\ell_t] \ge \ln 27$.
 it: $\ln Y \le \ln m + (Y - m)/m$ for $Y > 0$. Take
 $Y = \sum_i e^{z_i}$ and $m = \mathbb{E}[Y]$; taking expectations,
 $\mathbb{E}[\ln Y] \le \ln\mathbb{E}[Y]$. The entries of
-$\mathbf{w}_i$ are independent, so by @eq-normal-mgf
+$\mathbf{w}_i$ are independent, so by @eq-gpt-normal-mgf
 $$
 \mathbb{E}\bigl[e^{z_i}\bigr]
 = \prod_{j=1}^{16}\mathbb{E}\bigl[e^{r_j(\mathbf{w}_i)_j}\bigr]
@@ -885,7 +1057,7 @@ Over many random initialisations the three terms average about 16.0,
 $\sigma_w^2\|\mathbf{r}\|^2/2$ in @thm-initial-loss is about $0.052$.
 The expected initial loss therefore lies between $3.296$ and about
 $3.35$. A direct simulation, averaging the loss of
-@eq-document-loss over 400 random initialisations and a dozen names,
+@eq-gpt-document-loss over 400 random initialisations and a dozen names,
 gives $3.35$, at the top of that range; the standard deviation of a
 single document's loss is about 0.14. The microgpt post reports a
 loss of 3.37 at the first step, consistent with this, and about 2.37
@@ -894,6 +1066,14 @@ after 1000 steps [@karpathy2026microgpt].
 ```{python}
 #| include: false
 close(math.log(27), 3.296, "ln 27", tol=2e-4)
+a2 = 0.33
+l1, l2 = math.log(1 + math.exp(-2 * a2)), math.log(1 + math.exp(2 * a2))
+close([l1, l2], [0.417, 1.077], "two-token losses", tol=1e-3)
+close((l1 + l2) / 2, 0.747, "average", tol=1e-3)
+close((l1 + l2) / 2 - math.log(2), 0.053, "excess over ln 2", tol=1e-3)
+close((l1 + l2) / 2 - math.log(2), math.log(math.cosh(a2)), "excess is ln cosh a")
+close(a2**2 / 2, 0.054, "a^2/2", tol=1e-3)
+close(math.log(2), 0.693, "ln 2", tol=1e-3)
 names = ["emma", "olivia", "ava", "isabella", "sophia", "mia", "noah", "liam",
          "jacob", "mason", "ella", "zoe"]
 rng_init = np.random.default_rng(2026)
@@ -952,7 +1132,7 @@ sym_equal(sp.integrate(sp.exp(c_ * w_ - w_**2 / (2 * sg**2)) / (sp.sqrt(2 * sp.p
 close(3.3660, 3.37, "post's first-step loss 3.3660 rounds to 3.37", tol=1e-3)
 ```
 
-## Sampling and temperature {#sec-temperature}
+## Sampling and temperature {#sec-gpt-temperature}
 
 After training, the model generates a name by sampling. It starts
 with $x_1 = \mathtt{B}$ at position 1, computes $\mathbf{z}_1$, draws
@@ -968,7 +1148,21 @@ the length of a sequence.)
 Dividing the logits by $T$ multiplies all their differences by $1/T$.
 For $T < 1$ this exaggerates the differences and concentrates the
 probability on the likeliest tokens; for $T > 1$ it flattens the
-distribution. The limits are exact.
+distribution.
+
+::: {#exm-gpt-temperature}
+Let $\mathbf{z} = (2, 1, 0)$. At $T = 1$ the probabilities are
+$(0.665, 0.245, 0.090)$; at $T = 0.5$ they are
+$\operatorname{softmax}(4, 2, 0) = (0.867, 0.117, 0.016)$; at
+$T = 0.1$ the first is $0.99995$; and at $T = 100$ they are
+$(0.3367, 0.3333, 0.3300)$, close to uniform.
+:::
+
+As $T$ falls the distribution approaches the standard basis vector
+$\mathbf{e}_1$, the *one-hot* vector that puts probability 1 on the
+token with the largest logit, and as $T$ grows it approaches the uniform
+distribution. The limits are exact, and the only subtlety is a tie
+for the largest logit.
 
 ::: {#thm-temperature}
 ## Temperature limits
@@ -1013,13 +1207,6 @@ $\operatorname{softmax}(\mathbf{z}/T)$ is proportional to the vector of
 powers $p_i^{1/T}$ (@exr-ch11-temperature-power). At $T = 0.5$ the
 model samples token $i$ with probability proportional to $p_i^2$.
 
-::: {#exm-temperature}
-Let $\mathbf{z} = (2, 1, 0)$. At $T = 1$ the probabilities are
-$(0.665, 0.245, 0.090)$; at $T = 0.5$ they are
-$\operatorname{softmax}(4, 2, 0) = (0.867, 0.117, 0.016)$; at
-$T = 0.1$ the first is $0.99995$; and at $T = 100$ they are
-$(0.3367, 0.3333, 0.3300)$, close to uniform.
-:::
 
 ```{python}
 #| include: false
@@ -1049,10 +1236,14 @@ for _ in range(20):
     close(smx(zr / (gapz / 50)), np.eye(7)[np.argmax(zr)], "small T numerically", tol=1e-15)
 ```
 
-## Caching keys and values {#sec-kv-cache}
+## Caching keys and values {#sec-gpt-kv-cache}
 
 Generating a name token by token seems to require running the model
-on the whole prefix $x_1, \dots, x_t$ at every step $t$. It does not.
+on the whole prefix $x_1, \dots, x_t$ at every step $t$. For a name
+of 16 tokens that means processing $1 + 2 + \dots + 16 = 136$
+positions, although only 16 of them are new: at step 3, for example,
+the keys and values of positions 1 and 2 are the same ones already
+computed at steps 1 and 2. The repeated work is unnecessary.
 Everything in @def-small-gpt except attention works on one position
 at a time, and attention at position $t$ needs only the query of
 position $t$ and the keys and values of positions $1$ to $t$. So a
@@ -1079,8 +1270,9 @@ starts with an empty list $C$ and, for $t = 1, 2, \dots$ in turn:
 ::: {#thm-kv-cache}
 ## Caching computes causal attention
 
+Take the model of @def-small-gpt with any values of its parameters.
 For every $T \le 16$ and tokens $x_1, \dots, x_T$, the cached
-evaluation gives $\hat{\mathbf{z}}_t = \mathbf{z}_t$ for
+evaluation of @def-kv-cache gives $\hat{\mathbf{z}}_t = \mathbf{z}_t$ for
 $t = 1, \dots, T$, where $\mathbf{z}_t$ are the logits of
 @def-small-gpt computed for the whole sequence, and $\mathbf{z}_t$
 depends only on $x_1, \dots, x_t$.
@@ -1132,6 +1324,7 @@ its predictions.
 
 ```{python}
 #| include: false
+check(sum(range(1, 17)) == 136, "1 + ... + 16 = 136")
 # Cached evaluation equals the whole-sequence computation, and z_t depends only
 # on the prefix (changing later tokens leaves earlier logits unchanged).
 for trial in range(10):
@@ -1147,7 +1340,7 @@ for trial in range(10):
     check(not np.allclose(logits(th, other)[-1], full[-1]), "the last token does change its own logits")
 ```
 
-## What the small model leaves out {#sec-leaves-out}
+## What the small model leaves out {#sec-gpt-leaves-out}
 
 The model computes the same kind of function as production language
 models, at a much smaller size, and several things are missing.
@@ -1168,7 +1361,7 @@ residual blocks in the stack of @cor-residual-stack.
 *Batching.* Each training step here uses one name, processed one
 position at a time. Production training computes all positions of a
 sequence at once with the causal mask, as in the array code of
-@sec-model, and averages the gradient over many sequences per step
+@sec-gpt-model, and averages the gradient over many sequences per step
 (GPT-2 used 512). @thm-kv-cache is what makes the all-at-once form
 give the same loss.
 
