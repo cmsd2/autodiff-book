@@ -1,13 +1,1297 @@
 # Neural networks {#sec-networks}
 
-::: {.callout-note}
-## Not yet written
+Gradient descent (@sec-gradient-descent) adjusts a vector of
+parameters to make a number, the loss, small. It needs a family of
+functions to adjust: a rule that turns an input vector and a parameter
+vector into an output vector, flexible enough to fit the data and
+simple enough to differentiate. A neural network is such a family. It
+is a composition of simple maps: an affine map, then a fixed function
+applied to each component, then another affine map, and so on. Each
+piece has a derivative we already know from @sec-several-variables,
+and the chain rule of @sec-chain-rule combines them. This chapter
+writes that combination out for the multilayer perceptron, which
+also appears inside the language model that @sec-small-gpt builds
+(a *transformer*), and finds that the gradient of the loss comes from
+one backward sweep of matrix–vector products. That sweep is reverse
+mode (@sec-reverse-mode) organised by layers.
 
-This chapter will cover:
+Two questions about the networks themselves come next. The first is
+what a network can represent: a network with a single intermediate
+layer can approximate any continuous function of one variable on a
+closed interval as closely as we like, and the proof builds the
+network explicitly. The second is where training starts. The
+parameters are drawn at random, and their spread decides whether the
+numbers passing through the network keep their size or grow or shrink
+from layer to layer.
 
-- neurons, layers and multilayer perceptrons
-- activation functions, including the ReLU and its corner
-- backpropagation in matrix form
-- universal approximation for functions of one variable
-- initialisation and the variance of activations
+```{python}
+#| include: false
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+from checks.ch07 import forward, init_params
+
+rng = np.random.default_rng(7)
+```
+
+## Neurons and layers {#sec-nn-layers}
+
+The simplest family of maps from $\mathbb{R}^n$ to $\mathbb{R}^m$ with
+adjustable numbers in it is the family of affine maps
+$\mathbf{x}\mapsto W\mathbf{x} + \mathbf{b}$ (@exm-affine), whose
+adjustable numbers are the entries of the $m\times n$ matrix $W$ and
+of the vector $\mathbf{b}\in\mathbb{R}^m$. Affine maps alone are too
+rigid. An affine function of one variable has a straight-line graph,
+so no choice of its two numbers fits even $|x|$ (two of the neurons
+defined below do, by @exr-ch7-max). Composing affine maps
+does not help: composing two of them gives another, since
+$W_2(W_1\mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2 = (W_2W_1)\mathbf{x} + (W_2\mathbf{b}_1 + \mathbf{b}_2)$,
+so a stack of affine maps can do no more than a single one. Inserting
+a fixed function of one variable between them, applied to each
+component, breaks this collapse. The simplest choice used in practice
+is $t \mapsto \max(t, 0)$, which keeps positive numbers and replaces
+negative ones by $0$.
+
+Here is the smallest piece of such a network. Fix the vector
+$\mathbf{w} = (1, -1)^\top$ and the number $b = 0$, and send an input
+$\mathbf{x}\in\mathbb{R}^2$ to $\max(\mathbf{w}\cdot\mathbf{x} + b, 0)$.
+On $\mathbf{x} = (2, 1)^\top$ this gives
+$\mathbf{w}\cdot\mathbf{x} + b = 1$ and then $\max(1, 0) = 1$. On
+$\mathbf{x} = (1, 2)^\top$ it gives $-1$ and then $0$: the map
+responds to inputs on one side of the line $x_1 = x_2$ and ignores
+the rest. A second map of the same kind, with
+$\mathbf{w} = (\tfrac12, 1)^\top$ and $b = -1$, gives
+$\tfrac12 + 2 - 1 = \tfrac32$ on $(1, 2)^\top$ and outputs
+$\tfrac32$. Applied to the same input, the two together compute
+$$
+\begin{pmatrix} 1 & -1\\ \tfrac12 & 1 \end{pmatrix}
+\begin{pmatrix} 1\\ 2 \end{pmatrix}
++ \begin{pmatrix} 0\\ -1 \end{pmatrix}
+= \begin{pmatrix} -1\\ \tfrac32 \end{pmatrix}
+\quad\longmapsto\quad
+\begin{pmatrix} 0\\ \tfrac32 \end{pmatrix}:
+$$
+an affine map whose matrix has one row for each of the two maps,
+followed by $\max(\cdot, 0)$ on each component.
+
+In general a *neuron* (or *unit*) takes a vector
+$\mathbf{x}\in\mathbb{R}^n$ and computes
+$\sigma(\mathbf{w}\cdot\mathbf{x} + b)$, where the vector
+$\mathbf{w}\in\mathbb{R}^n$ holds its *weights*, the number $b$ is its
+*bias*, and $\sigma\colon\mathbb{R}\to\mathbb{R}$ is a fixed function,
+the *activation function*. In the example both neurons have
+$\sigma(t) = \max(t, 0)$. Placing $m$ neurons side by side, all
+reading the same input, and stacking their weight vectors as the rows
+of a matrix gives a layer.
+
+::: {#def-nn-layer}
+## Layer
+
+A *layer* with weight matrix $W$ ($m\times n$), bias
+$\mathbf{b}\in\mathbb{R}^m$ and activation function $\sigma$ is the
+map $F\colon\mathbb{R}^n\to\mathbb{R}^m$,
+$$
+F(\mathbf{x}) = \sigma(W\mathbf{x} + \mathbf{b}),
+$$
+where $\sigma$ acts on each component. The vector
+$\mathbf{z} = W\mathbf{x} + \mathbf{b}$ is the layer's
+*pre-activation* and $\sigma(\mathbf{z})$ its *activation*.
+:::
+
+Row $i$ of $W$ holds the weights of neuron $i$, column $j$ holds the
+weights with which the $m$ neurons read input $j$, entry
+$w_{ij}$ is the weight with which neuron $i$ reads input $j$, and
+$b_i$ is the bias of neuron $i$. The number $m$ of neurons is the
+*width* of the layer. The activation function in the example has a
+name.
+
+::: {#def-relu}
+## Rectified linear unit
+
+The *rectified linear unit* (ReLU) is the function
+$\operatorname{relu}\colon\mathbb{R}\to\mathbb{R}$,
+$$
+\operatorname{relu}(x) = \max(x, 0) =
+\begin{cases} x & x \ge 0,\\ 0 & x < 0. \end{cases}
+$$
+:::
+
+For $x > 0$, $\operatorname{relu}$ agrees with the identity on an
+interval around $x$, so its derivative there is $1$; for $x < 0$ it
+agrees with $0$ near $x$, so its derivative is $0$. At $0$ its graph
+has a corner. The difference quotient
+$(\operatorname{relu}(h) - \operatorname{relu}(0))/h$ is $1$ for
+$h > 0$ and $0$ for $h < 0$, so it has no limit as $h \to 0$, and
+$\operatorname{relu}$ is not differentiable at $0$. It is continuous
+everywhere, and
+$|\operatorname{relu}(x) - \operatorname{relu}(y)| \le |x - y|$ for
+all $x$ and $y$. @sec-nn-corner returns to the corner. A neuron whose
+pre-activation is negative outputs $0$ and is called *inactive*; the
+first neuron in the example is inactive on the input $(1, 2)^\top$.
+
+Other common activation functions are the logistic function
+$1/(1 + e^{-x})$ and $\tanh x$, which are differentiable everywhere.
+The ReLU is cheaper to evaluate and its derivative is $0$ or $1$; the
+book's model uses it.
+
+A layer is the affine map $\mathbf{x}\mapsto W\mathbf{x} + \mathbf{b}$,
+whose Jacobian is $W$ at every point (@exm-affine), followed by the
+componentwise map $\mathbf{z}\mapsto\sigma(\mathbf{z})$, whose
+Jacobian at $\mathbf{z}$ is the diagonal matrix with entries
+$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise). The chain rule
+(@thm-chain-rule) says that the Jacobian of a composition is the
+product of the Jacobians, $J_{g\circ f}(\mathbf{a}) = J_g(f(\mathbf{a}))\,J_f(\mathbf{a})$,
+when $f$ is differentiable at $\mathbf{a}$ and $g$ at $f(\mathbf{a})$.
+So if $\sigma$ is differentiable at every component of $\mathbf{z}$,
+the Jacobian of the layer with respect to its input is
+$$
+J_F(\mathbf{x}) = \operatorname{diag}\bigl(\sigma'(z_1), \dots, \sigma'(z_m)\bigr)\, W .
+$$ {#eq-nn-layer-jacobian}
+Entry $(i, j)$ is $\sigma'(z_i)w_{ij}$, the rate at which the output
+of neuron $i$ changes per unit increment of input $j$. Row $i$ is row
+$i$ of $W$ scaled by $\sigma'(z_i)$, the rate at which neuron $i$
+responds to its own pre-activation, and column $j$ lists how every
+neuron responds to input $j$. In the example, at $\mathbf{x} = (1, 2)^\top$,
+$\mathbf{z} = (-1, \tfrac32)$ and
+$J_F = \operatorname{diag}(0, 1)\,W = \begin{pmatrix} 0 & 0\\ \tfrac12 & 1\end{pmatrix}$:
+the inactive neuron does not respond to small changes of the input at
+all. @exm-elementwise assumed $\sigma$ differentiable everywhere, but
+its argument used differentiability only at the components $z_i$, and
+the chain rule needs differentiability only at the point where it is
+applied.
+
+A network feeds the output of one layer into the next. Feed the
+output $(0, \tfrac32)^\top$ of the example layer into one more neuron,
+with weights $(2, -1)$, bias $\tfrac12$ and no activation function:
+it computes $2\cdot0 - \tfrac32 + \tfrac12 = -1$. That composition of
+two layers is a small multilayer perceptron.
+
+::: {#def-mlp}
+## Multilayer perceptron
+
+Let $n_0, n_1, \dots, n_D$ be positive integers and $\sigma$ an
+activation function. A *multilayer perceptron* (MLP) of depth $D$
+with widths $n_0, \dots, n_D$ has weight matrices $W_l$ of size
+$n_l\times n_{l-1}$ and biases $\mathbf{b}_l\in\mathbb{R}^{n_l}$, for
+$l = 1, \dots, D$. On input $\mathbf{x}\in\mathbb{R}^{n_0}$ it
+computes
+$$
+\mathbf{a}_0 = \mathbf{x}, \qquad
+\mathbf{z}_l = W_l\mathbf{a}_{l-1} + \mathbf{b}_l \quad (l = 1, \dots, D), \qquad
+\mathbf{a}_l = \sigma(\mathbf{z}_l) \quad (l = 1, \dots, D-1),
+$$ {#eq-nn-mlp}
+and its output is $\mathbf{z}_D$. Layers $1$ to $D-1$ are the
+*hidden* layers. The *parameters* of the network are all the entries
+of $W_1, \mathbf{b}_1, \dots, W_D, \mathbf{b}_D$, collected in one
+vector $\boldsymbol{\theta}\in\mathbb{R}^p$ with
+$p = \sum_{l=1}^D n_l(n_{l-1} + 1)$.
+:::
+
+In words: $\mathbf{z}_l$ is the vector of pre-activations of layer
+$l$ and $\mathbf{a}_l$ the vector of its outputs; each layer applies
+its affine map to the previous layer's outputs and then, except for
+the last layer, the activation function. The depth $D$ counts the
+layers that carry parameters, $n_l$ is the width of layer $l$, and
+$n_0$ is the number of inputs. Layer $l$ contributes $n_ln_{l-1}$
+weights and $n_l$ biases to the count $p$.
+
+The last layer has no activation function: its output is a vector of
+real numbers that a loss function reads. Training uses a finite list
+of *training examples*, pairs $(\mathbf{x}, \mathbf{y})$ of an input
+and the output we would like the network to give for it, called the
+*target*. A *loss function* $\ell\colon\mathbb{R}^{n_D}\to\mathbb{R}$
+measures how far the output is from the target, and *training* means
+searching for parameters that make the average loss over the training
+examples small, by gradient descent or one of its variants
+(@sec-stochastic). When the target is a vector of real numbers (a
+*regression* problem) the loss might be
+$\ell(\mathbf{z}) = \tfrac12\|\mathbf{z} - \mathbf{y}\|^2$. When the
+target is one of finitely many classes (a *classification* problem,
+such as predicting the next letter of a word) it is the cross-entropy
+loss of @sec-probability-loss. Either way, for one training example
+$(\mathbf{x}, \mathbf{y})$ the loss is
+$$
+L(\boldsymbol{\theta}) = \ell(\mathbf{z}_D),
+$$
+where $\ell$ is a fixed function that depends on $\mathbf{y}$, and
+$\mathbf{z}_D$ depends on $\boldsymbol{\theta}$ through @eq-nn-mlp.
+
+The MLP inside the book's final model (@sec-small-gpt) has depth 2,
+widths 16, 64 and 16, and no biases, so it has
+$64\times16 + 16\times64 = 2048$ parameters.
+
+::: {#exm-mlp}
+The two-layer computation above is an MLP of depth 2 with widths 2, 2
+and 1 and ReLU activation, with
+$$
+W_1 = \begin{pmatrix} 1 & -1\\ \tfrac12 & 1 \end{pmatrix},\quad
+\mathbf{b}_1 = \begin{pmatrix} 0\\ -1 \end{pmatrix},\quad
+W_2 = \begin{pmatrix} 2 & -1 \end{pmatrix},\quad
+b_2 = \tfrac12 ,
+$$
+and $2\cdot3 + 1\cdot3 = 9$ parameters. On input
+$\mathbf{x} = (1, 2)^\top$ it computes $\mathbf{z}_1 = (-1, \tfrac32)^\top$,
+$\mathbf{a}_1 = (0, \tfrac32)^\top$ and $z_2 = -1$. With target
+$y = 1$ and loss $\ell(z) = \tfrac12(z - y)^2$, the loss is
+$L = \tfrac12(-2)^2 = 2$.
+:::
+
+```{python}
+#| include: false
+W1 = np.array([[1.0, -1.0], [0.5, 1.0]]); b1 = np.array([0.0, -1.0])
+W2 = np.array([[2.0, -1.0]]); b2 = np.array([0.5])
+x_ex = np.array([1.0, 2.0]); y_ex = 1.0
+z1 = W1 @ x_ex + b1; a1 = np.maximum(z1, 0); z2 = W2 @ a1 + b2
+close(z1, [-1, 1.5], "z1"); close(a1, [0, 1.5], "a1"); close(z2, [-1], "z2")
+close(0.5 * (z2[0] - y_ex)**2, 2, "loss 2")
+check(W1.size + b1.size + W2.size + b2.size == 9 == 2*3 + 1*3, "9 parameters")
+check(64*16 + 16*64 == 2048, "2048 MLP parameters")
+xs = sp.Matrix(sp.symbols("x1:3", real=True))
+# The lead-in: single neurons, and the composition of affine maps.
+close(max(np.array([1, -1]) @ [2, 1] + 0, 0), 1, "neuron on (2,1)")
+close(max(np.array([1, -1]) @ [1, 2] + 0, 0), 0, "neuron on (1,2)")
+close(max(np.array([0.5, 1]) @ [1, 2] - 1, 0), 1.5, "second neuron")
+close(np.diag((z1 > 0).astype(float)) @ W1, [[0, 0], [0.5, 1]], "layer Jacobian at (1,2)")
+close(num_grad(lambda xx_: np.maximum(W1 @ xx_ + b1, 0)[1], x_ex), [0.5, 1], "row 2 by differences")
+close(num_grad(lambda xx_: np.maximum(W1 @ xx_ + b1, 0)[0], x_ex), [0, 0], "row 1 by differences")
+A_, B_ = sp.Matrix(2, 2, sp.symbols("p1:5")), sp.Matrix(2, 2, sp.symbols("q1:5"))
+c_, d_ = sp.Matrix(sp.symbols("r1:3")), sp.Matrix(sp.symbols("s1:3"))
+check(sp.expand(B_ * (A_ * xs + c_) + d_ - ((B_ * A_) * xs + (B_ * c_ + d_))) == sp.zeros(2, 1),
+      "affine maps compose to an affine map")
+# Layer Jacobian diag(sigma'(z)) W, against SymPy for tanh.
+xs = sp.Matrix(sp.symbols("x1:3", real=True))
+Ws = sp.Matrix(2, 2, sp.symbols("w1:5", real=True)); bs = sp.Matrix(sp.symbols("c1:3", real=True))
+zs = Ws * xs + bs
+Fs = zs.applyfunc(sp.tanh)
+check(sp.simplify(Fs.jacobian(xs) - sp.diag(*[1 - sp.tanh(zi)**2 for zi in zs]) * Ws) == sp.zeros(2, 2),
+      "layer Jacobian")
+# ReLU difference quotients at 0, and ReLU is 1-Lipschitz.
+for hh in (1e-1, 1e-3, 1e-6):
+    check(max(hh, 0) / hh == 1 and max(-hh, 0) / (-hh) == 0, "one-sided quotients 1 and 0")
+u, v = rng.normal(size=(2, 10000))
+check(np.all(np.abs(np.maximum(u, 0) - np.maximum(v, 0)) <= np.abs(u - v)), "relu Lipschitz")
+```
+
+## Backpropagation {#sec-nn-backprop}
+
+A step of gradient descent replaces $\boldsymbol{\theta}$ by
+$\boldsymbol{\theta} - \eta\nabla L(\boldsymbol{\theta})$ for a small
+learning rate $\eta > 0$, so training needs the partial derivative of
+$L$ with respect to every parameter. The quantities that organise the
+computation are the partial derivatives of the loss with respect to
+the pre-activations. We work them out in @exm-mlp, from the output
+backwards.
+
+- The loss is $\tfrac12(z_2 - 1)^2$, so an increment $h$ in $z_2$
+  changes $L$ by about $(z_2 - 1)h = -2h$: $\partial L/\partial z_2 = -2$.
+- An increment $h$ in the second hidden pre-activation $(\mathbf{z}_1)_2 = \tfrac32$
+  passes through the ReLU unchanged, since $\tfrac32 > 0$, and
+  changes $z_2$ by $-h$, through the weight $-1$. So it changes $L$ by
+  about $(-2)(-h) = 2h$, and $\partial L/\partial(\mathbf{z}_1)_2 = 2$.
+- A small increment in the first hidden pre-activation
+  $(\mathbf{z}_1)_1 = -1$ leaves it negative, so the ReLU still
+  outputs $0$ and $L$ does not change:
+  $\partial L/\partial(\mathbf{z}_1)_1 = 0$.
+- The weight $(W_1)_{21}$ multiplies $x_1 = 1$ into
+  $(\mathbf{z}_1)_2$, so an increment $h$ in it changes
+  $(\mathbf{z}_1)_2$ by $1\cdot h$ and $L$ by about $2h$:
+  $\partial L/\partial(W_1)_{21} = 2\cdot1 = 2$.
+
+Each derivative with respect to a pre-activation came from the one in
+the layer above, multiplied by a weight and by the derivative of the
+ReLU, and each derivative with respect to a weight is the derivative
+for the pre-activation it feeds times the input it multiplies. The
+theorem states this for every MLP.
+
+::: {#thm-backprop-matrix}
+## Backpropagation
+
+Consider an MLP as in @def-mlp, a fixed input $\mathbf{x}$ and a loss
+$L(\boldsymbol{\theta}) = \ell(\mathbf{z}_D)$. Fix
+$\boldsymbol{\theta}$, and suppose that $\ell$ is differentiable at
+$\mathbf{z}_D$ and that $\sigma$ is differentiable at every component
+of $\mathbf{z}_1, \dots, \mathbf{z}_{D-1}$. Define vectors
+$\boldsymbol{\delta}_l\in\mathbb{R}^{n_l}$ by
+$$
+\boldsymbol{\delta}_D = \nabla\ell(\mathbf{z}_D), \qquad
+\boldsymbol{\delta}_l = \bigl(W_{l+1}^\top\boldsymbol{\delta}_{l+1}\bigr)\odot\sigma'(\mathbf{z}_l)
+\quad (l = D-1, \dots, 1),
+$$ {#eq-nn-backprop}
+where $\odot$ multiplies vectors component by component and
+$\sigma'(\mathbf{z}_l)$ is the vector of the numbers
+$\sigma'((\mathbf{z}_l)_i)$. Then:
+
+(a) $\boldsymbol{\delta}_l$ is the gradient of the loss with respect
+to $\mathbf{z}_l$: if $g_l$ is the map from $\mathbf{z}_l$ to the
+loss given by layers $l+1, \dots, D$ followed by $\ell$, then $g_l$ is
+differentiable at $\mathbf{z}_l$ and
+$\nabla g_l(\mathbf{z}_l) = \boldsymbol{\delta}_l$;
+
+(b) $L$ is differentiable at $\boldsymbol{\theta}$, and for each $l$,
+$$
+\frac{\partial L}{\partial W_l} = \boldsymbol{\delta}_l\,\mathbf{a}_{l-1}^\top,
+\qquad
+\frac{\partial L}{\partial \mathbf{b}_l} = \boldsymbol{\delta}_l ,
+$$ {#eq-nn-backprop-params}
+where $\partial L/\partial W_l$ is the $n_l\times n_{l-1}$ matrix
+whose $(i, j)$ entry is $\partial L/\partial (W_l)_{ij}$, and
+$\partial L/\partial\mathbf{b}_l$ is the vector of the
+$\partial L/\partial(\mathbf{b}_l)_i$.
+:::
+
+In words, $(\boldsymbol{\delta}_l)_i$ measures how strongly the loss
+responds to the pre-activation of neuron $i$ in layer $l$. To get it,
+@eq-nn-backprop collects the values $\boldsymbol{\delta}_{l+1}$ of the
+layer above through the transposed weights, so that neuron $i$
+receives $\sum_k(W_{l+1})_{ki}(\boldsymbol{\delta}_{l+1})_k$, one
+term for each neuron $k$ that reads it, and then multiplies by
+$\sigma'((\mathbf{z}_l)_i)$. In the matrix $\partial L/\partial W_l$,
+row $i$ belongs to neuron $i$ of layer $l$, column $j$ to input $j$
+of that layer, and entry $(i, j)$ is the product
+$(\boldsymbol{\delta}_l)_i(\mathbf{a}_{l-1})_j$: the partial
+derivative of the loss with respect to the neuron's pre-activation,
+times the input that the weight multiplies.
+
+::: {.proof}
+(a) By downward induction on $l$. For $l = D$, $g_D = \ell$, which is
+differentiable at $\mathbf{z}_D$ with gradient $\boldsymbol{\delta}_D$
+by definition. Suppose the claim holds for $l + 1$, where
+$l \le D - 1$. The map from $\mathbf{z}_l$ to $\mathbf{z}_{l+1}$ is
+$h(\mathbf{u}) = W_{l+1}\sigma(\mathbf{u}) + \mathbf{b}_{l+1}$, and
+$g_l = g_{l+1}\circ h$. By @eq-nn-layer-jacobian and @exm-affine, $h$ is
+differentiable at $\mathbf{z}_l$ with Jacobian
+$W_{l+1}\operatorname{diag}(\sigma'(\mathbf{z}_l))$. By the induction
+hypothesis $g_{l+1}$ is differentiable at
+$h(\mathbf{z}_l) = \mathbf{z}_{l+1}$ with Jacobian
+$\boldsymbol{\delta}_{l+1}^\top$, a single row. By @thm-chain-rule,
+$g_l$ is differentiable at $\mathbf{z}_l$ with Jacobian
+$$
+J_{g_l}(\mathbf{z}_l) = \boldsymbol{\delta}_{l+1}^\top W_{l+1}\operatorname{diag}(\sigma'(\mathbf{z}_l)) .
+$$
+The gradient is the transpose of this row,
+$\operatorname{diag}(\sigma'(\mathbf{z}_l))W_{l+1}^\top\boldsymbol{\delta}_{l+1}$,
+and multiplying a vector by a diagonal matrix multiplies its
+components by the diagonal entries. This is @eq-nn-backprop.
+
+(b) First, $L$ is differentiable at $\boldsymbol{\theta}$. Write the
+forward pass as a chain of maps that carry the parameters along. The
+map $(\boldsymbol{\theta}, \mathbf{a}_{l-1}) \mapsto
+(\boldsymbol{\theta}, \mathbf{z}_l)$ has components that are
+polynomials in its inputs, so it is differentiable everywhere by
+@thm-continuous-partials. The map
+$(\boldsymbol{\theta}, \mathbf{z}_l) \mapsto (\boldsymbol{\theta}, \sigma(\mathbf{z}_l))$
+is differentiable at the current point by the argument of
+@exm-elementwise, because $\sigma$ is differentiable at each component
+of $\mathbf{z}_l$. Finally $\ell$ is differentiable at
+$\mathbf{z}_D$. Starting from $(\boldsymbol{\theta}, \mathbf{x})$,
+the composition of these maps is $L$, so @thm-chain-rule shows that
+$L$ is differentiable at $\boldsymbol{\theta}$.
+
+By @thm-jacobian the partial derivatives of $L$ exist, and we may
+compute each one along a line. Fix $l$, $i$ and $j$, and change only
+the entry $(W_l)_{ij}$, to $(W_l)_{ij} + t$. The vector
+$\mathbf{a}_{l-1}$ depends only on $\mathbf{x}$ and the parameters of
+layers $1$ to $l-1$, so it does not change, and $\mathbf{z}_l$
+becomes $\mathbf{z}_l + t\,(\mathbf{a}_{l-1})_j\,\mathbf{e}_i$. The
+layers above $l$ do not change, so the loss becomes
+$g_l(\mathbf{z}_l + t\,(\mathbf{a}_{l-1})_j\,\mathbf{e}_i)$. By (a)
+and @thm-chain-rule, its derivative at $t = 0$ is
+$\boldsymbol{\delta}_l\cdot(\mathbf{a}_{l-1})_j\mathbf{e}_i
+= (\boldsymbol{\delta}_l)_i(\mathbf{a}_{l-1})_j$, which is entry
+$(i, j)$ of $\boldsymbol{\delta}_l\mathbf{a}_{l-1}^\top$. Changing
+$(\mathbf{b}_l)_i$ by $t$ changes $\mathbf{z}_l$ by $t\mathbf{e}_i$,
+and the same argument gives $(\boldsymbol{\delta}_l)_i$.
+:::
+
+The name *backpropagation* describes the order of work. The forward
+pass computes and stores every $\mathbf{z}_l$ and $\mathbf{a}_l$.
+The backward pass starts from $\boldsymbol{\delta}_D$, applies
+@eq-nn-backprop to get $\boldsymbol{\delta}_{D-1}, \dots,
+\boldsymbol{\delta}_1$ in turn, and at each layer reads off the
+parameter gradients from @eq-nn-backprop-params. @def-adjoint calls
+the partial derivative $\bar v = \partial L/\partial v$ of the final
+output with respect to an intermediate quantity $v$ the *adjoint* of
+$v$, and @thm-reverse-mode shows that reverse accumulation, one sweep
+from the output back to the inputs, computes every adjoint of an
+acyclic computational graph. The vector $\boldsymbol{\delta}_l$ is the
+vector of adjoints $\bar{\mathbf{z}}_l$, and @eq-nn-backprop is
+reverse accumulation applied to the graph of the network, with the
+scalar nodes of each layer grouped into one vector. The transpose
+$W_{l+1}^\top$ appears because reverse mode multiplies by Jacobians
+from the left: a row vector times $W_{l+1}$ is, after transposing,
+$W_{l+1}^\top$ times a column.
+
+**Cost.** Count multiplications, since each comes with roughly one
+addition. The forward pass spends $n_ln_{l-1}$ multiplications on
+$W_l\mathbf{a}_{l-1}$, so $F = \sum_{l=1}^D n_ln_{l-1}$ in all, plus
+lower-order terms for the biases and activations. The backward pass
+spends $n_ln_{l-1}$ on each outer product
+$\boldsymbol{\delta}_l\mathbf{a}_{l-1}^\top$, $n_{l+1}n_l$ on each
+product $W_{l+1}^\top\boldsymbol{\delta}_{l+1}$ for
+$l = 1, \dots, D-1$, and $n_l$ on each $\odot$. That is
+$$
+2F - n_1n_0 + \sum_{l=1}^{D-1} n_l
+$$
+multiplications, at most twice the forward pass plus a term linear in
+the widths. So one forward and one backward pass together cost about
+three forward passes, however many parameters there are, as
+@thm-cheap-gradient predicts: there, a gradient costs at most a
+constant multiple of the cost of evaluating the function. The price is memory: the backward pass
+reads every stored $\mathbf{a}_{l-1}$ and $\mathbf{z}_l$.
+
+The theorem translates line by line into code. The function below
+uses ReLU, whose derivative it takes to be $1$ for positive inputs
+and $0$ otherwise (@sec-nn-corner explains the choice at $0$), and the
+loss $\ell(\mathbf{z}) = \tfrac12\|\mathbf{z} - \mathbf{y}\|^2$, whose
+gradient is $\mathbf{z} - \mathbf{y}$.
+
+```{python}
+#| echo: true
+import numpy as np
+
+def mlp_backprop(Ws, bs, x, y):
+    """Loss and gradients of a ReLU MLP with squared-error loss."""
+    a, zs, acts = x, [], [x]
+    for l, (W, b) in enumerate(zip(Ws, bs)):
+        z = W @ a + b
+        zs.append(z)
+        a = np.maximum(z, 0) if l < len(Ws) - 1 else z
+        acts.append(a)
+    loss = 0.5 * np.sum((zs[-1] - y) ** 2)
+    delta = zs[-1] - y                      # delta_D, the gradient of the loss
+    dWs, dbs = [None] * len(Ws), [None] * len(Ws)
+    for l in reversed(range(len(Ws))):
+        dWs[l] = np.outer(delta, acts[l])   # delta_l a_{l-1}^T
+        dbs[l] = delta
+        if l > 0:
+            delta = (Ws[l].T @ delta) * (zs[l - 1] > 0)
+    return loss, dWs, dbs
+```
+
+::: {#exm-backprop}
+Continue @exm-mlp. Here $\ell(z) = \tfrac12(z - 1)^2$, so
+$\delta_2 = z_2 - 1 = -2$. Then
+$$
+\boldsymbol{\delta}_1 = \bigl(W_2^\top\delta_2\bigr)\odot\sigma'(\mathbf{z}_1)
+= \begin{pmatrix} -4\\ 2 \end{pmatrix}\odot\begin{pmatrix} 0\\ 1 \end{pmatrix}
+= \begin{pmatrix} 0\\ 2 \end{pmatrix},
+$$
+because $\operatorname{relu}'(-1) = 0$ and
+$\operatorname{relu}'(3/2) = 1$. By @eq-nn-backprop-params,
+$$
+\frac{\partial L}{\partial W_2} = \delta_2\mathbf{a}_1^\top = \begin{pmatrix} 0 & -3 \end{pmatrix},\quad
+\frac{\partial L}{\partial b_2} = -2,\quad
+\frac{\partial L}{\partial W_1} = \boldsymbol{\delta}_1\mathbf{x}^\top
+= \begin{pmatrix} 0 & 0\\ 2 & 4 \end{pmatrix},\quad
+\frac{\partial L}{\partial \mathbf{b}_1} = \begin{pmatrix} 0\\ 2 \end{pmatrix}.
+$$
+The inactive first neuron passes no gradient back: its own weights
+and bias have partial derivative $0$ at this input. Central
+differences with step $10^{-6}$ agree with all nine numbers to within
+$10^{-9}$.
+:::
+
+```{python}
+#| include: false
+loss_ex, dWs_ex, dbs_ex = mlp_backprop([W1, W2], [b1, b2], x_ex, np.array([y_ex]))
+close(loss_ex, 2, "loss")
+close(dWs_ex[1], [[0, -3]], "dL/dW2"); close(dbs_ex[1], [-2], "dL/db2")
+close(dWs_ex[0], [[0, 0], [2, 4]], "dL/dW1"); close(dbs_ex[0], [0, 2], "dL/db1")
+close(W2.T @ np.array([-2.0]), [-4, 2], "W2^T delta2")
+
+def pack(Ws, bs):
+    return np.concatenate([np.concatenate([W.ravel(), b]) for W, b in zip(Ws, bs)])
+
+def unpack(theta, shapes):
+    Ws, bs, k = [], [], 0
+    for (m, n) in shapes:
+        Ws.append(theta[k:k + m*n].reshape(m, n)); k += m*n
+        bs.append(theta[k:k + m]); k += m
+    return Ws, bs
+
+def loss_of(theta, shapes, x, y):
+    Ws, bs = unpack(theta, shapes)
+    return mlp_backprop(Ws, bs, x, y)[0]
+
+shapes_ex = [(2, 2), (1, 2)]
+th = pack([W1, W2], [b1, b2])
+g_fd = num_grad(lambda t: loss_of(t, shapes_ex, x_ex, np.array([y_ex])), th)
+g_bp = pack(dWs_ex, dbs_ex)
+check(g_bp.size == 9 and np.max(np.abs(g_fd - g_bp)) < 1e-9, "exm-backprop against central differences")
+
+# Random deeper networks: backprop against central differences.
+for widths in ([3, 5, 4, 2], [4, 6, 6, 6, 3], [2, 8, 1]):
+    shapes = [(widths[l + 1], widths[l]) for l in range(len(widths) - 1)]
+    Ws = [rng.normal(size=s) for s in shapes]; bs = [rng.normal(size=s[0]) for s in shapes]
+    xr, yr = rng.normal(size=widths[0]), rng.normal(size=widths[-1])
+    _, dW, db = mlp_backprop(Ws, bs, xr, yr)
+    close(pack(dW, db), num_grad(lambda t: loss_of(t, shapes, xr, yr), pack(Ws, bs)),
+          "backprop vs finite differences", tol=1e-6)
+
+# Symbolic check of the theorem with tanh on a 2-2-2 network: the formulas for
+# dL/dW1, dL/dW2 and dL/db1 equal SymPy's derivatives of the composed loss.
+w = sp.symbols("w1:9", real=True); c = sp.symbols("c1:5", real=True)
+X = sp.Matrix(sp.symbols("x1:3", real=True)); Y = sp.Matrix(sp.symbols("y1:3", real=True))
+A1 = sp.Matrix(2, 2, w[:4]); A2 = sp.Matrix(2, 2, w[4:])
+B1 = sp.Matrix(c[:2]); B2 = sp.Matrix(c[2:])
+Z1 = A1 * X + B1; H1 = Z1.applyfunc(sp.tanh); Z2 = A2 * H1 + B2
+Lsym = ((Z2 - Y).T * (Z2 - Y))[0, 0] / 2
+d2 = Z2 - Y
+d1 = (A2.T * d2).multiply_elementwise(Z1.applyfunc(lambda s: 1 - sp.tanh(s)**2))
+for i in range(2):
+    for j in range(2):
+        sym_equal(sp.diff(Lsym, A1[i, j]), d1[i] * X[j], "dL/dW1 symbolic")
+        sym_equal(sp.diff(Lsym, A2[i, j]), d2[i] * H1[j], "dL/dW2 symbolic")
+    sym_equal(sp.diff(Lsym, B1[i]), d1[i], "dL/db1 symbolic")
+
+# Cost count: 2F - n1 n0 + sum of hidden widths, by direct counting.
+def count(widths):
+    D = len(widths) - 1
+    F = sum(widths[l] * widths[l - 1] for l in range(1, D + 1))
+    back = sum(widths[l] * widths[l - 1] for l in range(1, D + 1))   # outer products
+    back += sum(widths[l + 1] * widths[l] for l in range(1, D))      # W^T delta
+    back += sum(widths[l] for l in range(1, D))                       # Hadamard products
+    return F, back
+for widths in ([2, 2, 1], [16, 64, 16], [5, 7, 3, 9]):
+    F, back = count(widths)
+    check(back == 2 * F - widths[1] * widths[0] + sum(widths[1:-1]), "backward cost formula")
+    check(back <= 2 * F + sum(widths[1:-1]), "at most twice forward plus widths")
+```
+
+## What automatic differentiation computes at the corner {#sec-nn-corner}
+
+@thm-backprop-matrix needs $\sigma$ to be differentiable at every
+pre-activation. For the ReLU that means no component of any
+$\mathbf{z}_l$ with $l < D$ is exactly $0$. An automatic
+differentiation *engine*, a program that carries out the reverse
+accumulation of @sec-reverse-mode on the operations of another
+program, does not test this. It stores, for each
+elementary function, a rule for the local derivative, and for the
+ReLU the rule fixes a value at $0$. TensorFlow
+[@bolte2020mathematical, sec. 1] and the small engine in the book's
+final model both use
+$$
+\operatorname{relu}'(x) := \begin{cases} 1 & x > 0,\\ 0 & x \le 0. \end{cases}
+$$
+Call the value assigned to $\operatorname{relu}'(0)$ $g$; here $g = 0$. The
+engine then runs reverse accumulation with $g$ in place of the
+missing derivative. What can we say about the result?
+
+::: {#cor-relu-ad}
+Let an MLP with ReLU activation, an input $\mathbf{x}$, a loss
+$\ell$ differentiable at $\mathbf{z}_D$, and parameters
+$\boldsymbol{\theta}$ be given. If no component of
+$\mathbf{z}_1, \dots, \mathbf{z}_{D-1}$ is $0$, then $L$ is
+differentiable at $\boldsymbol{\theta}$, and backpropagation returns
+$\nabla L(\boldsymbol{\theta})$ whatever value $g$ it assigns to
+$\operatorname{relu}'(0)$.
+:::
+
+::: {.proof}
+$\operatorname{relu}$ is differentiable at every non-zero number, so
+@thm-backprop-matrix applies and its formulas give the gradient. They
+evaluate $\operatorname{relu}'$ only at components of the
+$\mathbf{z}_l$, none of which is $0$, so $g$ is never used.
+:::
+
+So the value $g$ matters only at parameter values where some
+pre-activation is exactly $0$ for the input at hand. There the engine
+still returns a vector, but that vector need not be the gradient, even
+when the gradient exists.
+
+::: {#exm-relu-ad-wrong}
+The function $f(x) = \operatorname{relu}(x) - \operatorname{relu}(-x)$
+equals $x$ for every $x$ (check $x \ge 0$ and $x < 0$ separately), so
+$f'(0) = 1$. It is a network of depth 2 with one input, two hidden
+units with input weights $1$ and $-1$, and output weights $1$ and
+$-1$. At $x = 0$ both pre-activations are $0$. An engine that
+assigns $g$ to $\operatorname{relu}'(0)$ applies the chain rule to this program and returns
+$$
+1\cdot g\cdot 1 + (-1)\cdot g\cdot(-1) = 2g ,
+$$
+which is $0$ for $g = 0$. The engine reports a derivative of $0$ for
+the identity function.
+:::
+
+```{python}
+#| include: false
+p_, n_ = sp.Symbol("p", positive=True), sp.Symbol("n", negative=True)
+for s_ in (p_, n_):
+    sym_equal(sp.Max(s_, 0) - sp.Max(-s_, 0), s_, "relu(x) - relu(-x) = x")
+check(max(0, 0) - max(-0, 0) == 0, "and at 0")
+
+def engine_relu_grad(z, g):
+    return 1.0 if z > 0 else (g if z == 0 else 0.0)
+
+for g in (0.0, 0.25, 0.5, 1.0):
+    # f(x) = 1*relu(1*x) + (-1)*relu(-1*x) at x = 0, by the chain rule through the program.
+    df = 1.0 * engine_relu_grad(0.0, g) * 1.0 + (-1.0) * engine_relu_grad(0.0, g) * (-1.0)
+    close(df, 2 * g, "engine returns 2g")
+check(engine_relu_grad(0.0, 0.0) == 0.0 and engine_relu_grad(1e-300, 0.0) == 1.0, "assigned value g = 0")
+```
+
+The example is small but the behaviour is general: an engine
+differentiates the program, not the function, and two programs for
+the same function can give different answers at a corner.
+@bolte2020mathematical [sec. 1] show the same with TensorFlow, and
+prove [Proposition 3] that for a wide class of programs, including
+ReLU networks, the engine's output equals the gradient at every
+interior point of each of finitely many regions whose closures cover
+the whole space. For an MLP and a fixed input, the sign patterns of
+the pre-activations give such regions directly: on the set of
+parameters where every pre-activation has a prescribed non-zero sign,
+@cor-relu-ad applies at every point. The boundaries of these regions
+lie in the set where some pre-activation is $0$, which is exactly
+what @cor-relu-ad excludes. The book does not need the general
+theorem. @cor-relu-ad is a statement about the point at which we
+compute, and in a given forward pass we can check directly whether
+any pre-activation is exactly $0$.
+
+Exact zeros are rare when the weights are drawn at random from a
+continuous distribution, as @sec-nn-init shows after setting up the
+probability needed to say so. In floating-point arithmetic a sum of
+products of non-zero numbers comes out as exactly $0$ only through
+exact cancellation. Once training has moved the weights, the book
+makes no probabilistic claim and relies on @cor-relu-ad at each step.
+
+Exact zeros do occur systematically in one situation. If every unit
+of a hidden layer is inactive, then $\mathbf{a}_{l-1} = \mathbf{0}$,
+and in a network without biases, such as the book's model, every
+component of $\mathbf{z}_l = W_l\mathbf{a}_{l-1}$ is exactly $0$. The
+same happens when an input vector is $\mathbf{0}$. Then
+@cor-relu-ad gives no guarantee, and the engine returns whatever its
+choice of $g$ produces.
+
+## Universal approximation in one variable {#sec-nn-universal}
+
+What functions can a ReLU network represent? A network of depth 2
+with one input, $N$ hidden units and one output computes
+$$
+x \mapsto c + \sum_{k=0}^{N-1} d_k\operatorname{relu}(w_kx + b_k) .
+$$
+Each term with $w_k \ne 0$ is $0$ on one side of the point
+$-b_k/w_k$ and affine on the other, so the sum is continuous and
+*piecewise linear*: affine on each of finitely many intervals. This
+section shows that such functions can approximate every continuous
+function on a closed interval, and that the approximation can be
+written down explicitly.
+
+The plan has two steps. First, mark some points on the graph of the
+function and join neighbouring points by straight lines. For $x^2$ on
+$[0, 1]$, the broken line through $(0, 0)$, $(\tfrac12, \tfrac14)$ and
+$(1, 1)$ stays within $\tfrac1{16}$ of $x^2$, and the broken line
+through the eleven points with $x = 0, 0.1, \dots, 1$ stays within
+$\tfrac1{400}$ (@exm-relu-square). Second, write the broken line as a
+network. The first step needs a property of continuous functions on
+closed intervals, which says that the points can be chosen to make
+the error as small as we like.
+
+::: {#lem-nn-uniform-continuity}
+## Cantor's theorem on uniform continuity
+
+Let $f\colon[a, b]\to\mathbb{R}$ be continuous. For every
+$\varepsilon > 0$ there is a $\delta > 0$ such that
+$|f(x) - f(y)| < \varepsilon$ for all $x$ and $y$ in $[a, b]$ with
+$|x - y| < \delta$.
+:::
+
+A function with the property in the conclusion is *uniformly
+continuous* on $[a, b]$. Continuity at each point gives a $\delta$ for
+each point; the lemma says that one $\delta$ works for the whole
+interval. The book does not prove it; a proof is in
+@zorich2015mathematical [sec. 4.2.2, Theorem 4], and it uses the
+completeness of the real numbers. It fails on intervals that are not
+closed: $1/x$ is continuous on $(0, 1]$, but for every $\delta < 1$
+the points $x = \delta$ and $y = \delta/2$ are closer than $\delta$
+while $|1/x - 1/y| = 1/\delta > 1$, so no $\delta$ works for
+$\varepsilon = 1$.
+
+::: {#lem-nn-interpolation}
+## Piecewise-linear interpolation
+
+Let $f\colon[a, b]\to\mathbb{R}$ be continuous, let
+$a = t_0 < t_1 < \dots < t_N = b$, and let $\hat f$, the
+*piecewise-linear interpolant* of $f$ at these points, be the function
+that equals $f$ at each $t_k$ and is affine on each interval
+$[t_{k-1}, t_k]$. If $\varepsilon > 0$ and
+$|f(x) - f(y)| < \varepsilon$ whenever
+$|x - y| \le \max_k(t_k - t_{k-1})$, then
+$|f(x) - \hat f(x)| < \varepsilon$ for every $x$ in $[a, b]$.
+:::
+
+::: {.proof}
+Let $x \in [t_{k-1}, t_k]$, and write
+$x = (1 - \lambda)t_{k-1} + \lambda t_k$ with $0 \le \lambda \le 1$.
+Since $\hat f$ is affine on this interval,
+$\hat f(x) = (1 - \lambda)f(t_{k-1}) + \lambda f(t_k)$, and so
+$$
+f(x) - \hat f(x) = (1 - \lambda)\bigl(f(x) - f(t_{k-1})\bigr) + \lambda\bigl(f(x) - f(t_k)\bigr) .
+$$
+Both $|x - t_{k-1}|$ and $|x - t_k|$ are at most $t_k - t_{k-1}$, so
+both brackets are less than $\varepsilon$ in absolute value. The
+weights $1-\lambda$ and $\lambda$ are non-negative with sum $1$, so
+$|f(x) - \hat f(x)| < (1 - \lambda)\varepsilon + \lambda\varepsilon = \varepsilon$.
+:::
+
+The second ingredient converts any continuous piecewise-linear
+function into a ReLU network. Consider
+$\operatorname{relu}(x) - \operatorname{relu}(x - 1)$. For $x \le 0$
+both terms are $0$. For $0 \le x \le 1$ only the first is non-zero,
+and the sum is $x$. For $x \ge 1$ the sum is $x - (x - 1) = 1$. The
+second unit switches on at $x = 1$ and cancels the slope $1$ of the
+first, so the graph rises from $0$ to $1$ and then stays level. In
+general, start with the first slope, and at each point where the
+slope changes (each *breakpoint*) add a ReLU that switches on there
+and changes the slope by the right amount.
+
+::: {#lem-relu-sum}
+## Piecewise-linear functions as sums of ReLUs
+
+Let $a = t_0 < t_1 < \dots < t_N = b$, and let $g$ be continuous on
+$[a, b]$ and affine with slope $m_k$ on $[t_{k-1}, t_k]$, for
+$k = 1, \dots, N$. Then for every $x$ in $[a, b]$,
+$$
+g(x) = g(t_0) + m_1\operatorname{relu}(x - t_0)
+     + \sum_{k=1}^{N-1}(m_{k+1} - m_k)\operatorname{relu}(x - t_k) .
+$$ {#eq-nn-relu-sum}
+:::
+
+::: {.proof}
+Call the right side $h(x)$. Fix $j$ between $1$ and $N$ and let
+$x \in [t_{j-1}, t_j]$. For $k \le j - 1$, $x - t_k \ge 0$, so
+$\operatorname{relu}(x - t_k) = x - t_k$; for $k \ge j$,
+$x - t_k \le 0$, so $\operatorname{relu}(x - t_k) = 0$. Hence on
+$[t_{j-1}, t_j]$,
+$$
+h(x) = g(t_0) + m_1(x - t_0) + \sum_{k=1}^{j-1}(m_{k+1} - m_k)(x - t_k),
+$$
+an affine function with slope
+$m_1 + (m_2 - m_1) + \dots + (m_j - m_{j-1}) = m_j$. So $h$ and $g$
+are both affine with slope $m_j$ on $[t_{j-1}, t_j]$. They agree at
+$t_0$. If they agree at $t_{j-1}$, they agree on all of
+$[t_{j-1}, t_j]$, since two affine functions with the same slope and
+the same value at one point are equal, and in particular they agree at
+$t_j$. By induction on $j$ they agree on every interval.
+:::
+
+The right side of @eq-nn-relu-sum is a network of depth 2 with $N$
+hidden units. Unit $k$ has input weight $1$ and bias $-t_k$, its
+output weight is the change of slope at $t_k$, and the output bias is
+$g(t_0)$. The breakpoints set the biases and the changes of slope set
+the output weights.
+
+::: {#exm-relu-sum}
+The piecewise-linear function through $(0, 0)$, $(1, 2)$, $(2, 1)$ and
+$(3, 1)$ has slopes $2$, $-1$ and $0$. By @eq-nn-relu-sum,
+$$
+g(x) = 2\operatorname{relu}(x) - 3\operatorname{relu}(x - 1) + \operatorname{relu}(x - 2)
+\qquad (0 \le x \le 3).
+$$
+At $x = 3$ this gives $6 - 6 + 1 = 1$, as it should. The unit at
+$t_1 = 1$ has output weight $-3$ because the slope falls from $2$ to
+$-1$ there.
+:::
+
+```{python}
+#| include: false
+def relu_sum(x, t, m, g0):
+    """Right side of eq-nn-relu-sum: breakpoints t[0..N] and slopes m_1..m_N as m[0..N-1]."""
+    x = np.asarray(x, dtype=float)
+    out = g0 + m[0] * np.maximum(x - t[0], 0)
+    for k in range(1, len(m)):
+        out = out + (m[k] - m[k - 1]) * np.maximum(x - t[k], 0)
+    return out
+
+xs3 = np.linspace(0, 3, 3001)
+interp = np.interp(xs3, [0, 1, 2, 3], [0, 2, 1, 1])
+check(list(np.diff([0, 2, 1, 1])) == [2, -1, 0], "slopes 2, -1, 0")
+close(relu_sum(xs3, [0, 1, 2, 3], [2, -1, 0], 0), interp, "exm-relu-sum via the lemma")
+close(2*np.maximum(xs3, 0) - 3*np.maximum(xs3 - 1, 0) + np.maximum(xs3 - 2, 0), interp,
+      "exm-relu-sum explicit formula")
+check(2*3 - 3*2 + 1 == 1, "value at 3")
+# Random piecewise-linear functions (the lemma is also checked in Lean).
+for _ in range(50):
+    N = rng.integers(1, 9)
+    t = np.sort(rng.uniform(-5, 5, size=N + 1))
+    vals = rng.normal(size=N + 1)
+    m = np.diff(vals) / np.diff(t)
+    xr = np.linspace(t[0], t[-1], 2001)
+    close(relu_sum(xr, t, m, vals[0]), np.interp(xr, t, vals), "lem-relu-sum random", tol=1e-9)
+close(abs(1 / 0.1 - 1 / 0.05), 1 / 0.1, "1/x example: difference 1/delta")
+xs4 = np.linspace(-2, 3, 501)
+close(np.maximum(xs4, 0) - np.maximum(xs4 - 1, 0), np.clip(xs4, 0, 1), "relu(x) - relu(x-1)")
+```
+
+::: {#thm-universal-1d}
+## Universal approximation in one variable
+
+Let $f\colon[a, b]\to\mathbb{R}$ be continuous and $\varepsilon > 0$.
+There are a positive integer $N$ and real numbers $c$, $d_k$ and
+$t_k$ ($k = 0, \dots, N-1$) such that the network
+$$
+g(x) = c + \sum_{k=0}^{N-1} d_k\operatorname{relu}(x - t_k)
+$$
+satisfies $|f(x) - g(x)| < \varepsilon$ for every $x$ in $[a, b]$.
+Equivalently, $f$ is the uniform limit on $[a, b]$ of a sequence of
+networks of depth 2 with ReLU activation, where a sequence of
+functions $g_n$ *converges uniformly* to $f$ on $[a, b]$ if
+$\max_{a\le x\le b}|f(x) - g_n(x)| \to 0$ as $n \to \infty$.
+:::
+
+::: {.proof}
+By @lem-nn-uniform-continuity there is a $\delta > 0$ with
+$|f(x) - f(y)| < \varepsilon$ whenever $|x - y| < \delta$. Choose
+$N$ with $(b - a)/N < \delta$ and put $t_k = a + k(b - a)/N$ for
+$k = 0, \dots, N$. Let $\hat f$ be the piecewise-linear interpolant of
+$f$ at these points. By @lem-nn-interpolation,
+$|f(x) - \hat f(x)| < \varepsilon$ on $[a, b]$. By @lem-relu-sum,
+$\hat f$ is a network of the stated form, with $c = f(a)$,
+$d_0 = m_1$ and $d_k = m_{k+1} - m_k$ for $k \ge 1$, where
+$m_k = (f(t_k) - f(t_{k-1}))/(t_k - t_{k-1})$.
+
+For the second sentence, take $\varepsilon = 1/n$ for
+$n = 1, 2, \dots$ to get networks $g_n$ with
+$|f(x) - g_n(x)| < 1/n$ for all $x$ in $[a, b]$. Conversely, if such a
+sequence exists, any $g_n$ with $1/n \le \varepsilon$ will do.
+:::
+
+::: {#exm-relu-square}
+Let $f(x) = x^2$ on $[0, 1]$ and $t_k = k/N$. The slope of the
+interpolant on $[t_{k-1}, t_k]$ is
+$(t_k^2 - t_{k-1}^2)/(t_k - t_{k-1}) = t_k + t_{k-1} = (2k-1)/N$, so
+the slope rises by $2/N$ at each interior breakpoint, and
+@eq-nn-relu-sum gives
+$$
+g_N(x) = \frac{x}{N} + \frac{2}{N}\sum_{k=1}^{N-1}\operatorname{relu}\Bigl(x - \frac{k}{N}\Bigr)
+\qquad (0 \le x \le 1),
+$$
+using $\operatorname{relu}(x) = x$ for $x \ge 0$. On
+$[t_{k-1}, t_k]$ the interpolant is a chord of the parabola, and
+$x^2 - g_N(x) = (x - t_{k-1})(x - t_k)$, because both sides are
+quadratics with leading coefficient $1$ that vanish at $t_{k-1}$ and
+$t_k$. The largest absolute value is at the midpoint, so
+$$
+\max_{0\le x\le 1}|x^2 - g_N(x)| = \frac{1}{4N^2} .
+$$
+For an error below $10^{-4}$, $N = 51$ hidden units suffice and
+$N = 50$ do not. The proof of @thm-universal-1d asks for many more: on
+$[0, 1]$, $|x^2 - y^2| = |x + y|\,|x - y| \le 2|x - y|$, so
+$\delta = \varepsilon/2$ works, and the proof takes $N > 2/\varepsilon$,
+which is $N > 20000$ for $\varepsilon = 10^{-4}$.
+:::
+
+```{python}
+#| include: false
+def g_sq(x, N):
+    x = np.asarray(x, dtype=float)
+    return x / N + (2 / N) * sum(np.maximum(x - k / N, 0) for k in range(1, N))
+
+for N in (1, 2, 5, 10, 51):
+    xr = np.linspace(0, 1, 20 * N + 1)
+    close(g_sq(xr, N), np.interp(xr, np.arange(N + 1) / N, (np.arange(N + 1) / N)**2),
+          "g_N is the interpolant of x^2")
+    xm = (np.arange(N) + 0.5) / N
+    close(np.max(np.abs(xr**2 - g_sq(xr, N))), 1 / (4 * N**2), "max error 1/(4N^2)")
+    close(np.abs(xm**2 - g_sq(xm, N)), 1 / (4 * N**2), "attained at midpoints")
+# Slopes (2k-1)/N and the chord identity, in SymPy and Maxima. (Grid values also in Lean.)
+k_, N_, xs_ = sp.symbols("k N x", positive=True)
+tk, tk1 = k_ / N_, (k_ - 1) / N_
+sym_equal((tk**2 - tk1**2) / (tk - tk1), (2*k_ - 1) / N_, "slope of the chord")
+sym_equal(xs_**2 - (tk1**2 + (2*k_ - 1)/N_ * (xs_ - tk1)), (xs_ - tk1) * (xs_ - tk), "chord error")
+maxima_zero("x^2 - ((k-1)^2/N^2 + (2*k-1)/N*(x-(k-1)/N)) - (x-(k-1)/N)*(x-k/N)", "chord error in Maxima")
+check(1 / (4 * 50**2) >= 1e-4 and 1 / (4 * 51**2) < 1e-4, "N = 51 is the least N")
+check(2 / 1e-4 == 20000, "N > 2/eps = 20000")
+# The plan at the start of the section: errors 1/16 and 1/400 for N = 2 and N = 10.
+for N_, err_ in ((2, 1/16), (10, 1/400)):
+    xr = np.linspace(0, 1, 100001)
+    close(np.max(np.abs(xr**2 - g_sq(xr, N_))), err_, f"broken line with N = {N_}", tol=1e-6)
+```
+
+@thm-universal-1d is an existence statement with a constructive
+proof, and its reach is limited in four ways.
+
+- It gives no rate. The number of units depends on $f$ through the
+  $\delta$ of @lem-nn-uniform-continuity, and a function that changes
+  quickly needs many more units than $x^2$ does
+  (@exr-ch7-units). Nothing in the theorem bounds $N$ in terms of
+  $\varepsilon$ alone.
+- It says nothing about training. The weights in the proof come from
+  values of $f$, which training does not have. Whether gradient
+  descent on a finite data set finds a good network is a different
+  question, and the theorem does not address it.
+- It controls the network only on $[a, b]$. Outside the interval
+  $g$ is affine on each side, and it may be far from $f$.
+- It concerns one input variable. The corresponding theorem for
+  continuous functions on a closed bounded subset of $\mathbb{R}^n$
+  holds for ReLU and for every continuous activation function that is
+  not a polynomial [@leshno1993multilayer], with earlier versions for
+  sigmoid-shaped activations by @cybenko1989approximation and
+  @hornik1989multilayer. Those proofs use functional analysis and do
+  not construct the network the way @lem-relu-sum does.
+
+## Initialisation and the size of activations {#sec-nn-init}
+
+Training starts from parameters drawn at random, a step called
+*initialisation*. Zero weights would not do: with all weights $0$,
+every hidden unit in a layer computes the same thing, receives the
+same gradient by @eq-nn-backprop-params, and stays equal to the others
+after every step. The spread of the random weights, measured by their
+standard deviation, matters too, because it sets the size of the
+pre-activations, and so of everything downstream.
+
+The computation uses expectation and variance. @def-finite-probability
+describes a finite sample space $\Omega$ in which each outcome $\omega$
+has a probability $P(\omega) \ge 0$, these probabilities summing to
+$1$. A *random variable* is a function $X$ on $\Omega$, its
+*expectation* is $\mathbb{E}[X] = \sum_\omega P(\omega)X(\omega)$, its
+*variance* is $\operatorname{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$,
+and the square root of the variance is its *standard deviation*.
+Random variables $X_1, \dots, X_k$ are *independent* if
+$P(X_1 = c_1, \dots, X_k = c_k) = P(X_1 = c_1)\cdots P(X_k = c_k)$ for
+all values $c_1, \dots, c_k$. @sec-stochastic proves the rules we
+need: expectation is linear,
+$\operatorname{Var}(cX) = c^2\operatorname{Var}(X)$, and the variance
+of a sum of independent random variables is the sum of their
+variances.
+
+A small case shows what to expect. Let $\mathbf{x} = (1, 2)^\top$
+and let the two weights $w_1$ and $w_2$ of a neuron be independent,
+each equal to $s$ or $-s$ with probability $\tfrac12$. The sample
+space has four equally likely outcomes, which give $z = w_1 + 2w_2$
+the values $3s$, $-s$, $s$ and $-3s$. So $\mathbb{E}[z] = 0$ and
+$\mathbb{E}[z^2] = \tfrac14(9 + 1 + 1 + 9)s^2 = 5s^2$. The number
+$5$ is $\|\mathbf{x}\|^2 = 1^2 + 2^2$: the variance of the
+pre-activation grows with the squared length of the input and with the
+variance $s^2$ of each weight.
+
+The book's model, like most networks, draws its weights from the
+normal distribution, which can take any real value. A finite sample
+space cannot describe that, and probabilities of intervals, given by
+integrals, take the place of probabilities of single outcomes.
+
+::: {#def-nn-density}
+## Density and the normal distribution
+
+A *probability density* is a function $f\colon\mathbb{R}\to[0, \infty)$
+with $\int_{-\infty}^{\infty}f(t)\,dt = 1$. A real random variable $X$
+*has density* $f$ if
+$$
+P(a \le X \le b) = \int_a^b f(t)\,dt \qquad\text{for all } a \le b .
+$$
+Its expectation is $\mathbb{E}[X] = \int_{-\infty}^{\infty}t f(t)\,dt$,
+when $\int_{-\infty}^{\infty}|t| f(t)\,dt$ is finite, and more
+generally $\mathbb{E}[g(X)] = \int_{-\infty}^{\infty}g(t)f(t)\,dt$ when
+$\int_{-\infty}^{\infty}|g(t)|f(t)\,dt$ is finite. Its variance is
+$\operatorname{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$.
+For real $\mu$ and $s > 0$, the *normal distribution* $N(\mu, s^2)$
+is the distribution with density
+$$
+\varphi(t) = \frac{1}{\sqrt{2\pi s^2}}\,e^{-(t - \mu)^2/(2s^2)} .
+$$
+Real random variables $X_1, \dots, X_k$ are *independent* if
+$$
+P(a_1 \le X_1 \le b_1, \dots, a_k \le X_k \le b_k)
+= P(a_1 \le X_1 \le b_1)\cdots P(a_k \le X_k \le b_k)
+$$
+for all intervals $[a_1, b_1], \dots, [a_k, b_k]$.
+:::
+
+The density plays the part of the probabilities $P(\omega)$, and
+integrals replace sums. The density $\varphi$ of $N(\mu, s^2)$ is the
+bell-shaped curve centred at $\mu$; a random variable with this
+distribution has mean $\mu$ and variance $s^2$, as the substitution
+$u = (t - \mu)/s$ and an integration by parts show. For example, a
+variable with distribution $N(0, 1)$ lies in $[-1, 1]$ with probability
+about $0.683$ and in $[-2, 2]$ with probability about $0.954$. A
+random variable with a density gives probability $0$ to each single
+number $c$, since $P(c \le X \le c) = \int_c^c f(t)\,dt = 0$. Two random
+variables have the *same distribution* if they give the same
+probability to every interval. The rules of @sec-stochastic quoted
+above hold for all random variables with finite variance, including
+those with densities and sums of them; the book uses them without
+proof, and @wasserman2004all [ch. 2 and ch. 3] proves them.
+
+This settles the claim of @sec-nn-corner that exact zeros are rare at
+initialisation. Suppose the weights and bias of a unit in the first
+layer are independent, each with a normal distribution with mean $0$
+and positive variance, and $\mathbf{x}$ is a fixed input. Each term
+$w_jx_j$ with $x_j \ne 0$ is normal with mean $0$ and variance
+$x_j^2\operatorname{Var}(w_j)$, and a sum of independent normal random
+variables is again normal [@wasserman2004all, sec. 2.4]. So
+$\mathbf{w}\cdot\mathbf{x} + b$, the sum of $b$ and these terms, is
+normal with mean $0$ and positive variance, and it equals $0$ with
+probability $0$.
+
+::: {#thm-nn-init-variance}
+## Variance of a random linear map
+
+Let $\mathbf{x}\in\mathbb{R}^n$ be fixed, and let $W$ be an
+$m\times n$ random matrix whose entries $w_{ij}$ are independent,
+with $\mathbb{E}[w_{ij}] = 0$ and $\operatorname{Var}(w_{ij}) = s^2$.
+Then $\mathbf{z} = W\mathbf{x}$ satisfies, for each $i$,
+$$
+\mathbb{E}[z_i] = 0, \qquad \operatorname{Var}(z_i) = \mathbb{E}[z_i^2] = s^2\|\mathbf{x}\|^2 ,
+$$
+and so $\mathbb{E}\|\mathbf{z}\|^2 = ms^2\|\mathbf{x}\|^2$.
+:::
+
+::: {.proof}
+$z_i = \sum_j w_{ij}x_j$, where the $x_j$ are constants. By
+linearity, $\mathbb{E}[z_i] = \sum_j x_j\mathbb{E}[w_{ij}] = 0$. The
+terms $w_{ij}x_j$ for $j = 1, \dots, n$ are independent, and
+$\operatorname{Var}(w_{ij}x_j) = x_j^2s^2$, so
+$\operatorname{Var}(z_i) = s^2\sum_jx_j^2 = s^2\|\mathbf{x}\|^2$.
+Since $\mathbb{E}[z_i] = 0$, $\operatorname{Var}(z_i) = \mathbb{E}[z_i^2]$.
+Summing over $i$ gives $\mathbb{E}\|\mathbf{z}\|^2$.
+:::
+
+If the input has components of typical size $1$, so that
+$\|\mathbf{x}\|^2 \approx n$, then $\operatorname{Var}(z_i) \approx s^2n$.
+Keeping the pre-activations at the size of the input means
+$s = 1/\sqrt{n}$: the standard deviation of the weights should shrink
+like one over the square root of the number of inputs to each unit. The same
+square root reappears in @thm-attention-scale.
+
+The ReLU halves the expected square, provided the pre-activation is
+as likely to be positive as negative in a precise sense. In the
+four-outcome example, $\operatorname{relu}(z)$ takes the values $3s$,
+$0$, $s$ and $0$, so
+$\mathbb{E}[\operatorname{relu}(z)^2] = \tfrac14(9 + 1)s^2 = \tfrac52s^2$,
+half of $\mathbb{E}[z^2] = 5s^2$. The values of $z$ there come in pairs
+$\pm3s$ and $\pm s$ of equal probability, and the ReLU keeps one member
+of each pair. A random variable $z$ is *symmetric* if $-z$ has the
+same distribution as $z$, that is,
+$P(a \le z \le b) = P(-b \le z \le -a)$ for all $a \le b$.
+
+::: {#lem-relu-second-moment}
+If $z$ is symmetric and $\mathbb{E}[z^2]$ is finite, then
+$\mathbb{E}[\operatorname{relu}(z)^2] = \tfrac12\mathbb{E}[z^2]$.
+:::
+
+::: {.proof}
+For every real $x$, one of $\operatorname{relu}(x)$ and
+$\operatorname{relu}(-x)$ is $0$ and the other is $|x|$, so
+$\operatorname{relu}(x)^2 + \operatorname{relu}(-x)^2 = x^2$. Hence
+$\mathbb{E}[\operatorname{relu}(z)^2] + \mathbb{E}[\operatorname{relu}(-z)^2] = \mathbb{E}[z^2]$.
+Since $-z$ has the same distribution as $z$, the two expectations on
+the left are equal.
+:::
+
+If the $w_{ij}$ are independent and each is symmetric, as normal
+random variables with mean $0$ are, then the variables $-w_{ij}$ are
+independent with the same distributions as the $w_{ij}$, so
+$-z_i = \sum_j(-w_{ij})x_j$ has the same distribution as
+$z_i = \sum_jw_{ij}x_j$, and each $z_i$ is symmetric.
+@thm-nn-init-variance and @lem-relu-second-moment then give, for one
+ReLU layer without bias,
+$$
+\mathbb{E}\|\operatorname{relu}(W\mathbf{x})\|^2 = \frac{ms^2}{2}\|\mathbf{x}\|^2 .
+$$ {#eq-nn-relu-layer-norm}
+The expected squared length of the layer's output is the squared
+length of its input times $ms^2/2$: the number of neurons times the
+variance of one weight, halved by the ReLU.
+In a stack of such layers with independent weights, the input of
+layer $l$ is itself random. Applying @eq-nn-relu-layer-norm with that
+input held fixed, and then averaging over it (a step that needs
+conditional expectation, which the book does not develop), shows that
+layer $l$ multiplies the expected squared norm by $n_ls_l^2/2$
+[@he2015delving, sec. 2.2]. A product of many factors grows or shrinks
+exponentially unless the factors are close to $1$. @he2015delving
+tracks the expected square of one component instead of the squared
+norm, which gives the factor $n_{l-1}s_l^2/2$ and the rule
+$s_l^2 = 2/n_{l-1}$ for ReLU layers; for layers of equal width the two
+factors agree. The earlier rule of
+@glorot2010understanding [sec. 4.2] balances the forward pass against
+the backward pass of @eq-nn-backprop and takes
+$s_l^2 = 2/(n_{l-1} + n_l)$.
+
+::: {#exm-init-microgpt}
+The book's model draws every weight independently from
+$N(0, 0.08^2)$. Its MLP reads a vector $\mathbf{h}\in\mathbb{R}^{16}$
+produced by RMS normalisation (@sec-small-gpt), which divides a vector
+by the root mean square of its components. So $\|\mathbf{h}\|^2$ is
+just under $16$, the width; it falls short of $16$ only because a small
+constant is added to the mean square before the division. The first layer has $16$ inputs, so by @thm-nn-init-variance its
+$64$ pre-activations have mean $0$ and variance
+$0.08^2\times16 = 0.1024$, a standard deviation of $0.32$. The rule
+$s = 1/\sqrt{16}$ would give $s = 0.25$ and standard deviation $1$;
+the rule of @he2015delving would give $s \approx 0.354$.
+
+By @eq-nn-relu-layer-norm the $64$ activations have expected squared
+norm $64\times0.1024/2 \approx 3.28$, and the second layer turns them
+into $16$ outputs of variance about $0.08^2\times3.28 \approx 0.021$,
+a standard deviation of about $0.145$. The MLP adds its output to a
+vector whose components have root mean square about $1$, so at the
+start of training it changes that vector by roughly $15\%$ of its
+size. Simulating 300 freshly initialised models on random input
+sequences gives standard deviations $0.32$ for the pre-activations and
+$0.14$ for the outputs.
+
+The small spread does no harm here because the model has one layer
+and normalises before each block. In a plain stack of ReLU layers of
+width 16 with this spread, each layer would multiply the expected
+squared norm by $16\times0.08^2/2 = 0.0512$, and five layers by
+about $3.5\times10^{-7}$. The small weights also make the model's
+first predictions nearly uniform, which @sec-probability-loss
+measures.
+:::
+
+```{python}
+#| include: false
+# The four-outcome example: z = w1 + 2 w2 with w = +-s.
+s_sym = sp.symbols("s", positive=True)
+zvals = [a * s_sym + 2 * b * s_sym for a in (1, -1) for b in (1, -1)]
+check(set(zvals) == {-3*s_sym, -s_sym, s_sym, 3*s_sym}, "values 3s, -s, s, -3s")
+check(sum(zvals) == 0 and sp.expand(sum(v**2 for v in zvals) / 4) == 5 * s_sym**2, "mean 0, E z^2 = 5 s^2")
+check(sp.expand(sum(sp.Max(v, 0)**2 for v in zvals) / 4) == sp.Rational(5, 2) * s_sym**2, "E relu(z)^2 = 5/2 s^2")
+# def-nn-density: the normal density integrates to 1, with mean mu and variance s^2.
+t_, mu_ = sp.symbols("t mu", real=True)
+phi_ = sp.exp(-(t_ - mu_)**2 / (2 * s_sym**2)) / sp.sqrt(2 * sp.pi * s_sym**2)
+check(sp.simplify(sp.integrate(phi_, (t_, -sp.oo, sp.oo))) == 1, "normal density integrates to 1")
+check(sp.simplify(sp.integrate(t_ * phi_, (t_, -sp.oo, sp.oo))) == mu_, "normal mean mu")
+check(sp.simplify(sp.integrate((t_ - mu_)**2 * phi_, (t_, -sp.oo, sp.oo))) == s_sym**2, "normal variance s^2")
+phi01 = phi_.subs({mu_: 0, s_sym: 1})
+close(float(sp.integrate(phi01, (t_, -1, 1))), 0.683, "P(-1 <= Z <= 1)", tol=1e-3)
+close(float(sp.integrate(phi01, (t_, -2, 2))), 0.954, "P(-2 <= Z <= 2)", tol=1e-3)
+# A sum of independent normals with mean 0 is never exactly 0 in practice (w.x + b for x != 0).
+zrng = np.random.default_rng(71)
+zsum = zrng.normal(size=(100000, 3)) @ np.array([1.0, 0.0, -2.0]) + zrng.normal(size=100000)
+check(np.count_nonzero(zsum == 0) == 0, "no exact zeros in w.x + b")
+# thm-nn-init-variance by Monte Carlo, for a fixed x and normal and uniform weights.
+x_fixed = rng.normal(size=10); s = 0.3
+for sampler in (lambda size: rng.normal(0, s, size=size),
+                lambda size: rng.uniform(-np.sqrt(3) * s, np.sqrt(3) * s, size=size)):
+    Wm = sampler((200000, 10))
+    zz = Wm @ x_fixed
+    close(zz.mean(), 0, "E z = 0", tol=5e-3)
+    close(zz.var() / (s**2 * x_fixed @ x_fixed), 1, "Var z = s^2 |x|^2", tol=1e-2)
+    close(np.mean(np.maximum(zz, 0)**2) / (s**2 * x_fixed @ x_fixed), 0.5,
+          "E relu(z)^2 = Var/2", tol=1e-2)
+# relu(x)^2 + relu(-x)^2 = x^2 (also in Lean).
+u = rng.normal(size=1000)
+close(np.maximum(u, 0)**2 + np.maximum(-u, 0)**2, u**2, "relu square identity")
+
+# Numbers in exm-init-microgpt.
+close(0.08**2 * 16, 0.1024, "variance 0.1024"); close(np.sqrt(0.1024), 0.32, "sd 0.32")
+close(1 / np.sqrt(16), 0.25, "1/sqrt 16"); close(np.sqrt(2 / 16), 0.354, "He scale", tol=1e-3)
+close(64 * 0.1024 / 2, 3.28, "expected squared norm 3.28", tol=1e-3)
+close(0.08**2 * 64 * 0.1024 / 2, 0.021, "output variance 0.021", tol=1e-3)
+close(np.sqrt(0.08**2 * 64 * 0.1024 / 2), 0.145, "output sd 0.145", tol=1e-3)
+close(16 * 0.08**2 / 2, 0.0512, "factor per layer"); close(0.0512**5, 3.5e-7, "five layers", tol=1e-8)
+pre, out, stream, hn = [], [], [], []
+sim = np.random.default_rng(11)
+for _ in range(300):
+    params = init_params(sim)
+    _, rec = forward(params, sim.integers(0, 27, size=8))
+    pre.append(rec["pre"].ravel()); out.append(rec["mlp_out"].ravel())
+    stream.append(rec["stream"].ravel()); hn.append(np.sum(rec["mlp_in"]**2, axis=1))
+hn = np.concatenate(hn)
+check(np.all(hn < 16) and np.all(hn > 15.99), "|h|^2 just under 16")
+close(np.std(np.concatenate(pre)), 0.32, "simulated pre-activation sd", tol=0.005)
+close(np.std(np.concatenate(out)), 0.14, "simulated MLP output sd", tol=0.005)
+rms_stream = np.sqrt(np.mean(np.concatenate(stream)**2))
+close(rms_stream, 1.0, "stream RMS about 1", tol=0.01)
+close(np.std(np.concatenate(out)) / rms_stream, 0.15, "roughly 15 percent", tol=0.01)
+# Plain stack of five ReLU layers of width 16 with s = 0.08, and with He's scale.
+for s_l, factor in ((0.08, 0.0512), (np.sqrt(2 / 16), 1.0)):
+    Wst = rng.normal(0, s_l, size=(20000, 5, 16, 16))
+    a = np.ones((20000, 16))
+    for l in range(5):
+        a = np.maximum(np.einsum("nij,nj->ni", Wst[:, l], a), 0)
+    close(np.mean(np.sum(a * a, axis=1) / 16) / factor**5, 1, "five-layer factor", tol=0.04)
+```
+
+## Notes and further reading {#sec-nn-notes}
+
+@goodfellow2016deep [ch. 6] covers feedforward networks, activation
+functions, universal approximation and backpropagation, and
+[ch. 8] discusses initialisation among other practical matters of
+training. @rumelhart1986learning popularised backpropagation as a
+way to train networks with hidden layers.
+@bolte2020mathematical give a mathematical account of what automatic
+differentiation computes for programs with corners, and
+@kakade2018provably show how to compute a correct generalised
+derivative at a cost comparable to that of a gradient. The variance
+argument of @sec-nn-init is from @glorot2010understanding and, with the
+factor $\tfrac12$ for ReLU, @he2015delving. For universal
+approximation in several variables see @leshno1993multilayer,
+@cybenko1989approximation and @hornik1989multilayer.
+
+## Exercises {#sec-nn-exercises}
+
+::: {#exr-ch7-count}
+(a) Count the parameters of an MLP with widths $3, 4, 4, 2$.
+
+(b) A network of depth 2 with widths $16, 64, 16$ and no biases is
+evaluated on one input. Count the multiplications in the forward pass,
+and in a backward pass that also returns the gradient with respect to
+the input, as it must when the network sits inside a larger model.
+:::
+
+::: {#exr-ch7-layer}
+Let $F(\mathbf{x}) = \tanh(W\mathbf{x} + \mathbf{b})$ with
+$W = \begin{pmatrix} 1 & 2\\ 0 & -1 \end{pmatrix}$ and
+$\mathbf{b} = (0, 1)^\top$. Find $J_F(\mathbf{0})$.
+:::
+
+::: {#exr-ch7-backprop}
+An MLP of depth 2 with widths $1, 2, 1$ and ReLU activation has
+$W_1 = (1, -2)^\top$, $\mathbf{b}_1 = (1, 1)^\top$, $W_2 = (3, 1)$
+and $b_2 = 0$. With loss $\ell(z) = \tfrac12(z - 2)^2$ and input
+$x = 1$, compute the loss and all seven partial derivatives with
+@thm-backprop-matrix.
+:::
+
+::: {#exr-ch7-programs}
+An engine assigns the value $g$ to $\operatorname{relu}'(0)$.
+
+(a) Show that for
+$f_1(x) = \operatorname{relu}(x) - \operatorname{relu}(-x)$ it
+returns $2g$ at $x = 0$, and for
+$f_2(x) = \operatorname{relu}(\operatorname{relu}(x)) - \operatorname{relu}(-x)$
+it returns $g^2 + g$.
+
+(b) Show that $f_1(x) = f_2(x) = x$ for all $x$, and deduce that no
+single value of $g$ makes the engine return the true derivative at $0$
+for both programs.
+:::
+
+::: {#exr-ch7-hat}
+Write the function that is $0$ outside $[0, 2]$, rises linearly from
+$0$ at $x = 0$ to $1$ at $x = 1$, and falls linearly to $0$ at
+$x = 2$, as a sum of ReLUs valid for all real $x$.
+:::
+
+::: {#exr-ch7-max}
+(a) Show that $|x| = \operatorname{relu}(x) + \operatorname{relu}(-x)$
+and $\max(x, y) = y + \operatorname{relu}(x - y)$.
+
+(b) Find a network of depth 2 with two inputs, ReLU activation, three
+hidden units and one output that computes $\max(x, y)$ exactly for
+all $x$ and $y$.
+:::
+
+::: {#exr-ch7-units}
+(a) Find the least $N$ for which the network $g_N$ of
+@exm-relu-square approximates $x^2$ on $[0, 1]$ with error at most
+$10^{-6}$.
+
+(b) Let $f(x) = \sqrt{x}$ on $[0, 1]$, $t_k = k/N$, and $\hat f$ the
+interpolant. Show that $f(x) - \hat f(x) = 1/(4\sqrt N)$ at
+$x = 1/(4N)$, and find how large $N$ must be for the error to be at
+most $10^{-6}$ at that point.
+:::
+
+::: {#exr-ch7-he}
+Let $W$ be an $n\times n$ matrix with independent $N(0, s^2)$
+entries, and $\mathbf{x}\in\mathbb{R}^n$ fixed.
+
+(a) Find $s$ such that
+$\mathbb{E}\|\operatorname{relu}(W\mathbf{x})\|^2 = \|\mathbf{x}\|^2$,
+and evaluate it for $n = 16$ and $n = 64$.
+
+(b) For $s = 0.08$ and $n = 64$, find the factor by which one such
+layer multiplies the expected squared norm, and the least number of
+such layers after which the expected squared norm has fallen below
+$10^{-6}$ times its starting value.
 :::

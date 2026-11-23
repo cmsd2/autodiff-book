@@ -1,0 +1,232 @@
+## Chapter 8 {#sec-solutions-8}
+
+```{python}
+#| include: false
+from checks import num_grad
+
+s8_rng = np.random.default_rng(80)
+
+def s8_softmax(z):
+    z = np.asarray(z, dtype=float)
+    e = np.exp(z - z.max())
+    return e / e.sum()
+
+def s8_H(p, q=None):
+    p = np.asarray(p, dtype=float); q = p if q is None else np.asarray(q, dtype=float)
+    s = p > 0
+    return -np.sum(p[s] * np.log(q[s]))
+```
+
+**@exr-ch8-entropy.** (a) If $p(v) = 1$, every other value is $0$, and
+$H(p) = -1\cdot\ln1 = 0$. Conversely, each term $-p(v)\ln p(v)$ is
+non-negative and is $0$ only when $p(v)$ is $0$ or $1$. If $H(p) = 0$
+every term is $0$, so every $p(v)$ is $0$ or $1$, and since the values
+sum to $1$, exactly one of them is $1$.
+
+(b) $H(p) = \tfrac12\ln2 + 2\cdot\tfrac14\ln4 = \tfrac32\ln2 \approx 1.040$.
+By the proof of @cor-prob-entropy-bounds,
+$D_{\mathrm{KL}}(p\,\|\,u) = \ln3 - \tfrac32\ln2 \approx 0.0589$. And
+$$
+D_{\mathrm{KL}}(u\,\|\,p) = \tfrac13\Bigl(\ln\frac{1/3}{1/2} + 2\ln\frac{1/3}{1/4}\Bigr)
+= \tfrac13\ln\frac{32}{27} \approx 0.0566 .
+$$
+
+```{python}
+#| include: false
+s8_p = [sp.Rational(1, 2), sp.Rational(1, 4), sp.Rational(1, 4)]; s8_u = [sp.Rational(1, 3)] * 3
+s8_Hp = -sum(v * sp.log(v) for v in s8_p)
+sym_equal(sp.expand_log(s8_Hp, force=True), sp.Rational(3, 2) * sp.log(2), "H(p) = 3/2 ln 2")
+close(float(s8_Hp), 1.040, "1.040", tol=1e-3)
+s8_Dpu = sum(a * sp.log(a / b) for a, b in zip(s8_p, s8_u))
+s8_Dup = sum(b * sp.log(b / a) for a, b in zip(s8_p, s8_u))
+sym_equal(sp.expand_log(s8_Dpu, force=True), sp.log(3) - sp.Rational(3, 2) * sp.log(2), "D(p||u)")
+sym_equal(sp.expand_log(s8_Dup - sp.log(sp.Rational(32, 27)) / 3, force=True), 0, "D(u||p)")
+close(float(s8_Dpu), 0.0589, "0.0589", tol=1e-4); close(float(s8_Dup), 0.0566, "0.0566", tol=1e-4)
+check(s8_H([0, 1, 0]) == 0 and s8_H([0.5, 0.5, 0]) > 0, "H = 0 only for a point mass")
+```
+
+**@exr-ch8-bernoulli.** For $0 < \theta < 1$ the log-likelihood is
+$k\ln\theta + (N - k)\ln(1 - \theta)$, with derivative
+$k/\theta - (N - k)/(1 - \theta)$. This is $0$ only at
+$\theta = k/N$; it is positive for smaller $\theta$ and negative for
+larger, so $\theta = k/N$ is the maximum on $(0, 1)$. At $\theta = 0$
+and $\theta = 1$ the likelihood is $0$, because $0 < k < N$. With
+$V = \{\text{heads}, \text{tails}\}$, @thm-prob-categorical-mle gives the
+same answer, $\hat p(\text{heads}) = k/N$. When $k = 0$ the
+likelihood $(1 - \theta)^N$ is decreasing, so the maximum is at
+$\theta = 0 = k/N$, again as the theorem says; the calculus argument
+fails there because the maximum is at an endpoint.
+
+```{python}
+#| include: false
+s8_t, s8_k, s8_N = sp.symbols("theta k N", positive=True)
+s8_ll = s8_k * sp.log(s8_t) + (s8_N - s8_k) * sp.log(1 - s8_t)
+check(sp.solve(sp.diff(s8_ll, s8_t), s8_t) == [s8_k / s8_N], "critical point k/N")
+s8_th = np.linspace(0, 1, 100001)
+for (k, N) in ((3, 10), (1, 7), (0, 5)):
+    check(abs(s8_th[np.argmax(s8_th**k * (1 - s8_th)**(N - k))] - k / N) < 1e-4, "maximiser k/N")
+```
+
+**@exr-ch8-softmax-inverse.** (a) If $\mathbf{z} - \mathbf{z}' = c\mathbf{1}$,
+the two softmaxes agree by @eq-prob-softmax-shift. Conversely, let
+$\mathbf{p}$ be the common value, $S = \sum_je^{z_j}$ and
+$S' = \sum_je^{z'_j}$. Then $z_i = \ln p_i + \ln S$ and
+$z'_i = \ln p_i + \ln S'$ for every $i$, so
+$\mathbf{z} - \mathbf{z}' = (\ln S - \ln S')\mathbf{1}$.
+
+(b) By (a) and $\operatorname{softmax}(\ln\mathbf{p}) = \mathbf{p}$,
+the solutions are $z_i = \ln p_i + c$. The condition $z_1 = 0$ gives
+$c = \ln2$, so
+$\mathbf{z} = (0, \ln\tfrac23, \ln\tfrac13) \approx (0, -0.405, -1.099)$.
+
+```{python}
+#| include: false
+s8_z = np.array([0, np.log(2/3), np.log(1/3)])
+close(s8_softmax(s8_z), [1/2, 1/3, 1/6], "softmax(z) = (1/2,1/3,1/6)")
+close(s8_z, [0, -0.405, -1.099], "decimal logits", tol=1e-3)
+for _ in range(50):
+    s8_a = s8_rng.normal(size=4)
+    close(s8_a - np.log(s8_softmax(s8_a)), np.full(4, np.log(np.exp(s8_a).sum())), "z_i - ln p_i = ln S")
+```
+
+**@exr-ch8-jacobian.** The exponentials are $1, 2, 3$, so
+$\mathbf{p} = (\tfrac16, \tfrac13, \tfrac12)$ and
+$$
+J = \operatorname{diag}(\mathbf{p}) - \mathbf{p}\mathbf{p}^\top
+= \begin{pmatrix}
+\tfrac{5}{36} & -\tfrac{1}{18} & -\tfrac{1}{12}\\[2pt]
+-\tfrac{1}{18} & \tfrac{2}{9} & -\tfrac{1}{6}\\[2pt]
+-\tfrac{1}{12} & -\tfrac{1}{6} & \tfrac{1}{4}
+\end{pmatrix}.
+$$
+The first row sums to $\tfrac{5}{36} - \tfrac{2}{36} - \tfrac{3}{36} = 0$,
+and the others likewise. For $\mathbf{v} = \mathbf{e}_1$,
+$\mathbf{v}^\top J\mathbf{v} = J_{11} = \tfrac{5}{36} = p_1(1 - p_1)$,
+the variance of the indicator of outcome $1$. For
+$\mathbf{v} = \mathbf{1}$ it is $0$, by (b) of @thm-softmax-jacobian.
+
+```{python}
+#| include: false
+s8_pv = sp.Matrix([sp.Rational(1, 6), sp.Rational(1, 3), sp.Rational(1, 2)])
+s8_J = sp.diag(*s8_pv) - s8_pv * s8_pv.T
+check(s8_J == sp.Matrix([[sp.Rational(5, 36), -sp.Rational(1, 18), -sp.Rational(1, 12)],
+                         [-sp.Rational(1, 18), sp.Rational(2, 9), -sp.Rational(1, 6)],
+                         [-sp.Rational(1, 12), -sp.Rational(1, 6), sp.Rational(1, 4)]]), "J entries")
+check(s8_J * sp.ones(3, 1) == sp.zeros(3, 1), "rows sum to 0")
+check(s8_J[0, 0] == sp.Rational(5, 36), "e1^T J e1 = 5/36")
+s8_zs = sp.symbols("a b c", real=True)
+s8_S = sum(sp.exp(v) for v in s8_zs)
+s8_Jsym = sp.Matrix([sp.exp(v) / s8_S for v in s8_zs]).jacobian(s8_zs)
+check(sp.simplify(s8_Jsym.subs({s8_zs[0]: 0, s8_zs[1]: sp.log(2), s8_zs[2]: sp.log(3)}) - s8_J) == sp.zeros(3, 3),
+      "J from differentiating softmax")
+```
+
+**@exr-ch8-logistic.** (a) $\sigma'(t) = e^{-t}/(1 + e^{-t})^2
+= \sigma(t)\cdot e^{-t}/(1 + e^{-t})$, and
+$e^{-t}/(1 + e^{-t}) = 1 - \sigma(t)$. Multiplying numerator and
+denominator by $e^t$, $1 - \sigma(t) = 1/(e^t + 1) = \sigma(-t)$.
+
+(b) By (a), $(\ln\sigma)' = 1 - \sigma$ and
+$(\ln(1 - \sigma))' = -\sigma$, so
+$L'(t) = -y(1 - \sigma(t)) + (1 - y)\sigma(t) = \sigma(t) - y$. With
+logits $\mathbf{z} = (t, 0)$, $\operatorname{softmax}(\mathbf{z})_1 = \sigma(t)$
+(the case $n = 2$ after @def-softmax), and $L$ is the cross-entropy
+loss with target $\mathbf{e}_1$ if $y = 1$ and $\mathbf{e}_2$ if
+$y = 0$. By @thm-softmax-ce-gradient its partial derivative with
+respect to $z_1 = t$ is $p_1 - y = \sigma(t) - y$.
+
+```{python}
+#| include: false
+s8_tt = sp.symbols("t", real=True); s8_y = sp.symbols("y", real=True)
+s8_sig = 1 / (1 + sp.exp(-s8_tt))
+sym_equal(sp.diff(s8_sig, s8_tt), s8_sig * (1 - s8_sig), "sigma' = sigma(1 - sigma)")
+sym_equal(1 - s8_sig, s8_sig.subs(s8_tt, -s8_tt), "1 - sigma(t) = sigma(-t)")
+s8_Lb = -s8_y * sp.log(s8_sig) - (1 - s8_y) * sp.log(1 - s8_sig)
+sym_equal(sp.diff(s8_Lb, s8_tt), s8_sig - s8_y, "L' = sigma - y")
+maxima_zero("diff(-y*log(1/(1+exp(-t))) - (1-y)*log(1 - 1/(1+exp(-t))), t) - (1/(1+exp(-t)) - y)",
+            "binary cross-entropy gradient in Maxima")
+```
+
+**@exr-ch8-soft-target.** (a) By @cor-prob-entropy-bounds,
+$L(\mathbf{z}) = H(\mathbf{y}, \mathbf{p}) \ge H(\mathbf{y})$, with
+equality only if $\mathbf{p} = \mathbf{y}$. Since every $y_i > 0$,
+there are logits with $\operatorname{softmax}(\mathbf{z}) = \mathbf{y}$,
+and by @exr-ch8-softmax-inverse they are exactly
+$\mathbf{z} = \ln\mathbf{y} + c\mathbf{1}$ for real $c$, where
+$\ln\mathbf{y}$ is taken componentwise.
+
+(b) For $\mathbf{y} = \mathbf{e}_y$, $L(\mathbf{z}) = -\ln p_y > 0$
+because $p_y < 1$. Along $\mathbf{z} = t\mathbf{e}_y$,
+$p_y = e^t/(e^t + n - 1) \to 1$ as $t \to \infty$, so $L \to 0$. The
+infimum is $0$ and it is not attained.
+
+(c) The minimiser has $z_y - z_i = \ln(y_y/y_i)$ with
+$y_y = 0.9 + 0.1/27$ and $y_i = 0.1/27$, so
+$z_y - z_i = \ln(1 + 0.9\cdot270) = \ln244 \approx 5.50$. Label
+smoothing keeps the optimal logits finite.
+
+```{python}
+#| include: false
+for _ in range(50):
+    s8_yv = s8_rng.dirichlet(np.ones(5)) + 1e-3; s8_yv /= s8_yv.sum()
+    s8_zz = s8_rng.normal(size=5) * 2
+    check(s8_H(s8_yv, s8_softmax(s8_zz)) >= s8_H(s8_yv) - 1e-12, "H(y, p) >= H(y)")
+    close(s8_H(s8_yv, s8_softmax(np.log(s8_yv) + 3.7)), s8_H(s8_yv), "minimum at z = ln y + c")
+    close(num_grad(lambda z: s8_H(s8_yv, s8_softmax(z)), np.log(s8_yv)), np.zeros(5), "zero gradient there", tol=1e-7)
+for s8_T in (1.0, 10.0, 30.0):
+    s8_pz = s8_softmax(s8_T * np.eye(4)[0])
+    close(s8_pz[0], np.exp(s8_T) / (np.exp(s8_T) + 3), "p_y along t e_y")
+check(-np.log(s8_softmax(30 * np.eye(4)[0])[0]) < 1e-12, "loss tends to 0")
+s8_yy, s8_yi = 0.9 + 0.1/27, 0.1/27
+close(np.log(s8_yy / s8_yi), np.log(244), "ln 244"); close(np.log(244), 5.50, "5.50", tol=1e-3)
+```
+
+**@exr-ch8-gaussian.** The negative log-likelihood is
+$$
+\frac{1}{2s^2}\sum_{i=1}^N(y_i - \mu)^2 + \frac N2\ln(2\pi) + N\ln s .
+$$
+(a) For fixed $s$, this is a quadratic in $\mu$ with positive leading
+coefficient $N/(2s^2)$. Its derivative,
+$-\frac{1}{s^2}\sum_i(y_i - \mu)$, is $0$ only at $\mu = \bar y$, which
+is therefore the minimiser.
+
+(b) Let $Q = \sum_i(y_i - \bar y)^2$, which is positive because the
+$y_i$ are not all equal. At $\mu = \bar y$ the function of $s$ is
+$g(s) = Q/(2s^2) + N\ln s + \text{const}$, with
+$g'(s) = -Q/s^3 + N/s = (Ns^2 - Q)/s^3$. This is negative for
+$s^2 < Q/N$ and positive for $s^2 > Q/N$, so $g$ is smallest at
+$s^2 = Q/N$.
+
+```{python}
+#| include: false
+s8_mu, s8_s = sp.symbols("mu s", positive=True)
+s8_ys = [sp.Rational(1), sp.Rational(4), sp.Rational(2), sp.Rational(7)]
+s8_nll = sum((v - s8_mu)**2 for v in s8_ys) / (2 * s8_s**2) + len(s8_ys) * (sp.log(2*sp.pi)/2 + sp.log(s8_s))
+s8_ybar = sum(s8_ys) / len(s8_ys)
+check(sp.solve(sp.diff(s8_nll, s8_mu), s8_mu) == [s8_ybar], "mu = mean")
+s8_Q = sum((v - s8_ybar)**2 for v in s8_ys)
+check(sp.solve(sp.diff(s8_nll.subs(s8_mu, s8_ybar), s8_s), s8_s) == [sp.sqrt(s8_Q / len(s8_ys))], "s^2 = Q/N")
+sym_equal(sp.diff(s8_Q / (2*s8_s**2) + 4*sp.log(s8_s), s8_s), (4*s8_s**2 - s8_Q) / s8_s**3, "g'(s)")
+```
+
+**@exr-ch8-uniform-bound.** Put $w_i = z_i - \bar z$, so that
+$\sum_iw_i = 0$. By @lem-prob-log-bound with $x = e^{w_i}$,
+$w_i \le e^{w_i} - 1$, so
+$\frac1n\sum_ie^{w_i} \ge \frac1n\sum_i(1 + w_i) = 1$. Hence
+$$
+\operatorname{lse}(\mathbf{z}) = \bar z + \ln n + \ln\Bigl(\frac1n\sum_ie^{w_i}\Bigr) \ge \ln n + \bar z ,
+$$
+and by @thm-softmax-ce-gradient,
+$-\ln\operatorname{softmax}(\mathbf{z})_y = \operatorname{lse}(\mathbf{z}) - z_y \ge \ln n + \bar z - z_y$.
+If all $z_i$ are equal, every $w_i = 0$ and both sides equal $\ln n$.
+Taking expectations, linearity gives
+$\mathbb{E}[L] \ge \ln n + \frac1n\sum_i\mathbb{E}[z_i] - \mathbb{E}[z_y] = \ln n$.
+
+```{python}
+#| include: false
+for _ in range(500):
+    s8_n = int(s8_rng.integers(2, 30)); s8_zv = s8_rng.normal(size=s8_n) * 3; s8_yi_ = int(s8_rng.integers(s8_n))
+    s8_loss = -np.log(s8_softmax(s8_zv)[s8_yi_])
+    check(s8_loss >= np.log(s8_n) + s8_zv.mean() - s8_zv[s8_yi_] - 1e-12, "uniform lower bound")
+close(-np.log(s8_softmax(np.full(27, 1.3))[4]), np.log(27), "equality for equal logits")
+```
