@@ -1,14 +1,1275 @@
 # A small transformer {#sec-small-gpt}
 
-::: {.callout-note}
-## Not yet written
+This chapter puts the parts of the book together into one model: a
+transformer language model with 4192 parameters that learns to
+generate names one letter at a time. It has the shape of Andrej
+Karpathy's microgpt [@karpathy2026microgpt], a single file of Python
+that defines the model and trains it with Adam, computing each
+gradient by reverse mode. We have checked every architectural detail
+stated below against that source [@karpathy2026microgptcode].
 
-This chapter will cover:
+Two ingredients are new. *RMS normalisation* rescales a vector to a
+fixed size before each block uses it, and *residual connections* add
+each block's output to its input instead of replacing it. Both change
+how gradients flow, and both have short exact descriptions in terms
+of Jacobians. The rest of the chapter writes down the complete model,
+counts its parameters, explains the value of the loss before training
+and the effect of the sampling temperature, and proves that the
+key–value cache used for generation computes exactly what causal
+attention computes.
 
-- RMS and layer normalisation
-- residual connections and the flow of gradients
-- the complete model and its parameter count
-- training with Adam
-- sampling with temperature
-- caching keys and values
+```{python}
+#| include: false
+import math
+from itertools import combinations
+
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+from checks.ch11 import (BOUNDARY, CONTEXT, EPS, INIT_STD, SHAPES, VOCAB,
+                         document_loss, encode, forward_cached, init_params,
+                         residual_streams)
+
+rng = np.random.default_rng(11)
+
+
+def rms_np(x, eps=EPS):
+    return x / np.sqrt(np.mean(x * x) + eps)
+```
+
+## RMS normalisation {#sec-rmsnorm}
+
+The vectors inside a network change size as they pass through it. A
+linear map with large weights stretches them, and a sum of many terms
+grows with the number of terms. Normalisation divides a vector by a
+measure of its size, so that the next layer always receives inputs on
+the same scale.
+
+::: {#def-rmsnorm}
+## RMS normalisation
+
+For $\varepsilon > 0$, the *RMS normalisation* of
+$\mathbf{x}\in\mathbb{R}^n$ is
+$$
+\operatorname{rms}(\mathbf{x})
+= \frac{\mathbf{x}}{\sqrt{\mu(\mathbf{x}) + \varepsilon}},
+\qquad
+\mu(\mathbf{x}) = \frac{1}{n}\sum_{i=1}^n x_i^2 = \frac{\|\mathbf{x}\|^2}{n} .
+$$
+The number $\sqrt{\mu(\mathbf{x})}$ is the *root mean square* of the
+components of $\mathbf{x}$. The model of this chapter uses $n = 16$
+and $\varepsilon = 10^{-5}$, and multiplies the result by nothing:
+there is no learned gain.
+:::
+
+Without $\varepsilon$, the components of $\operatorname{rms}(\mathbf{x})$
+would have root mean square exactly 1. The constant $\varepsilon$
+keeps the denominator at least $\sqrt\varepsilon$, so that
+$\operatorname{rms}$ is defined and differentiable on all of
+$\mathbb{R}^n$, including at $\mathbf{0}$, where it equals
+$\mathbf{0}$. Since
+$\mu(\operatorname{rms}(\mathbf{x})) = \mu(\mathbf{x})/(\mu(\mathbf{x}) + \varepsilon)$,
+the root mean square of the output is slightly below 1, and far below
+1 when $\mu(\mathbf{x})$ is comparable with $\varepsilon$.
+
+::: {#exm-rmsnorm}
+Take $n = 4$ and $\mathbf{x} = (1, -1, 2, 0)$, and ignore
+$\varepsilon$ for a moment. Then $\mu(\mathbf{x}) = 6/4 = 1.5$, and
+$\mathbf{x}/\sqrt{1.5} \approx (0.8165, -0.8165, 1.6330, 0)$. With
+$\varepsilon = 10^{-5}$ the denominator becomes $\sqrt{1.50001}$, and
+each component changes by a factor
+$\sqrt{1.5/1.50001} \approx 1 - 3.3\times10^{-6}$.
+:::
+
+```{python}
+#| include: false
+xe = np.array([1.0, -1.0, 2.0, 0.0])
+close(np.mean(xe**2), 1.5, "mu = 1.5")
+close(xe / np.sqrt(1.5), [0.8165, -0.8165, 1.6330, 0], "x / sqrt(1.5)", tol=1e-4)
+factor = np.sqrt(1.5 / 1.50001)
+close(1 - factor, 3.3e-6, "factor 1 - 3.3e-6", tol=1e-7)
+close(rms_np(xe), factor * xe / np.sqrt(1.5), "eps changes each component by that factor")
+```
+
+### The Jacobian {#sec-rmsnorm-jacobian}
+
+::: {#thm-rmsnorm-jacobian}
+## Jacobian of RMS normalisation
+
+Let $\varepsilon > 0$ and write
+$s(\mathbf{x}) = (\mu(\mathbf{x}) + \varepsilon)^{-1/2}$. Then
+$\operatorname{rms}$ is differentiable on $\mathbb{R}^n$, with
+$$
+J_{\operatorname{rms}}(\mathbf{x})
+= s\,I - \frac{s^3}{n}\,\mathbf{x}\mathbf{x}^\top
+= s\Bigl(I - \frac{\mathbf{x}\mathbf{x}^\top}{\|\mathbf{x}\|^2 + n\varepsilon}\Bigr),
+\qquad s = s(\mathbf{x}).
+$$ {#eq-rmsnorm-jacobian}
+The matrix is symmetric. For $\mathbf{x} \ne \mathbf{0}$ it has
+eigenvalue $s$ on every vector perpendicular to $\mathbf{x}$, and
+eigenvalue $\varepsilon s^3$ on $\mathbf{x}$ itself.
+:::
+
+::: {.proof}
+Component $i$ of $\operatorname{rms}(\mathbf{x})$ is $x_i\,s(\mathbf{x})$.
+The function $\mu$ is a polynomial and $\mu + \varepsilon \ge
+\varepsilon > 0$, so $s$ has continuous partial derivatives
+$$
+\frac{\partial s}{\partial x_j}
+= -\frac12(\mu + \varepsilon)^{-3/2}\,\frac{2x_j}{n}
+= -\frac{s^3x_j}{n} .
+$$
+By the product rule,
+$\partial(x_is)/\partial x_j = \delta_{ij}s - s^3x_ix_j/n$, where
+$\delta_{ij}$ is $1$ if $i = j$ and $0$ otherwise. These partial
+derivatives are continuous, so by @thm-continuous-partials and
+@thm-jacobian $\operatorname{rms}$ is differentiable with the
+Jacobian in @eq-rmsnorm-jacobian. The second form follows from
+$s^2 = n/(\|\mathbf{x}\|^2 + n\varepsilon)$.
+
+If $\mathbf{y}\cdot\mathbf{x} = 0$ then
+$J\mathbf{y} = s\mathbf{y} - (s^3/n)\mathbf{x}(\mathbf{x}\cdot\mathbf{y}) = s\mathbf{y}$.
+For $\mathbf{x}$ itself,
+$$
+J\mathbf{x} = s\mathbf{x} - \frac{s^3}{n}\|\mathbf{x}\|^2\mathbf{x}
+= s^3\Bigl(\frac{1}{s^2} - \mu\Bigr)\mathbf{x}
+= \varepsilon s^3\,\mathbf{x},
+$$
+because $1/s^2 = \mu + \varepsilon$.
+:::
+
+In reverse mode (@thm-reverse-mode), the adjoint of the input is
+$J^\top$ times the adjoint of the output. Since $J$ is symmetric,
+$$
+\bar{\mathbf{x}} = s\,\bar{\mathbf{y}} - \frac{s^3}{n}\,(\mathbf{x}\cdot\bar{\mathbf{y}})\,\mathbf{x} .
+$$
+The gradient keeps its component perpendicular to $\mathbf{x}$, scaled
+by $s$, and almost loses its component along $\mathbf{x}$, which $J$
+scales by $\varepsilon s^3$ instead. A change of $\mathbf{x}$ along
+itself only changes its size, and normalisation removes size.
+
+```{python}
+#| include: false
+# The Jacobian formula: SymPy in dimension 3, Maxima in dimension 2, and
+# finite differences in dimension 16 at the model's epsilon.
+xs3 = sp.Matrix(sp.symbols("x1:4", real=True))
+eps_s = sp.symbols("epsilon", positive=True)
+mu3 = (xs3.T * xs3)[0, 0] / 3
+s3 = 1 / sp.sqrt(mu3 + eps_s)
+J3 = (xs3 * s3).jacobian(list(xs3))
+check(sp.simplify(J3 - (s3 * sp.eye(3) - s3**3 / 3 * xs3 * xs3.T)) == sp.zeros(3, 3),
+      "RMS Jacobian, first form")
+check(sp.simplify(J3 - s3 * (sp.eye(3) - xs3 * xs3.T / ((xs3.T * xs3)[0, 0] + 3 * eps_s)))
+      == sp.zeros(3, 3), "RMS Jacobian, second form")
+check(sp.simplify(J3 * xs3 - eps_s * s3**3 * xs3) == sp.zeros(3, 1), "J x = eps s^3 x")
+yperp = sp.Matrix([xs3[1], -xs3[0], 0])
+check(sp.simplify(J3 * yperp - s3 * yperp) == sp.zeros(3, 1), "J y = s y for y perpendicular to x")
+maxima_zero("block([s: 1/sqrt((x^2+y^2)/2 + e)], diff(x*s, y) - (-s^3*x*y/2))",
+            "RMS Jacobian off-diagonal in Maxima")
+maxima_zero("block([s: 1/sqrt((x^2+y^2)/2 + e)], diff(x*s, x) - (s - s^3*x^2/2))",
+            "RMS Jacobian diagonal in Maxima")
+
+
+def rms_jac(x, eps=EPS):
+    n = x.size
+    s = 1 / np.sqrt(np.mean(x * x) + eps)
+    return s * np.eye(n) - s**3 / n * np.outer(x, x)
+
+
+for scale in (1.0, 0.1, 0.003):
+    x16 = scale * rng.normal(size=16)
+    Jn = np.array([num_grad(lambda v, i=i: rms_np(v)[i], x16, h=1e-7 * scale) for i in range(16)])
+    close(Jn, rms_jac(x16), f"RMS Jacobian by finite differences at scale {scale}", tol=1e-6)
+    ev = np.sort(np.linalg.eigvalsh(rms_jac(x16)))
+    s16 = 1 / np.sqrt(np.mean(x16**2) + EPS)
+    close(ev[0], EPS * s16**3, "smallest eigenvalue eps s^3")
+    close(ev[1:], s16 * np.ones(15), "other eigenvalues s")
+    yb = rng.normal(size=16)
+    close(rms_jac(x16).T @ yb, s16 * yb - s16**3 / 16 * (x16 @ yb) * x16, "adjoint formula")
+```
+
+### Scaling and the effect of $\varepsilon$ {#sec-rmsnorm-scaling}
+
+The point of normalising is that the output should not depend on the
+size of the input. With $\varepsilon = 0$ that would hold exactly. The
+next theorem says precisely what $\varepsilon$ changes. Write
+$\operatorname{rms}_\varepsilon$ when the value of $\varepsilon$
+matters.
+
+::: {#thm-rmsnorm-scaling}
+## Scaling
+
+Let $\varepsilon > 0$, $c > 0$ and $\mathbf{x}\in\mathbb{R}^n$.
+
+(a)
+$\operatorname{rms}_\varepsilon(c\mathbf{x}) = \operatorname{rms}_{\varepsilon/c^2}(\mathbf{x})$.
+
+(b) If $\mathbf{x} \ne \mathbf{0}$, then
+$\operatorname{rms}_\varepsilon(\mathbf{x}) = \lambda\,\mathbf{x}/\sqrt{\mu(\mathbf{x})}$
+with
+$$
+\lambda = \sqrt{\frac{\mu(\mathbf{x})}{\mu(\mathbf{x}) + \varepsilon}},
+\qquad
+1 - \frac{\varepsilon}{2\mu(\mathbf{x})} \le \lambda < 1 .
+$$
+:::
+
+::: {.proof}
+(a) $\mu(c\mathbf{x}) = c^2\mu(\mathbf{x})$, so
+$$
+\operatorname{rms}_\varepsilon(c\mathbf{x})
+= \frac{c\mathbf{x}}{\sqrt{c^2\mu(\mathbf{x}) + \varepsilon}}
+= \frac{c\mathbf{x}}{c\sqrt{\mu(\mathbf{x}) + \varepsilon/c^2}}
+= \operatorname{rms}_{\varepsilon/c^2}(\mathbf{x}) .
+$$
+
+(b) The formula for $\lambda$ is a rearrangement of the definition,
+and $\lambda < 1$ because $\varepsilon > 0$. Put
+$r = \varepsilon/\mu(\mathbf{x}) > 0$, so that $\lambda^2 = 1/(1 + r)$.
+If $r > 2$ the lower bound $1 - r/2$ is negative and there is nothing
+to prove. If $0 < r \le 2$, then $1 - r/2 \ge 0$ and
+$$
+\Bigl(1 - \frac r2\Bigr)^2(1 + r) = 1 - \frac{r^2(3 - r)}{4} \le 1,
+$$
+so $(1 - r/2)^2 \le \lambda^2$, and taking square roots gives
+$1 - r/2 \le \lambda$.
+:::
+
+So normalisation is invariant under positive scaling exactly when
+$\varepsilon = 0$. With $\varepsilon > 0$, scaling $\mathbf{x}$ by
+$c$ has the same effect as replacing $\varepsilon$ by
+$\varepsilon/c^2$: enlarging the input weakens $\varepsilon$, and
+shrinking it strengthens $\varepsilon$. By (b), $\varepsilon$ shrinks
+the output by a relative amount of at most
+$\varepsilon/(2\mu(\mathbf{x}))$. For inputs whose mean square is
+large compared with $\varepsilon$ this is negligible. For inputs of
+mean square comparable with $\varepsilon$ it is not, and as
+$\mathbf{x} \to \mathbf{0}$ the output tends to $\mathbf{0}$ instead
+of jumping between vectors of root mean square 1. That continuity at
+$\mathbf{0}$ is what $\varepsilon$ buys.
+
+In the model at initialisation, the first vector normalised is a sum
+of two embedding rows whose 16 components have variance
+$2\times0.08^2 = 0.0128$ each, so $\mu \approx 0.0128$ and
+$\varepsilon/(2\mu) \approx 3.9\times10^{-4}$.
+
+```{python}
+#| include: false
+xsc = rng.normal(size=16)
+for c in (0.01, 0.5, 3.0, 100.0):
+    close(rms_np(c * xsc, EPS), rms_np(xsc, EPS / c**2), f"rms_eps(c x) = rms_(eps/c^2)(x), c={c}")
+    close(rms_np(c * xsc, 0.0), rms_np(xsc, 0.0), "eps = 0 is scale invariant")
+# Part (b): lambda and its bounds, on a range of ratios r = eps / mu.
+for r in np.concatenate([np.linspace(1e-6, 4, 2001), [1e-12, 10.0, 1e3]]):
+    lam = np.sqrt(1 / (1 + r))
+    check(1 - r / 2 <= lam + 1e-15 and lam < 1, f"bounds on lambda at r={r}")
+rr = sp.symbols("r", positive=True)
+sym_equal(sp.expand((1 - rr / 2)**2 * (1 + rr)), 1 - rr**2 * (3 - rr) / 4, "(1-r/2)^2 (1+r)")
+xb = 0.3 * rng.normal(size=16)
+mub = np.mean(xb**2)
+close(rms_np(xb), np.sqrt(mub / (mub + EPS)) * xb / np.sqrt(mub), "rms = lambda x / sqrt(mu)")
+check(not np.allclose(rms_np(0.01 * xb), rms_np(xb), rtol=0, atol=1e-9), "eps > 0 breaks invariance")
+close(np.mean(rms_np(xb)**2), mub / (mub + EPS), "mean square of the output")
+close(rms_np(np.zeros(16)), np.zeros(16), "rms(0) = 0")
+# Scale of the first normalised vector at initialisation.
+close(2 * INIT_STD**2, 0.0128, "variance 2 * 0.08^2")
+close(EPS / (2 * 0.0128), 3.9e-4, "eps / (2 mu)", tol=1e-5)
+```
+
+### Layer normalisation {#sec-layernorm}
+
+RMS normalisation is a simplification of the older *layer
+normalisation* [@ba2016layer], which GPT-2 uses [@radford2019language].
+
+::: {#def-layernorm}
+## Layer normalisation
+
+For $\mathbf{x}\in\mathbb{R}^n$ let
+$m(\mathbf{x}) = \frac1n\sum_i x_i$ and
+$v(\mathbf{x}) = \frac1n\sum_i (x_i - m(\mathbf{x}))^2$. The *layer
+normalisation* of $\mathbf{x}$, with gain $\mathbf{g}$ and bias
+$\mathbf{b}$ in $\mathbb{R}^n$, has components
+$$
+\operatorname{ln}(\mathbf{x})_i
+= g_i\,\frac{x_i - m(\mathbf{x})}{\sqrt{v(\mathbf{x}) + \varepsilon}} + b_i .
+$$
+:::
+
+Layer normalisation subtracts the mean before dividing, and then
+applies a learned gain and bias. With $\mathbf{g} = \mathbf{1}$ and
+$\mathbf{b} = \mathbf{0}$ it is RMS normalisation applied to the
+centred vector $\mathbf{x} - m(\mathbf{x})\mathbf{1}$, because the
+variance of $\mathbf{x}$ is the mean square of the centred vector
+(@exr-ch11-layernorm). So layer normalisation is unchanged when the
+same constant is added to every component of $\mathbf{x}$, and RMS
+normalisation is not; on vectors with mean zero the two agree.
+@zhang2019root propose RMS normalisation on the hypothesis that the
+rescaling, not the centring, is what helps training, and they report
+comparable accuracy at lower cost. microgpt drops the gain as well,
+so its normalisations have no parameters.
+
+```{python}
+#| include: false
+def layer_norm(x, g, b, eps=EPS):
+    m = x.mean()
+    return g * (x - m) / np.sqrt(np.mean((x - m) ** 2) + eps) + b
+
+
+xl = rng.normal(size=16)
+ones, zeros = np.ones(16), np.zeros(16)
+close(layer_norm(xl, ones, zeros), rms_np(xl - xl.mean()), "LN = rms of centred vector")
+close(layer_norm(xl + 7.3, ones, zeros), layer_norm(xl, ones, zeros), "LN ignores shifts")
+check(not np.allclose(rms_np(xl + 7.3), rms_np(xl)), "rms does not ignore shifts")
+xz = xl - xl.mean()
+close(layer_norm(xz, ones, zeros), rms_np(xz), "LN = rms on mean-zero vectors")
+```
+
+## Residual connections {#sec-residual}
+
+A *residual connection* wraps a map $F\colon\mathbb{R}^n\to\mathbb{R}^n$
+into the map $\mathbf{x}\mapsto\mathbf{x} + F(\mathbf{x})$. The block
+$F$ computes a correction to its input instead of a replacement for
+it. @he2016deep introduced the idea for image recognition, where it
+made networks with over a hundred layers trainable. Its effect on
+derivatives takes one line.
+
+::: {#thm-residual-jacobian}
+## Jacobian of a residual block
+
+Let $U\subseteq\mathbb{R}^n$ be open, let $F\colon U\to\mathbb{R}^n$
+be differentiable at $\mathbf{a}\in U$, and let
+$R(\mathbf{x}) = \mathbf{x} + F(\mathbf{x})$. Then $R$ is
+differentiable at $\mathbf{a}$ and
+$$
+J_R(\mathbf{a}) = I + J_F(\mathbf{a}) .
+$$
+If $L = \ell(R(\mathbf{x}))$ for a function $\ell$ differentiable at
+$R(\mathbf{a})$, then with $\bar{\mathbf{y}} = \nabla\ell(R(\mathbf{a}))$,
+$$
+\nabla L(\mathbf{a}) = \bar{\mathbf{y}} + J_F(\mathbf{a})^\top\bar{\mathbf{y}} .
+$$ {#eq-residual-adjoint}
+:::
+
+::: {.proof}
+For $\mathbf{h}$ small enough that $\mathbf{a} + \mathbf{h}\in U$,
+$$
+R(\mathbf{a}+\mathbf{h}) - R(\mathbf{a}) - (I + J_F(\mathbf{a}))\mathbf{h}
+= F(\mathbf{a}+\mathbf{h}) - F(\mathbf{a}) - J_F(\mathbf{a})\mathbf{h} .
+$$
+The right side is the remainder of $F$, which divided by
+$\|\mathbf{h}\|$ tends to $\mathbf{0}$, so $I + J_F(\mathbf{a})$
+satisfies @eq-derivative for $R$. By @thm-chain-rule,
+$J_L(\mathbf{a}) = J_\ell(R(\mathbf{a}))\,(I + J_F(\mathbf{a}))$, and
+transposing this row gives @eq-residual-adjoint.
+:::
+
+In the language of reverse mode, the adjoint $\bar{\mathbf{y}}$
+arriving at the output of the block reaches the input unchanged along
+the identity path, and the block adds its own contribution
+$J_F^\top\bar{\mathbf{y}}$. However small or degenerate $J_F$ is, the
+gradient does not vanish on its way through. The difference matters
+when a network stacks many blocks, and a matrix norm makes it
+quantitative.
+
+::: {#lem-frobenius-product}
+For matrices $A$ ($m\times n$) and $B$ ($n\times p$),
+$\|AB\|_F \le \|A\|_F\,\|B\|_F$, and $\|A^\top\|_F = \|A\|_F$.
+:::
+
+::: {.proof}
+Column $j$ of $AB$ is $A\mathbf{b}_j$, where $\mathbf{b}_j$ is column
+$j$ of $B$. By @lem-linear-bound,
+$\|A\mathbf{b}_j\|^2 \le \|A\|_F^2\|\mathbf{b}_j\|^2$, and summing
+over $j$ gives $\|AB\|_F^2 \le \|A\|_F^2\|B\|_F^2$. The second claim
+holds because $A$ and $A^\top$ have the same entries.
+:::
+
+::: {#cor-residual-stack}
+## Stacked residual blocks
+
+Let $R_k(\mathbf{x}) = \mathbf{x} + F_k(\mathbf{x})$ for
+$k = 1, \dots, K$, with each $F_k$ differentiable on $\mathbb{R}^n$.
+Fix $\mathbf{x}_0$, let $\mathbf{x}_k = R_k(\mathbf{x}_{k-1})$, let
+$J_k = J_{F_k}(\mathbf{x}_{k-1})$, and let
+$G = R_K\circ\dots\circ R_1$.
+
+(a) $J_G(\mathbf{x}_0) = (I + J_K)\cdots(I + J_1) = \sum_S J_S$, where
+the sum is over all $2^K$ subsets $S$ of $\{1, \dots, K\}$ and $J_S$
+is the product of the $J_k$ with $k \in S$ in decreasing order of
+$k$, with $J_\emptyset = I$.
+
+(b) If $\|J_k\|_F \le \delta_k$ for each $k$, then
+$$
+\|J_G(\mathbf{x}_0) - I\|_F \le \prod_{k=1}^K (1 + \delta_k) - 1
+\le e^{\delta_1 + \dots + \delta_K} - 1 .
+$$
+
+(c) Under the hypothesis of (b), for a loss $L = \ell(G(\mathbf{x}))$
+with $\ell$ differentiable at $\mathbf{x}_K$ and
+$\bar{\mathbf{x}}_K = \nabla\ell(\mathbf{x}_K)$, the gradient
+$\bar{\mathbf{x}}_0 = \nabla L(\mathbf{x}_0)$ satisfies
+$\|\bar{\mathbf{x}}_0 - \bar{\mathbf{x}}_K\| \le
+\bigl(e^{\delta_1 + \dots + \delta_K} - 1\bigr)\|\bar{\mathbf{x}}_K\|$.
+:::
+
+::: {.proof}
+(a) The first equality is @thm-chain-rule applied $K - 1$ times with
+@thm-residual-jacobian. Expanding the product by distributivity
+chooses, in each factor, either $I$ or $J_k$, and the choices
+correspond to subsets $S$ (the set of $k$ where the expansion takes $J_k$).
+
+(b) By (a), $J_G - I$ is the sum of $J_S$ over non-empty $S$. The
+Frobenius norm is the Euclidean norm of the matrix written as one
+long vector, so it satisfies the triangle inequality, and with
+@lem-frobenius-product,
+$$
+\|J_G - I\|_F \le \sum_{S \ne \emptyset}\prod_{k\in S}\delta_k
+= \prod_{k=1}^K(1 + \delta_k) - 1 ,
+$$
+where the equality is the same expansion of a product, now of
+numbers. Finally $1 + \delta \le e^\delta$ for every real $\delta$.
+
+(c) $\bar{\mathbf{x}}_0 = J_G^\top\bar{\mathbf{x}}_K$ by
+@thm-chain-rule, so
+$\bar{\mathbf{x}}_0 - \bar{\mathbf{x}}_K = (J_G - I)^\top\bar{\mathbf{x}}_K$,
+and @lem-linear-bound with @lem-frobenius-product and (b) gives the
+bound.
+:::
+
+Part (a) is the chain rule as a sum over paths (@thm-chain-rule-paths):
+each subset $S$ is a route through the stack that enters the blocks
+in $S$ and skips the others, and the route that skips every block
+carries the identity. Without the identity paths the Jacobian would be
+the single product $J_K\cdots J_1$, whose norm is at most
+$\delta_1\cdots\delta_K$; when every $\delta_k$ is below some
+$\delta < 1$ this shrinks like $\delta^K$, and gradients at the
+bottom of a deep stack become too small to train on. With residual
+connections, part (c) says that small blocks leave the gradient
+nearly unchanged instead.
+
+::: {#exm-residual-nilpotent}
+Take $n = 2$, $K = 2$ and two blocks with the same Jacobian
+$N = \begin{pmatrix}0 & 1\\ 0 & 0\end{pmatrix}$. Without residual
+connections the Jacobian of the composition is $N^2 = 0$: no gradient
+at all reaches the input, although each block alone has a non-zero
+Jacobian. With them it is
+$(I + N)^2 = I + 2N = \begin{pmatrix}1 & 2\\ 0 & 1\end{pmatrix}$,
+which is invertible.
+:::
+
+```{python}
+#| include: false
+N2 = sp.Matrix([[0, 1], [0, 0]])
+check(N2 * N2 == sp.zeros(2, 2), "N^2 = 0")
+check((sp.eye(2) + N2)**2 == sp.Matrix([[1, 2], [0, 1]]), "(I+N)^2 = I + 2N")
+check(((sp.eye(2) + N2)**2).det() == 1, "(I+N)^2 invertible")
+# Corollary: expansion over subsets and the norm bounds, on random small blocks.
+for K in (1, 2, 3, 5):
+    Js = [0.2 * rng.normal(size=(4, 4)) for _ in range(K)]
+    prod = np.eye(4)
+    for Jk in Js:
+        prod = (np.eye(4) + Jk) @ prod
+    total = np.zeros((4, 4))
+    for size in range(K + 1):
+        for S in combinations(range(K), size):
+            term = np.eye(4)
+            for k in S:                         # increasing k, multiplied on the left
+                term = Js[k] @ term
+            total += term
+    close(prod, total, f"sum over 2^{K} subsets")
+    deltas = [np.linalg.norm(Jk, "fro") for Jk in Js]
+    bound = np.prod([1 + d for d in deltas]) - 1
+    check(np.linalg.norm(prod - np.eye(4), "fro") <= bound + 1e-12, "norm bound (b)")
+    check(bound <= np.exp(sum(deltas)) - 1 + 1e-12, "1 + d <= e^d")
+    yb = rng.normal(size=4)
+    check(np.linalg.norm(prod.T @ yb - yb) <= (np.exp(sum(deltas)) - 1) * np.linalg.norm(yb) + 1e-12,
+          "gradient bound (c)")
+for _ in range(100):
+    A, B = rng.normal(size=(3, 5)), rng.normal(size=(5, 2))
+    check(np.linalg.norm(A @ B, "fro") <= np.linalg.norm(A, "fro") * np.linalg.norm(B, "fro") + 1e-12,
+          "Frobenius norm is submultiplicative")
+# The residual Jacobian I + J_F for a nonlinear block, by finite differences.
+Wr = rng.normal(size=(5, 5))
+Fr = lambda v: np.tanh(Wr @ v)
+ar = rng.normal(size=5)
+JR = np.array([num_grad(lambda v, i=i: (v + Fr(v))[i], ar) for i in range(5)])
+close(JR, np.eye(5) + np.diag(1 - np.tanh(Wr @ ar)**2) @ Wr, "J_R = I + J_F", tol=1e-7)
+```
+
+## The complete model {#sec-model}
+
+The model reads a sequence of tokens and, at each position, produces a
+vector of 27 logits for the next token. Its vocabulary $V$ has
+$|V| = 27$ tokens: the letters a to z, numbered $0$ to $25$ in
+alphabetical order, and a *boundary token*, numbered 26 and written
+$\mathtt{B}$, which marks the start and the end of a name. The name
+"emma" becomes the sequence
+$\mathtt{B}, \mathrm{e}, \mathrm{m}, \mathrm{m}, \mathrm{a}, \mathtt{B}$,
+that is, $26, 4, 12, 12, 0, 26$.
+
+The model has width $d = 16$, $h = 4$ attention heads of width
+$d_h = 4$, a context length of 16 positions, a single layer, and an
+MLP of width $64 = 4d$. Its parameters are nine matrices, with no
+bias vectors and no normalisation gains:
+
+- $E$ ($27\times16$) and $P$ ($16\times16$): token and position
+  embeddings (@def-embedding). Row $x$ of $E$, written as a column, is
+  $E_x$; row $t$ of $P$ is $P_t$.
+- $W_Q$, $W_K$, $W_V$, $W_O$ (each $16\times16$): attention.
+- $W_1$ ($64\times16$) and $W_2$ ($16\times64$): the MLP.
+- $W_U$ ($27\times16$): the output matrix.
+
+A vector $\mathbf{q}\in\mathbb{R}^{16}$ splits into four heads,
+$\mathbf{q}^{(j)} = (q_{4j-3}, \dots, q_{4j})$ for $j = 1, \dots, 4$,
+and $\operatorname{relu}$ (@def-relu) acts on each component.
+
+::: {#def-small-gpt}
+## The model
+
+For tokens $x_1, \dots, x_T$ with $T \le 16$, and each position
+$t = 1, \dots, T$, the model computes:
+$$
+\begin{aligned}
+\mathbf{r}^{(0)}_t &= \operatorname{rms}(E_{x_t} + P_t)
+&&\text{embedding}\\
+\mathbf{u}_t &= \operatorname{rms}(\mathbf{r}^{(0)}_t), \quad
+\mathbf{q}_t = W_Q\mathbf{u}_t, \quad
+\mathbf{k}_t = W_K\mathbf{u}_t, \quad
+\mathbf{v}_t = W_V\mathbf{u}_t
+&&\text{queries, keys, values}\\
+\boldsymbol{\alpha}^{(j)}_t &= \operatorname{softmax}\Bigl(
+\frac{\mathbf{q}^{(j)}_t\cdot\mathbf{k}^{(j)}_1}{2}, \dots,
+\frac{\mathbf{q}^{(j)}_t\cdot\mathbf{k}^{(j)}_t}{2}\Bigr)
+&&\text{head } j = 1, \dots, 4\\
+\mathbf{o}^{(j)}_t &= \sum_{\tau=1}^t \alpha^{(j)}_{t\tau}\,\mathbf{v}^{(j)}_\tau,
+\qquad
+\mathbf{o}_t = \bigl(\mathbf{o}^{(1)}_t, \dots, \mathbf{o}^{(4)}_t\bigr)
+&&\text{attention output}\\
+\mathbf{r}^{(1)}_t &= \mathbf{r}^{(0)}_t + W_O\,\mathbf{o}_t
+&&\text{attention block}\\
+\mathbf{r}^{(2)}_t &= \mathbf{r}^{(1)}_t
++ W_2\operatorname{relu}\bigl(W_1\operatorname{rms}(\mathbf{r}^{(1)}_t)\bigr)
+&&\text{MLP block}\\
+\mathbf{z}_t &= W_U\,\mathbf{r}^{(2)}_t
+&&\text{logits}
+\end{aligned}
+$$
+with $\operatorname{rms}$ as in @def-rmsnorm ($\varepsilon = 10^{-5}$).
+The model's distribution for the next token is
+$\mathbf{p}_t = \operatorname{softmax}(\mathbf{z}_t)$.
+:::
+
+The divisor 2 in the attention scores is $\sqrt{d_h}$
+(@thm-attention-scale). The attention line is causal multi-head
+attention (@def-multi-head, @def-causal-mask): head $j$ uses rows
+$4j - 3$ to $4j$ of $W_Q$, $W_K$ and $W_V$ as its own query, key and
+value matrices, the weights $\alpha^{(j)}_{t\tau}$ for $\tau > t$ are
+zero, and $W_O$ mixes the concatenated head outputs. The source
+counts positions from 0; here they run from 1, so $P_t$ is row $t$ of
+$P$ in this book's numbering.
+
+Several details differ from GPT-2 [@radford2019language], and each
+is visible in the equations. The vectors $\mathbf{r}^{(0)}_t$,
+$\mathbf{r}^{(1)}_t$, $\mathbf{r}^{(2)}_t$ form the *residual stream*.
+Each block reads a normalised copy of the stream and adds its output
+back. That is the arrangement of GPT-2, which moved normalisation
+from after the residual sum [@vaswani2017attention] to the input of
+each block. GPT-2 also normalises the stream once more before the
+output matrix; this model does not, so $\mathbf{z}_t$ is a linear
+function of $\mathbf{r}^{(2)}_t$. Instead, this model normalises the
+embedding sum before it enters the stream, so the stream starts with
+root mean square close to 1. It replaces layer normalisation by RMS
+normalisation without gain, and GELU by ReLU. It has no biases. The
+output matrix $W_U$ is a separate parameter, not a copy
+of $E$.
+
+The two blocks are residual blocks in the sense of @sec-residual.
+For the attention block the map $F$ acts on the whole sequence
+$(\mathbf{r}^{(0)}_1, \dots, \mathbf{r}^{(0)}_T)\in\mathbb{R}^{16T}$,
+because position $t$ attends to earlier positions, and
+@thm-residual-jacobian applies in $\mathbb{R}^{16T}$. The normalisation
+sits inside $F$, so the identity path from $\mathbf{r}^{(0)}_t$ to
+$\mathbf{r}^{(2)}_t$ passes through no normalisation and no matrix.
+The adjoint of the logits reaches $\mathbf{r}^{(0)}_t$ as
+$W_U^\top\bar{\mathbf{z}}_t$ plus the corrections from the two blocks.
+
+The vector $\mathbf{u}_t$ normalises a vector that is already
+normalised. In the forward pass this changes little: by
+@thm-rmsnorm-scaling the mean square of $\mathbf{r}^{(0)}_t$ is
+$\mu/(\mu + \varepsilon)$, just below 1, and normalising it again
+multiplies it by a number close to 1 (@exr-ch11-double-norm). In the
+backward pass it does more: by @thm-rmsnorm-jacobian its Jacobian
+nearly removes the component of the adjoint along
+$\mathbf{r}^{(0)}_t$, while the identity path keeps it.
+
+The equations translate directly into array code. The function below
+computes every position at once, as matrices whose row $t$ holds the
+vectors for position $t$, and it implements the causal mask by
+setting the scores for $\tau > t$ to $-\infty$ before the softmax, so
+that their weights are $e^{-\infty} = 0$.
+
+```{python}
+#| echo: true
+import numpy as np
+
+def rms_rows(X, eps=1e-5):
+    """RMS-normalise each row of X."""
+    return X / np.sqrt(np.mean(X**2, axis=-1, keepdims=True) + eps)
+
+def logits(theta, tokens):
+    """Logits z_1, ..., z_T (as rows) for a list of token numbers."""
+    T = len(tokens)
+    R0 = rms_rows(theta["E"][tokens] + theta["P"][:T])
+    U = rms_rows(R0)
+    Q, K, V = U @ theta["WQ"].T, U @ theta["WK"].T, U @ theta["WV"].T
+    later = np.triu(np.ones((T, T), dtype=bool), k=1)   # entries with tau > t
+    O = np.zeros((T, 16))
+    for j in range(4):
+        c = slice(4 * j, 4 * j + 4)                     # the columns of head j
+        S = Q[:, c] @ K[:, c].T / 2.0                    # scores q_t . k_tau / sqrt(4)
+        S[later] = -np.inf
+        A = np.exp(S - S.max(axis=1, keepdims=True))
+        A = A / A.sum(axis=1, keepdims=True)             # row t is alpha_t
+        O[:, c] = A @ V[:, c]
+    R1 = R0 + O @ theta["WO"].T
+    R2 = R1 + np.maximum(rms_rows(R1) @ theta["W1"].T, 0.0) @ theta["W2"].T
+    return R2 @ theta["WU"].T
+```
+
+```{python}
+#| include: false
+# The visible function agrees with an independent position-by-position
+# implementation, and with the equations written out for one position.
+theta = init_params(rng)
+for name in ("emma", "isabella", "ava", "christopher"):
+    toks = encode(name)[:CONTEXT]
+    close(logits(theta, toks), forward_cached(theta, toks), f"two implementations agree on {name}")
+check(encode("emma") == [26, 4, 12, 12, 0, 26], "emma as tokens")
+check(BOUNDARY == 26 and VOCAB == 27, "boundary token is 26 of 27")
+check(sorted(set("abcdefghijklmnopqrstuvwxyz")) == [chr(97 + i) for i in range(26)],
+      "letters numbered 0 to 25 alphabetically")
+# Position 3 of "emma" by the equations, written out.
+toks = encode("emma")
+r0 = [rms_np(theta["E"][x] + theta["P"][t]) for t, x in enumerate(toks)]
+u = [rms_np(r) for r in r0]
+q = [theta["WQ"] @ v for v in u]
+k = [theta["WK"] @ v for v in u]
+vv = [theta["WV"] @ v for v in u]
+t3 = 2                                         # position 3, counted from 0
+heads = []
+for j in range(4):
+    c = slice(4 * j, 4 * j + 4)
+    sc = np.array([q[t3][c] @ k[tau][c] / 2 for tau in range(t3 + 1)])
+    al = np.exp(sc) / np.exp(sc).sum()
+    heads.append(sum(al[tau] * vv[tau][c] for tau in range(t3 + 1)))
+o = np.concatenate(heads)
+r1 = r0[t3] + theta["WO"] @ o
+r2 = r1 + theta["W2"] @ np.maximum(theta["W1"] @ rms_np(r1), 0)
+close(theta["WU"] @ r2, logits(theta, toks)[t3], "equations of the model at position 3")
+```
+
+### Counting the parameters {#sec-parameter-count}
+
+::: {#thm-parameter-count}
+## Parameter count
+
+The model has exactly 4192 parameters, distributed as follows.
+
+| Matrix | Role | Shape | Entries |
+|---|---|---|---:|
+| $E$ | token embedding | $27\times16$ | 432 |
+| $P$ | position embedding | $16\times16$ | 256 |
+| $W_Q$, $W_K$, $W_V$ | queries, keys, values | $16\times16$ each | 768 |
+| $W_O$ | attention output | $16\times16$ | 256 |
+| $W_1$ | MLP, first layer | $64\times16$ | 1024 |
+| $W_2$ | MLP, second layer | $16\times64$ | 1024 |
+| $W_U$ | output | $27\times16$ | 432 |
+| total | | | 4192 |
+:::
+
+::: {.proof}
+The parameters are the entries of the nine matrices of
+@def-small-gpt: the normalisations have no gain and there are no
+biases, so nothing else changes in training. An $m\times n$ matrix
+has $mn$ entries, which gives the last column, and
+$432 + 256 + 768 + 256 + 1024 + 1024 + 432 = 4192$.
+:::
+
+The embeddings hold 688 parameters, the attention block 1024, the MLP
+block 2048 and the output matrix 432, so almost half the parameters
+sit in the MLP. The parameter vector $\boldsymbol\theta$ of the model
+lies in $\mathbb{R}^{4192}$.
+
+```{python}
+#| include: false
+counts = {name: r * c for name, (r, c) in SHAPES.items()}
+check(sum(counts.values()) == 4192, "4192 parameters")
+check(counts["E"] == 432 and counts["P"] == 256 and counts["WU"] == 432, "embeddings and head")
+check(counts["WQ"] + counts["WK"] + counts["WV"] == 768 and counts["WO"] == 256, "attention")
+check(counts["W1"] == 1024 and counts["W2"] == 1024, "MLP")
+check(432 + 256 + 768 + 256 + 1024 + 1024 + 432 == 4192, "sum in the proof")
+check(counts["E"] + counts["P"] == 688 and counts["WQ"] * 4 == 1024
+      and counts["W1"] + counts["W2"] == 2048, "block totals")
+check(sum(p.size for p in init_params(rng).values()) == 4192, "parameters drawn by the implementation")
+# The source's shapes, transcribed from its parameter dictionary: vocabulary 27,
+# width 16, context 16, four 16x16 attention matrices, MLP matrices (64, 16) and (16, 64).
+vocab, n_embd, block = 27, 16, 16
+src = [(vocab, n_embd), (block, n_embd), (vocab, n_embd)] + [(n_embd, n_embd)] * 4 \
+      + [(4 * n_embd, n_embd), (n_embd, 4 * n_embd)]
+check(sum(a * b for a, b in src) == 4192, "count from the source's shapes")
+check(sorted(src) == sorted(SHAPES.values()), "shapes match the source")
+```
+
+## Training {#sec-training}
+
+A name $c_1c_2\cdots c_m$ becomes the token sequence
+$x_1 = \mathtt{B}$, $x_{i+1} = c_i$ for $i = 1, \dots, m$, and
+$x_{m+2} = \mathtt{B}$. The model predicts each token from those
+before it. With $T = \min(16, m + 1)$ predictions, the loss on the
+name is the average cross-entropy (@def-cross-entropy)
+$$
+L(\boldsymbol\theta) = \frac1T\sum_{t=1}^T -\ln p_{t,\,x_{t+1}},
+$$ {#eq-document-loss}
+where $p_{t,\,x}$ is component $x$ of $\mathbf{p}_t$. The names in
+the training list have at most 15 letters (the source notes this), so
+$T = m + 1$ and the last prediction is always the closing boundary
+token: the model learns where names end as well as how they start.
+The minimum in $T$ only matters for longer documents, whose last
+targets the model never sees. By the chain rule of probability
+(@thm-sequence-chain-rule), $TL$ is minus the logarithm of the
+probability that the model assigns to the whole name, closing
+boundary included, and $e^{L}$ is the perplexity of the model on it
+(@def-perplexity).
+
+By @thm-softmax-ce-gradient, the adjoint of the logits at position
+$t$ is $\bar{\mathbf{z}}_t = (\mathbf{p}_t - \mathbf{e}_{x_{t+1}})/T$,
+where $\mathbf{e}_x$ is the standard basis vector of token $x$. Reverse
+mode carries these 27-component vectors back through the equations of
+@def-small-gpt to all 4192 parameters at once (@thm-reverse-mode).
+
+Training runs Adam (@def-adam) with $\beta_1 = 0.85$,
+$\beta_2 = 0.99$ and $\epsilon = 10^{-8}$ (added to the square root of
+the bias-corrected second-moment estimate, @thm-ema-bias), for 1000
+steps. Each step $k = 0, 1, \dots, 999$ takes one name from a shuffled
+list and computes $L$ and its gradient, and Adam then updates
+$\boldsymbol\theta$ with learning rate
+$$
+\eta_k = 0.01\Bigl(1 - \frac{k}{1000}\Bigr),
+$$
+which falls linearly from $0.01$ at the first step to $10^{-5}$ at the
+last. There is no batching: each gradient comes from a single name.
+The list holds 32,033 names [@karpathy2026microgpt], so 1000 steps use
+about 3% of it, each name at most once. Adam keeps two numbers per
+parameter, so the optimiser state is $2\times4192 = 8384$ numbers.
+
+The source computes each softmax after subtracting the largest logit,
+and it treats that maximum as a constant in the computational graph.
+This does not change the derivative: subtracting a constant from
+every component does not change the softmax at all
+(@thm-softmax-shift), so the two computations define the same
+function of the logits.
+
+```{python}
+#| include: false
+etas = [0.01 * (1 - k / 1000) for k in range(1000)]
+close(etas[0], 0.01, "first learning rate")
+close(etas[-1], 1e-5, "last learning rate")
+check(all(a > b for a, b in zip(etas, etas[1:])), "learning rate decreases")
+close(1000 / 32033, 0.03, "about 3% of the list", tol=2e-3)
+check(2 * 4192 == 8384, "Adam state")
+# T = m + 1 for names of at most 15 letters, and the last target is the boundary token.
+for m in range(1, 16):
+    toks = encode("a" * m)
+    check(min(CONTEXT, len(toks) - 1) == m + 1 and toks[m + 1] == BOUNDARY, f"T = m + 1 for m = {m}")
+check(min(CONTEXT, len(encode("a" * 20)) - 1) == 16, "T = 16 for longer documents")
+# The loss has logit gradient (p - e_y)/T, by finite differences on the logits.
+Zt = rng.normal(size=(5, 27))
+tg = rng.integers(0, 27, size=5)
+lossZ = lambda flat: np.mean([np.log(np.exp(r).sum()) - r[y] for r, y in zip(flat.reshape(5, 27), tg)])
+P_ = np.exp(Zt) / np.exp(Zt).sum(axis=1, keepdims=True)
+close(num_grad(lossZ, Zt.ravel()).reshape(5, 27), (P_ - np.eye(27)[tg]) / 5, "gradient (p - e)/T")
+# T L is minus the log-probability of the whole name.
+th = init_params(rng)
+toks = encode("emma")
+Zs = forward_cached(th, toks[:-1])
+logp = sum(np.log(np.exp(z[y]) / np.exp(z).sum()) for z, y in zip(Zs, toks[1:]))
+close(-logp / 5, document_loss(th, "emma"), "T L = -log P(name)")
+# Subtracting the maximum gives the same softmax.
+zs = rng.normal(size=27)
+sm = lambda z: np.exp(z) / np.exp(z).sum()
+close(sm(zs - zs.max()), sm(zs), "shifted softmax")
+```
+
+### The loss before training {#sec-initial-loss}
+
+Every weight starts as an independent sample from the normal
+distribution $N(0, \sigma_w^2)$ with $\sigma_w = 0.08$. The logits are
+then small and the softmax is close to uniform, so the loss is close
+to
+$\ln 27 \approx 3.296$, the loss of a model that gives each of the 27
+tokens probability $1/27$. The next theorem makes this precise. It
+needs one fact about the normal distribution: if $w$ has distribution
+$N(0, \sigma^2)$ and $c$ is a real number, then, completing the square,
+$$
+\mathbb{E}\bigl[e^{cw}\bigr]
+= \int_{-\infty}^\infty \frac{e^{cw - w^2/(2\sigma^2)}}{\sqrt{2\pi}\,\sigma}\,dw
+= e^{c^2\sigma^2/2}\int_{-\infty}^\infty
+\frac{e^{-(w - c\sigma^2)^2/(2\sigma^2)}}{\sqrt{2\pi}\,\sigma}\,dw
+= e^{c^2\sigma^2/2},
+$$ {#eq-normal-mgf}
+since the last integrand is the density of $N(c\sigma^2, \sigma^2)$.
+
+::: {#thm-initial-loss}
+## Loss at initialisation
+
+Fix every parameter except $W_U$, and fix the tokens. Let the entries
+of $W_U$ be independent with distribution $N(0, \sigma_w^2)$. Then at
+each position $t$, with $\mathbf{r} = \mathbf{r}^{(2)}_t$ and
+$\ell_t = -\ln p_{t,\,x_{t+1}}$,
+$$
+\ln 27 \;\le\; \mathbb{E}[\ell_t] \;\le\; \ln 27 + \frac{\sigma_w^2\|\mathbf{r}\|^2}{2} .
+$$
+The same bounds hold for the expected loss $\mathbb{E}[L]$ of
+@eq-document-loss, with $\|\mathbf{r}\|^2$ replaced by the average of
+$\|\mathbf{r}^{(2)}_t\|^2$ over $t$.
+:::
+
+::: {.proof}
+The vector $\mathbf{r}$ does not involve $W_U$, so it stays fixed. Write
+$\mathbf{w}_i$ for row $i$ of $W_U$ (as a column), so that
+$z_i = \mathbf{w}_i\cdot\mathbf{r}$, and let $y = x_{t+1}$. Then
+$$
+\ell_t = \ln\sum_{i} e^{z_i} - z_y ,
+$$
+with the sum over the 27 tokens.
+
+*Lower bound.* Let $\bar z = \frac1{27}\sum_i z_i$. The tangent line
+to the exponential at $\bar z$ lies below it:
+$e^{z} \ge e^{\bar z}(1 + z - \bar z)$ for all $z$. Summing over the
+27 values $z_i$ gives $\sum_i e^{z_i} \ge 27e^{\bar z}$, so
+$\ell_t \ge \ln 27 + \bar z - z_y$. Each $z_i$ has expectation
+$\sum_j r_j\,\mathbb{E}[(\mathbf{w}_i)_j] = 0$, so taking expectations
+gives $\mathbb{E}[\ell_t] \ge \ln 27$.
+
+*Upper bound.* The tangent line to the logarithm at $m > 0$ lies above
+it: $\ln Y \le \ln m + (Y - m)/m$ for $Y > 0$. Take
+$Y = \sum_i e^{z_i}$ and $m = \mathbb{E}[Y]$; taking expectations,
+$\mathbb{E}[\ln Y] \le \ln\mathbb{E}[Y]$. The entries of
+$\mathbf{w}_i$ are independent, so by @eq-normal-mgf
+$$
+\mathbb{E}\bigl[e^{z_i}\bigr]
+= \prod_{j=1}^{16}\mathbb{E}\bigl[e^{r_j(\mathbf{w}_i)_j}\bigr]
+= \prod_{j=1}^{16}e^{r_j^2\sigma_w^2/2}
+= e^{\sigma_w^2\|\mathbf{r}\|^2/2},
+$$
+and $\mathbb{E}[Y] = 27e^{\sigma_w^2\|\mathbf{r}\|^2/2}$. With
+$\mathbb{E}[z_y] = 0$ this gives the upper bound. The statement for
+$L$ follows by averaging over $t$, since expectation is linear.
+:::
+
+How large is $\|\mathbf{r}^{(2)}_t\|^2$ at initialisation? By
+@thm-rmsnorm-scaling, $\|\mathbf{r}^{(0)}_t\|^2 = 16\lambda^2$ is just
+below 16. The two blocks add $W_O\mathbf{o}_t$ and
+$W_2\mathbf{g}_t$, with $\mathbf{g}_t$ the MLP's hidden vector. Since
+$W_O$ is independent of $\mathbf{r}^{(0)}_t$ and $\mathbf{o}_t$ and
+has mean zero, the cross term
+$\mathbb{E}[\mathbf{r}^{(0)}_t\cdot W_O\mathbf{o}_t]$ vanishes, and
+likewise for $W_2$, so
+$$
+\mathbb{E}\|\mathbf{r}^{(2)}_t\|^2
+= \mathbb{E}\|\mathbf{r}^{(0)}_t\|^2 + \mathbb{E}\|W_O\mathbf{o}_t\|^2
++ \mathbb{E}\|W_2\mathbf{g}_t\|^2 .
+$$
+Over many random initialisations the three terms average about 16.0,
+0.06 and 0.33, so $\|\mathbf{r}^{(2)}_t\|^2 \approx 16.4$ and the gap
+$\sigma_w^2\|\mathbf{r}\|^2/2$ in @thm-initial-loss is about $0.052$.
+The expected initial loss therefore lies between $3.296$ and about
+$3.35$. A direct simulation, averaging the loss of
+@eq-document-loss over 400 random initialisations and a dozen names,
+gives $3.35$, at the top of that range; the standard deviation of a
+single document's loss is about 0.14. The microgpt post reports a
+loss of 3.37 at the first step, consistent with this, and about 2.37
+after 1000 steps [@karpathy2026microgpt].
+
+```{python}
+#| include: false
+close(math.log(27), 3.296, "ln 27", tol=2e-4)
+names = ["emma", "olivia", "ava", "isabella", "sophia", "mia", "noah", "liam",
+         "jacob", "mason", "ella", "zoe"]
+rng_init = np.random.default_rng(2026)
+losses, n0, nO, nW2, n2 = [], [], [], [], []
+for _ in range(400):
+    th = init_params(rng_init)
+    losses += [document_loss(th, nm) for nm in names]
+    toks = encode("isabella")
+    R2 = residual_streams(th, toks)
+    # Recompute the two block outputs from the equations.
+    R0 = np.array([rms_np(th["E"][x] + th["P"][t]) for t, x in enumerate(toks)])
+    U = np.array([rms_np(r) for r in R0])
+    Qm, Km, Vm = U @ th["WQ"].T, U @ th["WK"].T, U @ th["WV"].T
+    Om = np.zeros_like(U)
+    for t in range(len(toks)):
+        for j in range(4):
+            c = slice(4 * j, 4 * j + 4)
+            sc = Km[: t + 1, c] @ Qm[t, c] / 2
+            al = np.exp(sc - sc.max())
+            Om[t, c] = (al / al.sum()) @ Vm[: t + 1, c]
+    attn = Om @ th["WO"].T
+    R1 = R0 + attn
+    mlp = np.maximum(np.array([rms_np(r) for r in R1]) @ th["W1"].T, 0) @ th["W2"].T
+    close(R1 + mlp, R2, "block outputs recomputed")
+    n0.append(np.mean(np.sum(R0**2, axis=1)))
+    nO.append(np.mean(np.sum(attn**2, axis=1)))
+    nW2.append(np.mean(np.sum(mlp**2, axis=1)))
+    n2.append(np.mean(np.sum(R2**2, axis=1)))
+losses = np.array(losses)
+close(np.mean(n0), 16.0, "E|r0|^2 about 16.0", tol=0.01)
+check(np.mean(n0) < 16, "|r0|^2 just below 16")
+close(np.mean(nO), 0.06, "E|W_O o|^2 about 0.06", tol=0.02)
+close(np.mean(nW2), 0.33, "E|W_2 g|^2 about 0.33", tol=0.02)
+close(np.mean(n2), 16.4, "E|r2|^2 about 16.4", tol=0.01)
+close(np.mean(n2), np.mean(n0) + np.mean(nO) + np.mean(nW2), "cross terms average out", tol=0.01)
+gap = INIT_STD**2 * np.mean(n2) / 2
+close(gap, 0.052, "gap sigma^2 |r|^2 / 2", tol=2e-3)
+close(math.log(27) + gap, 3.35, "upper end about 3.35", tol=2e-3)
+close(losses.mean(), 3.35, "simulated initial loss 3.35", tol=2e-3)
+close(losses.std(), 0.14, "standard deviation of one document's loss", tol=0.02)
+se = losses.std() / np.sqrt(losses.size)
+check(math.log(27) - 3 * se <= losses.mean() <= math.log(27) + gap + 3 * se, "simulation within bounds")
+# The theorem itself at one fixed r: sample W_U many times.
+r_fix = residual_streams(init_params(rng), encode("emma"))[2]
+Wsamp = rng.normal(0, INIT_STD, size=(20000, 27, 16))
+zsamp = Wsamp @ r_fix
+ell = np.log(np.exp(zsamp).sum(axis=1)) - zsamp[:, 4]
+se1 = ell.std() / np.sqrt(ell.size)
+check(math.log(27) - 4 * se1 <= ell.mean() <= math.log(27) + INIT_STD**2 * (r_fix @ r_fix) / 2 + 4 * se1,
+      "bounds of the theorem by sampling W_U")
+# The normal moment generating function, symbolically.
+w_, c_ = sp.symbols("w c", real=True)
+sg = sp.symbols("sigma", positive=True)
+sym_equal(sp.integrate(sp.exp(c_ * w_ - w_**2 / (2 * sg**2)) / (sp.sqrt(2 * sp.pi) * sg),
+                       (w_, -sp.oo, sp.oo)), sp.exp(c_**2 * sg**2 / 2), "E e^{cw}")
+close(3.3660, 3.37, "post's first-step loss 3.3660 rounds to 3.37", tol=1e-3)
+```
+
+## Sampling and temperature {#sec-temperature}
+
+After training, the model generates a name by sampling. It starts
+with $x_1 = \mathtt{B}$ at position 1, computes $\mathbf{z}_1$, draws
+$x_2$ at random from a distribution built from $\mathbf{z}_1$, feeds
+$x_2$ back in at position 2, and continues until it draws $\mathtt{B}$
+or has drawn 16 tokens. The letters drawn before the boundary token
+form the name, so a sample has at most 16 letters. The distribution
+is not $\operatorname{softmax}(\mathbf{z}_t)$ itself but
+$\operatorname{softmax}(\mathbf{z}_t/T)$ for a *temperature* $T > 0$;
+microgpt uses $T = 0.5$. (In this section $T$ is the temperature, not
+the length of a sequence.)
+
+Dividing the logits by $T$ multiplies all their differences by $1/T$.
+For $T < 1$ this exaggerates the differences and concentrates the
+probability on the likeliest tokens; for $T > 1$ it flattens the
+distribution. The limits are exact.
+
+::: {#thm-temperature}
+## Temperature limits
+
+Let $\mathbf{z}\in\mathbb{R}^n$ and, for $T > 0$,
+$\mathbf{p}(T) = \operatorname{softmax}(\mathbf{z}/T)$. Let
+$M = \max_i z_i$, let $A = \{i : z_i = M\}$ be the set of positions
+where the maximum is attained, and let $k$ be the number of elements
+of $A$.
+
+(a) As $T\to\infty$, $\mathbf{p}(T) \to \frac1n\mathbf{1}$, the
+uniform distribution.
+
+(b) As $T\to0$ through positive values, $p_i(T) \to 1/k$ for
+$i \in A$ and $p_i(T) \to 0$ for $i \notin A$. In particular, if the
+maximum is attained at a single position $i^*$, then
+$\mathbf{p}(T) \to \mathbf{e}_{i^*}$.
+:::
+
+::: {.proof}
+(a) For each $i$, $z_i/T \to 0$, so $e^{z_i/T} \to 1$ by continuity
+of the exponential. The denominator $\sum_j e^{z_j/T}$ tends to $n$,
+which is not $0$, so $p_i(T) \to 1/n$.
+
+(b) Multiplying the numerator and denominator of $p_i(T)$ by
+$e^{-M/T}$,
+$$
+p_i(T) = \frac{e^{(z_i - M)/T}}{\sum_{j=1}^n e^{(z_j - M)/T}} .
+$$
+For $j\in A$ the term $e^{(z_j - M)/T}$ equals $1$ for every $T$. For
+$j\notin A$, $z_j - M < 0$, so $(z_j - M)/T \to -\infty$ as
+$T \to 0$ and $e^{(z_j - M)/T} \to 0$. So the denominator tends to
+$k \ge 1$, and the numerator tends to $1$ if $i\in A$ and to $0$
+otherwise.
+:::
+
+When several logits tie for the maximum, the limit at low temperature
+is uniform over the tied tokens: the temperature cannot break a tie.
+At $T = 1$ the model samples from its own distribution
+$\mathbf{p} = \operatorname{softmax}(\mathbf{z})$, and in general
+$\operatorname{softmax}(\mathbf{z}/T)$ is proportional to the vector of
+powers $p_i^{1/T}$ (@exr-ch11-temperature-power). At $T = 0.5$ the
+model samples token $i$ with probability proportional to $p_i^2$.
+
+::: {#exm-temperature}
+Let $\mathbf{z} = (2, 1, 0)$. At $T = 1$ the probabilities are
+$(0.665, 0.245, 0.090)$; at $T = 0.5$ they are
+$\operatorname{softmax}(4, 2, 0) = (0.867, 0.117, 0.016)$; at
+$T = 0.1$ the first is $0.99995$; and at $T = 100$ they are
+$(0.3367, 0.3333, 0.3300)$, close to uniform.
+:::
+
+```{python}
+#| include: false
+smx = lambda z: np.exp(z - np.max(z)) / np.exp(z - np.max(z)).sum()
+zt = np.array([2.0, 1.0, 0.0])
+close(smx(zt), [0.665, 0.245, 0.090], "T = 1", tol=1e-3)
+close(smx(zt / 0.5), [0.867, 0.117, 0.016], "T = 0.5", tol=1e-3)
+close(smx(zt / 0.1)[0], 0.99995, "T = 0.1", tol=1e-5)
+close(smx(zt / 100), [0.3367, 0.3333, 0.3300], "T = 100", tol=1e-4)
+close(smx(zt / 0.5), smx(zt)**2 / (smx(zt)**2).sum(), "T = 0.5 squares the probabilities")
+# Limits, symbolically and numerically, with and without ties.
+Tt = sp.symbols("T", positive=True)
+zsym = [2, 1, 0]
+den = sum(sp.exp(sp.Integer(z) / Tt) for z in zsym)
+check([sp.limit(sp.exp(sp.Integer(z) / Tt) / den, Tt, sp.oo) for z in zsym] == [sp.Rational(1, 3)] * 3,
+      "T -> infinity: uniform")
+check([sp.limit(sp.exp(sp.Integer(z) / Tt) / den, Tt, 0, "+") for z in zsym] == [1, 0, 0],
+      "T -> 0: one-hot at the argmax")
+ztie = [3, 3, 1, 0]
+dtie = sum(sp.exp(sp.Integer(z) / Tt) for z in ztie)
+check([sp.limit(sp.exp(sp.Integer(z) / Tt) / dtie, Tt, 0, "+") for z in ztie]
+      == [sp.Rational(1, 2), sp.Rational(1, 2), 0, 0], "ties: uniform over the argmax set")
+for _ in range(20):
+    zr = rng.normal(size=7)
+    close(smx(zr / 1e6), np.ones(7) / 7, "large T numerically", tol=1e-5)
+    gapz = np.sort(zr)[-1] - np.sort(zr)[-2]
+    close(smx(zr / (gapz / 50)), np.eye(7)[np.argmax(zr)], "small T numerically", tol=1e-15)
+```
+
+## Caching keys and values {#sec-kv-cache}
+
+Generating a name token by token seems to require running the model
+on the whole prefix $x_1, \dots, x_t$ at every step $t$. It does not.
+Everything in @def-small-gpt except attention works on one position
+at a time, and attention at position $t$ needs only the query of
+position $t$ and the keys and values of positions $1$ to $t$. So a
+program can keep a *cache*, a list of the key and value vectors of
+the positions seen so far, and process each new position once.
+
+::: {#def-kv-cache}
+## Cached evaluation
+
+Given tokens $x_1, x_2, \dots$, the *cached evaluation* of the model
+starts with an empty list $C$ and, for $t = 1, 2, \dots$ in turn:
+
+1. computes $\mathbf{r}^{(0)}_t$, $\mathbf{u}_t$, $\mathbf{q}_t$,
+   $\mathbf{k}_t$ and $\mathbf{v}_t$ from $x_t$ and $t$ by the
+   formulas of @def-small-gpt, and appends
+   $(\mathbf{k}_t, \mathbf{v}_t)$ to $C$;
+2. computes $\hat{\mathbf{o}}_t$ by the attention formulas of
+   @def-small-gpt, using $\mathbf{q}_t$ and every pair in $C$;
+3. computes $\hat{\mathbf{r}}^{(1)}_t$, $\hat{\mathbf{r}}^{(2)}_t$
+   and $\hat{\mathbf{z}}_t$ from $\mathbf{r}^{(0)}_t$ and
+   $\hat{\mathbf{o}}_t$ by the remaining formulas.
+:::
+
+::: {#thm-kv-cache}
+## Caching computes causal attention
+
+For every $T \le 16$ and tokens $x_1, \dots, x_T$, the cached
+evaluation gives $\hat{\mathbf{z}}_t = \mathbf{z}_t$ for
+$t = 1, \dots, T$, where $\mathbf{z}_t$ are the logits of
+@def-small-gpt computed for the whole sequence, and $\mathbf{z}_t$
+depends only on $x_1, \dots, x_t$.
+:::
+
+::: {.proof}
+In @def-small-gpt, $\mathbf{r}^{(0)}_t$, $\mathbf{u}_t$,
+$\mathbf{q}_t$, $\mathbf{k}_t$ and $\mathbf{v}_t$ are functions of
+$x_t$ and $t$ alone, and $\mathbf{r}^{(1)}_t$, $\mathbf{r}^{(2)}_t$
+and $\mathbf{z}_t$ are functions of $\mathbf{r}^{(0)}_t$ and
+$\mathbf{o}_t$ alone. Only $\mathbf{o}_t$ involves other positions,
+and by the causal mask (@def-causal-mask) it involves only
+$\mathbf{q}_t$ and the pairs $(\mathbf{k}_\tau, \mathbf{v}_\tau)$ with
+$\tau \le t$: the weights for $\tau > t$ are zero and the remaining
+weights are the softmax of the $t$ scores with $\tau \le t$. Hence
+$\mathbf{z}_t$ is a function of $x_1, \dots, x_t$, which proves the
+second claim.
+
+At step $t$ of the cached evaluation, after the append, $C$ holds
+exactly the $t$ pairs $(\mathbf{k}_\tau, \mathbf{v}_\tau)$ for
+$\tau = 1, \dots, t$, in order, each computed from $x_\tau$ and $\tau$
+by the same formula as in the whole-sequence computation and therefore
+equal to it. Step 1 computes the same $\mathbf{r}^{(0)}_t$ and
+$\mathbf{q}_t$. Step 2 applies the same formula to the same inputs,
+so $\hat{\mathbf{o}}_t = \mathbf{o}_t$, and step 3 then gives
+$\hat{\mathbf{z}}_t = \mathbf{z}_t$.
+:::
+
+With several layers the keys and values of layer $\ell$ come from the
+residual stream after layer $\ell - 1$, which depends on
+earlier positions, so they are no longer functions of $x_t$ and $t$
+alone. The same argument then runs by induction on $t$, and within
+each $t$ by induction on the layer: once the cached and whole-sequence
+values agree at all positions before $t$, they agree at position $t$
+layer by layer.
+
+The theorem matters for generation and for training. In generation,
+the token drawn at
+step $t$ comes from $\operatorname{softmax}(\mathbf{z}_t/T)$, and
+$\mathbf{z}_t$ is the same whether computed with the cache or from
+scratch, so caching changes the cost and not the distribution of the
+samples. In training, microgpt computes the loss with the cache too,
+one position at a time. The cached and whole-sequence computations
+define the same function $L(\boldsymbol\theta)$, so they have the
+same gradient, and reverse mode may differentiate through the cache
+like any other computation. Since appending tokens never changes the
+logits at earlier positions, one pass over a name trains all $T$ of
+its predictions.
+
+```{python}
+#| include: false
+# Cached evaluation equals the whole-sequence computation, and z_t depends only
+# on the prefix (changing later tokens leaves earlier logits unchanged).
+for trial in range(10):
+    th = init_params(rng, std=0.3)                  # larger weights, so attention is not uniform
+    Tn = int(rng.integers(2, 17))
+    toks = [int(x) for x in rng.integers(0, 27, size=Tn)]
+    full = logits(th, toks)
+    close(forward_cached(th, toks), full, "cache = whole sequence")
+    for t in range(1, Tn + 1):
+        close(logits(th, toks[:t])[-1], full[t - 1], "prefix gives the same z_t")
+    other = toks[:-1] + [(toks[-1] + 1) % 27]
+    close(logits(th, other)[:-1], full[:-1], "later tokens do not change earlier logits")
+    check(not np.allclose(logits(th, other)[-1], full[-1]), "the last token does change its own logits")
+```
+
+## What the small model leaves out {#sec-leaves-out}
+
+The model computes the same kind of function as production language
+models, at a much smaller size, and several things are missing.
+
+*Tokenisation.* The model reads single characters from a vocabulary of
+27. GPT-2 reads text as bytes merged into frequent sequences by
+byte-pair encoding [@sennrich2016neural], with a vocabulary of 50,257
+tokens [@radford2019language]. A token is then often a whole word or
+a piece of one, and the embedding and output matrices, each
+$|V|\times d$, become large.
+
+*Size.* The model has one layer of width 16 and a context of 16
+positions. The four GPT-2 models have 12 to 48 layers, widths 768 to
+1600, a context of 1024 tokens, and between 117 million and 1542
+million parameters [@radford2019language]. More layers means more
+residual blocks in the stack of @cor-residual-stack.
+
+*Batching.* Each training step here uses one name, processed one
+position at a time. Production training computes all positions of a
+sequence at once with the causal mask, as in the array code of
+@sec-model, and averages the gradient over many sequences per step
+(GPT-2 used 512). @thm-kv-cache is what makes the all-at-once form
+give the same loss.
+
+*Other components.* GPT-2 uses layer normalisation with gain and bias,
+biases in its linear maps, the GELU activation in place of ReLU, and a
+final normalisation before the output matrix. Production systems also
+train in lower-precision arithmetic than the 64-bit floating point
+used here (@sec-floating-point).
+
+## Notes and further reading {#sec-notes-small-gpt}
+
+@karpathy2026microgpt walks through the code of the model line by
+line; the code is @karpathy2026microgptcode. @radford2019language
+describes GPT-2, and @vaswani2017attention the original transformer,
+with normalisation after each residual sum.
+@xiong2020layer compare the two placements of normalisation and show
+that placing it at the input of each block, as this model does, gives
+better-behaved gradients at initialisation. Layer normalisation is
+from @ba2016layer and RMS normalisation from @zhang2019root; residual
+connections are from @he2016deep. Byte-pair encoding for text comes
+from @sennrich2016neural.
+
+## Exercises {#sec-exercises-small-gpt}
+
+::: {#exr-ch11-rmsnorm-example}
+Let $n = 2$, $\varepsilon = 1/2$ and $\mathbf{x} = (3, 4)$. Compute
+$\operatorname{rms}(\mathbf{x})$ and its Jacobian at $\mathbf{x}$,
+and check that the Jacobian has eigenvalues $s$ and $\varepsilon s^3$
+as @thm-rmsnorm-jacobian says.
+:::
+
+::: {#exr-ch11-rmsnorm-gradient}
+Let $\mathbf{y} = \operatorname{rms}(\mathbf{x})$ and let
+$\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}}$, with $J$ the Jacobian of
+@thm-rmsnorm-jacobian. Show that
+$\mathbf{x}\cdot\bar{\mathbf{x}} = \varepsilon s^3\,(\mathbf{x}\cdot\bar{\mathbf{y}})$.
+Deduce that if $\varepsilon$ were $0$ (and $\mathbf{x}\ne\mathbf{0}$)
+the gradient with respect to $\mathbf{x}$ would always be
+perpendicular to $\mathbf{x}$, and explain this from
+@thm-rmsnorm-scaling.
+:::
+
+::: {#exr-ch11-layernorm}
+Let $C = I - \frac1n\mathbf{1}\mathbf{1}^\top$, the $n\times n$
+centring matrix. Show that $C\mathbf{x} = \mathbf{x} - m(\mathbf{x})\mathbf{1}$
+and $v(\mathbf{x}) = \mu(C\mathbf{x})$, so that layer normalisation
+with $\mathbf{g} = \mathbf{1}$ and $\mathbf{b} = \mathbf{0}$ is
+$\operatorname{rms}\circ C$. Find its Jacobian and show that it sends
+$\mathbf{1}$ to $\mathbf{0}$.
+:::
+
+::: {#exr-ch11-double-norm}
+(a) Show that
+$\operatorname{rms}(\operatorname{rms}(\mathbf{x})) = c\,\operatorname{rms}(\mathbf{x})$
+with $c = \bigl(\mu/(\mu + \varepsilon) + \varepsilon\bigr)^{-1/2}$,
+where $\mu = \mu(\mathbf{x})$.
+
+(b) Show that $c = 1$ exactly when $\mu = 1 - \varepsilon$.
+
+(c) For $\mu = 1$ and $\varepsilon = 10^{-5}$, show that
+$c^2 = (1 + \varepsilon)/(1 + \varepsilon + \varepsilon^2)$ and that
+$1 - c$ is about $5\times10^{-11}$.
+:::
+
+::: {#exr-ch11-param-general}
+Generalise @thm-parameter-count to a model with vocabulary size $|V|$,
+context length $n_c$, width $d$, $K$ layers (each with its own
+attention and MLP blocks, as in @def-small-gpt) and MLP width $4d$.
+Show that the number of parameters is $2|V|d + n_cd + 12Kd^2$ and that
+it does not depend on the number of heads. How many parameters does
+the model have with $d = 32$ and $K = 2$, other sizes unchanged?
+:::
+
+::: {#exr-ch11-temperature-power}
+Let $\mathbf{p} = \operatorname{softmax}(\mathbf{z})$. Show that for
+every $T > 0$,
+$$
+\operatorname{softmax}(\mathbf{z}/T)_i = \frac{p_i^{1/T}}{\sum_j p_j^{1/T}} .
+$$
+Find the sampling distribution at $T = 0.5$ when
+$\mathbf{p} = (0.5, 0.3, 0.2)$.
+:::
+
+::: {#exr-ch11-temperature-ties}
+Let $\mathbf{z} = (1, 3, 3, 0)$. Find the limits of
+$\operatorname{softmax}(\mathbf{z}/T)$ as $T\to0$ and as $T\to\infty$,
+and its value at $T = 1/\ln 2$.
+:::
+
+::: {#exr-ch11-residual-invertible}
+Let $F\colon\mathbb{R}^n\to\mathbb{R}^n$ be differentiable at
+$\mathbf{a}$ with $\|J_F(\mathbf{a})\|_F < 1$. Show that the Jacobian
+$I + J_F(\mathbf{a})$ of the residual block is invertible. Give an
+example with $\|J_F(\mathbf{a})\|_F = 1$ where it is not.
+:::
+
+::: {#exr-ch11-kv-cost}
+Count only the multiplications in attention scores
+($\mathbf{q}^{(j)}_t\cdot\mathbf{k}^{(j)}_\tau$, $d_h$ each) and in
+weighted sums of values ($d_h$ per head for each $\tau$). Show that
+generating $n$ positions with the cache costs $d\,n(n+1)$ such
+multiplications, while recomputing all positions from scratch at
+every step costs $d\,n(n+1)(n+2)/3$. Evaluate both for $d = n = 16$.
 :::
