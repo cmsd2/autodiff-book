@@ -1,0 +1,340 @@
+## Chapter 4 {#sec-solutions-4}
+
+```{python}
+#| include: false
+import math
+
+from checks import num_grad
+from checks.ch03 import load_chapter_code
+
+# The reverse-mode engine of chapter 4, loaded from the chapter itself.
+ch4 = load_chapter_code("04-reverse-mode.qmd", "engine-")
+Value4, backward4, topo4 = ch4["Value"], ch4["backward"], ch4["topological_order"]
+```
+
+**@exr-ch4-sweep.** Write $c = \cos 1$. The accumulators start at $0$,
+except $\bar v_7 = 1$, and the sweep processes the lines from $7$
+down to $3$:
+
+| line | operation | contributions |
+|---|---|---|
+| $7$ | $v_4 + v_6$ | $\bar v_4 \mathrel{+}= 1$, $\bar v_6 \mathrel{+}= 1$ |
+| $6$ | $\sin v_5$ | $\bar v_5 \mathrel{+}= \bar v_6\cos v_5 = c$ |
+| $5$ | $v_1v_2$ | $\bar v_1 \mathrel{+}= \bar v_5 v_2 = 0.5c$, $\bar v_2 \mathrel{+}= \bar v_5 v_1 = 2c$ |
+| $4$ | $v_3v_2$ | $\bar v_3 \mathrel{+}= \bar v_4 v_2 = 0.5$, $\bar v_2 \mathrel{+}= \bar v_4 v_3 = 4$ |
+| $3$ | $v_1^2$ | $\bar v_1 \mathrel{+}= \bar v_3\cdot 2v_1 = 2$ |
+
+So $\bar v_7 = \bar v_6 = \bar v_4 = 1$, $\bar v_5 = c$,
+$\bar v_3 = 0.5$, $\bar v_2 = 4 + 2c$ and $\bar v_1 = 2 + 0.5c$. The
+last two are the components of $\nabla f(2, 0.5)$ found by two
+forward passes in @exm-fwd-pass; the sweep found both at once.
+
+```{python}
+#| include: false
+c1 = math.cos(1)
+v = {1: 2.0, 2: 0.5}
+v[3] = v[1]**2
+v[4] = v[3] * v[2]
+v[5] = v[1] * v[2]
+v[6] = math.sin(v[5])
+v[7] = v[4] + v[6]
+acc = {k: 0.0 for k in v}
+acc[7] = 1.0
+sweep = {7: [(4, 1.0), (6, 1.0)], 6: [(5, math.cos(v[5]))], 5: [(1, v[2]), (2, v[1])],
+         4: [(3, v[2]), (2, v[3])], 3: [(1, 2 * v[1])]}
+for k in (7, 6, 5, 4, 3):
+    for j, dd in sweep[k]:
+        acc[j] += acc[k] * dd
+close([acc[k] for k in range(1, 8)], [2 + 0.5 * c1, 4 + 2 * c1, 0.5, 1, c1, 1, 1], "adjoints", tol=1e-14)
+xs4, ys4 = sp.symbols("x y", real=True)
+fx4 = xs4**2 * ys4 + sp.sin(xs4 * ys4)
+close([acc[1], acc[2]], [float(sp.diff(fx4, s).subs({xs4: 2, ys4: 0.5})) for s in (xs4, ys4)],
+      "adjoints of inputs are the gradient")
+```
+
+**@exr-ch4-overwrite.** (a) The node `y` has `parents = (x, x)` and
+`local = (x.data, x.data)`. After `y.grad = 1`, the loop over the
+parents of `y` runs twice, and each time adds `1 * x.data` to
+`x.grad`, which started at $0$. So `x.grad` is $2x$.
+
+(b) With `=`, each pass of the loop sets `x.grad` to $x$, so the
+result is $x$, half the true derivative. In @exm-ab-plus-a, the node
+$a$ receives two contributions, $1$ from $L = v_3 + a$ and $3$ from
+$v_3 = ab$. The sweep processes $L$ before $v_3$, so with `=` the
+second assignment wins and $\partial L/\partial a$ comes out as $3$
+instead of $4$.
+
+```{python}
+#| include: false
+xv4 = Value4(3.0)
+y4 = xv4 * xv4
+backward4(y4)
+check(y4.parents == (xv4, xv4) and xv4.grad == 6.0, "x * x gives 2x")
+
+
+def backward_overwrite(root):
+    order = topo4(root)
+    for node in order:
+        node.grad = 0.0
+    root.grad = 1.0
+    for node in reversed(order):
+        for parent, dd in zip(node.parents, node.local):
+            parent.grad = node.grad * dd
+
+
+xv4 = Value4(3.0)
+backward_overwrite(xv4 * xv4)
+check(xv4.grad == 3.0, "overwriting gives x")
+a4, b4 = Value4(2.0), Value4(3.0)
+backward_overwrite(a4 * b4 + a4)
+check(a4.grad == 3.0, "overwriting gives 3 for ab + a")
+```
+
+**@exr-ch4-dfs.** The parents are $(v_1)$ for $v_3$, $(v_3, v_2)$
+for $v_4$, $(v_1, v_2)$ for $v_5$, $(v_5)$ for $v_6$ and $(v_4, v_6)$
+for $v_7$. The visit to $v_7$ visits $v_4$, which visits $v_3$, which
+visits $v_1$: the list becomes $v_1, v_3$. The visit to $v_4$ then
+visits $v_2$ and finishes: $v_1, v_3, v_2, v_4$. The visit to $v_7$
+then visits $v_6$, which visits $v_5$, whose parents are both marked,
+so $v_5$, $v_6$ and finally $v_7$ are appended. The result is
+$$
+v_1,\ v_3,\ v_2,\ v_4,\ v_5,\ v_6,\ v_7 .
+$$
+Every edge, $1\to3$, $1\to5$, $2\to4$, $2\to5$, $3\to4$, $5\to6$,
+$4\to7$ and $6\to7$, goes from an earlier to a later entry, so this is
+a topological order. It does not put the inputs first, and the sweep
+does not need it to.
+
+```{python}
+#| include: false
+def sin4(self):
+    return Value4(math.sin(self.data), (self,), (math.cos(self.data),))
+
+
+n1, n2 = Value4(2.0), Value4(0.5)
+n3 = n1 ** 2
+n4 = n3 * n2
+n5 = n1 * n2
+n6 = sin4(n5)
+n7 = n4 + n6
+order4 = topo4(n7)
+check([id(nd) for nd in order4] == [id(nd) for nd in (n1, n3, n2, n4, n5, n6, n7)], "DFS order")
+check(all(order4.index(p) < order4.index(nd) for nd in order4 for p in nd.parents), "topological")
+backward4(n7)
+close([n1.grad, n2.grad], [2 + 0.5 * c1, 4 + 2 * c1], "engine with sin", tol=1e-14)
+```
+
+**@exr-ch4-vjp.** The Jacobian and the product are
+$$
+J_f(x, y) = \begin{pmatrix} y & x\\ 1 & 1\\ 2x & 0\end{pmatrix},
+\qquad
+J_f(1, 2) = \begin{pmatrix} 2 & 1\\ 1 & 1\\ 2 & 0\end{pmatrix},
+\qquad
+\mathbf{w}^\top J_f(1, 2) = (2 - 1 + 4,\; 1 - 1 + 0) = (5, 0).
+$$
+For the sweep, take the trace $v_1 = x$, $v_2 = y$, $v_3 = v_1v_2$,
+$v_4 = v_1 + v_2$, $v_5 = v_1^2$, with outputs $v_3, v_4, v_5$, and
+start the accumulators of the outputs at $1, -1, 2$. Line $5$ adds
+$2\cdot 2v_1 = 4$ to $\bar v_1$. Line $4$ adds $-1$ to $\bar v_1$ and
+to $\bar v_2$. Line $3$ adds $1\cdot v_2 = 2$ to $\bar v_1$ and
+$1\cdot v_1 = 1$ to $\bar v_2$. So $\bar v_1 = 4 - 1 + 2 = 5$ and
+$\bar v_2 = -1 + 1 = 0$, as @thm-rev-vjp says.
+
+```{python}
+#| include: false
+Fv = sp.Matrix([xs4 * ys4, xs4 + ys4, xs4**2])
+Jv = Fv.jacobian([xs4, ys4])
+check(Jv.subs({xs4: 1, ys4: 2}) == sp.Matrix([[2, 1], [1, 1], [2, 0]]), "J_f(1, 2)")
+check(sp.Matrix([[1, -1, 2]]) * Jv.subs({xs4: 1, ys4: 2}) == sp.Matrix([[5, 0]]), "w^T J = (5, 0)")
+u1, u2 = Value4(1.0), Value4(2.0)
+backward4(u1 * u2 * 1.0 + (u1 + u2) * -1.0 + u1 ** 2 * 2.0)
+check((u1.grad, u2.grad) == (5.0, 0.0), "sweep on w . f")
+```
+
+**@exr-ch4-matrix-chain.** $J_1$ is $p\times n$, $J_2$ is $p\times p$
+and $J_3$ is $1\times p$. Forming $J_2J_1$ takes $p\cdot p\cdot n$
+multiplications and then $J_3(J_2J_1)$ takes $1\cdot p\cdot n$, so
+$J_3(J_2J_1)$ costs $p^2n + pn$. Forming $J_3J_2$ takes $p^2$ and then
+$(J_3J_2)J_1$ takes $pn$, so $(J_3J_2)J_1$ costs $p^2 + pn$. For
+$n = p = 1000$ these are $1.001\times10^9$ and $2\times10^6$, a factor
+of about $500$. The order $J_3(J_2J_1)$ starts at the inputs and pushes
+the $n$ columns of $J_1$ through the later Jacobians, as $n$ forward
+passes do. The order $(J_3J_2)J_1$ starts at the output and pulls the
+single row $J_3$ back through the earlier Jacobians, as one reverse
+sweep does.
+
+```{python}
+#| include: false
+nn = pp = 1000
+check(pp * pp * nn + pp * nn == 1_001_000_000 and pp * pp + pp * nn == 2_000_000, "multiplication counts")
+check(round((pp * pp * nn + pp * nn) / (pp * pp + pp * nn)) == 500, "factor about 500")
+```
+
+**@exr-ch4-product.** (a) Write $\bar p_k$ for the adjoint of $p_k$
+and $\bar x_k$ for that of $x_k$. The sweep starts with $\bar p_n = 1$
+and processes $p_k = p_{k-1}x_k$ for $k = n, \dots, 3$ by
+$$
+\bar p_{k-1} \mathrel{+}= \bar p_k\,x_k, \qquad \bar x_k \mathrel{+}= \bar p_k\,p_{k-1},
+$$
+and finally $p_2 = x_1x_2$ by $\bar x_1 \mathrel{+}= \bar p_2 x_2$,
+$\bar x_2 \mathrel{+}= \bar p_2 x_1$. Each of the $n - 1$ lines costs
+two multiplications, $2(n-1)$ in all. By induction downwards,
+$\bar p_k = x_{k+1}\cdots x_n$, so $\bar x_k = p_{k-1}\,x_{k+1}\cdots
+x_n = \prod_{j\ne k}x_j$ for $k \ge 3$, and similarly for $x_1$, $x_2$.
+
+(b) Each partial derivative is a product of $n - 1$ numbers, which
+takes $n - 2$ multiplications, so $n(n-2)$ in all. Forward mode runs
+$n$ passes. Each pass has $n - 1$ value lines with one multiplication
+each and $n - 1$ tangent lines $\dot p_k = \dot p_{k-1}x_k +
+p_{k-1}\dot x_k$ with two each, so $3n(n-1)$ multiplications in all.
+Both grow like $n^2$, against $3(n - 1)$ for one evaluation and one
+sweep.
+
+```{python}
+#| include: false
+for n_ in (2, 5, 20):
+    xsv = [Value4(1.0 + 0.1 * i) for i in range(n_)]
+    pv = xsv[0] * xsv[1]
+    for xk in xsv[2:]:
+        pv = pv * xk
+    order_p = topo4(pv)
+    mults = sum(len(nd.parents) for nd in order_p if nd.parents)
+    check(mults == 2 * (n_ - 1), "2(n - 1) multiply-adds in the sweep")
+    backward4(pv)
+    vals_ = [1.0 + 0.1 * i for i in range(n_)]
+    close([xk.grad for xk in xsv], [math.prod(vals_[:i] + vals_[i + 1:]) for i in range(n_)],
+          "gradient of a product")
+```
+
+**@exr-ch4-paths.** (a) A path from $x$ to $L$ visits exactly one of
+$u_i$, $w_i$ for each $i = 0, \dots, k$, since every edge goes from
+layer $i - 1$ to layer $i$ (with $x$ before layer $0$ and $L$ after
+layer $k$), and both nodes of each layer are joined to both nodes of
+the next. Each of the $2^{k+1}$ choices of one node per layer is a
+path, so there are $2^{k+1}$ paths.
+
+(b) The sweep does one multiply-add for each edge. There are $2$ edges
+from $x$, $4$ into each of the layers $1, \dots, k$, and $2$ into $L$,
+so $4k + 4$ in all.
+
+```{python}
+#| include: false
+def ladder(xv, k):
+    u, w_ = 2 * xv, 3 * xv
+    for _ in range(k):
+        u, w_ = u * w_, u + w_
+    return u + w_
+
+
+def count_paths(node, target, memo=None):
+    memo = {} if memo is None else memo
+    if node is target:
+        return 1
+    if id(node) not in memo:
+        memo[id(node)] = sum(count_paths(p, target, memo) for p in node.parents)
+    return memo[id(node)]
+
+
+for k in (1, 3, 6):
+    xv = Value4(0.7)
+    Lk = ladder(xv, k)
+    nodes_k = topo4(Lk)
+    # Paths from x to L, counted from L backwards (multiplicity of repeated parents included).
+    check(count_paths(Lk, xv) == 2**(k + 1), f"2^(k+1) paths for k = {k}")
+    # Constants such as the 2 in 2 * x are parentless nodes of their own; skip their edges.
+    edges_k = sum(1 for nd in nodes_k for p in nd.parents if p.parents or p is xv)
+    check(edges_k == 4 * k + 4, f"4k + 4 edges for k = {k}")
+xsym = sp.symbols("x", real=True)
+Lsym = ladder(xsym, 3)
+xv = Value4(0.7)
+Lv = ladder(xv, 3)
+backward4(Lv)
+close(xv.grad, float(sp.diff(Lsym, xsym).subs(xsym, 0.7)), "ladder gradient", tol=1e-12)
+```
+
+**@exr-ch4-checkpoint.** (a) $T/K + K \ge 2\sqrt T = 200$, with
+equality at $K = \sqrt T = 100$: $100$ checkpoints and $100$ states of
+one segment, $200$ states in all, against $10\,000$ without
+checkpointing.
+
+(b) The forward pass stores $T/K_1$ checkpoints. In the sweep, each
+segment of length $K_1$ is recomputed once from its checkpoint,
+keeping every $K_2$th state, $K_1/K_2$ of them. Each sub-segment of
+length $K_2$ is then recomputed from its stored state, and its $K_2$
+states are kept only while the sweep passes through it. At most
+$T/K_1 + K_1/K_2 + K_2$ states are stored at once. Every step is
+recomputed at most once as part of a segment and at most once as part
+of a sub-segment, so the extra work is at most two forward passes.
+With $K_1 = T^{2/3}$ and $K_2 = T^{1/3}$ each of the three terms is
+$T^{1/3}$, giving $3T^{1/3}$ states: $300$ for $T = 10^6$ instead of
+the $2000$ of one level.
+
+```{python}
+#| include: false
+check(min(range(1, 10001), key=lambda K: 10000 / K + K) == 100 and 10000 / 100 + 100 == 200,
+      "best K for T = 10000")
+Tm = 10**6
+K1, K2 = round(Tm ** (2 / 3)), round(Tm ** (1 / 3))
+check((K1, K2) == (10000, 100) and Tm // K1 + K1 // K2 + K2 == 300, "two-level checkpointing: 300 states")
+
+
+def two_level(T, K1, K2):
+    """Peak states stored and steps recomputed by two-level checkpointing."""
+    top = list(range(0, T, K1))
+    peak, recompute = len(top), 0
+    for s1 in reversed(top):
+        e1 = min(s1 + K1, T)
+        recompute += e1 - s1 - 1
+        mids = list(range(s1, e1, K2))
+        for s2 in reversed(mids):
+            e2 = min(s2 + K2, e1)
+            recompute += e2 - s2 - 1
+            peak = max(peak, len(top) + len(mids) + (e2 - s2))
+    return peak, recompute
+
+
+for T, a1, a2 in ((1000, 100, 10), (4096, 256, 16), (10**4, 400, 20)):
+    pk, rc = two_level(T, a1, a2)
+    check(pk <= math.ceil(T / a1) + math.ceil(a1 / a2) + a2 and rc <= 2 * T, f"two-level bounds T = {T}")
+```
+
+**@exr-ch4-tanh.** Write $p = e^t + e^{-t}$ and $q = e^t - e^{-t}$, so
+$p' = q$, $q' = p$ and $\tanh t = q/p$. By the quotient rule,
+$$
+\frac{d}{dt}\tanh t = \frac{q'p - qp'}{p^2} = \frac{p^2 - q^2}{p^2}
+= 1 - \tanh^2 t .
+$$
+The operation computes $\tanh$ once and reuses it for the local
+derivative:
+
+```python
+def tanh(self):
+    t = math.tanh(self.data)
+    return Value(t, (self,), (1 - t * t,))
+
+Value.tanh = tanh
+```
+
+For $L = \tanh(xy)$ at $(0.5, -1)$, with $s = \tanh(-0.5)$, the
+engine returns $\partial L/\partial x = (1 - s^2)\,y \approx -0.786448$
+and $\partial L/\partial y = (1 - s^2)\,x \approx 0.393224$.
+
+```{python}
+#| include: false
+def tanh4(self):
+    t = math.tanh(self.data)
+    return Value4(t, (self,), (1 - t * t,))
+
+
+Value4.tanh = tanh4
+xt, yt = Value4(0.5), Value4(-1.0)
+backward4((xt * yt).tanh())
+close([xt.grad, yt.grad], [-0.786448, 0.393224], "tanh gradient", tol=1e-6)
+tsym = sp.symbols("t", real=True)
+sym_equal(sp.diff((sp.exp(tsym) - sp.exp(-tsym)) / (sp.exp(tsym) + sp.exp(-tsym)), tsym),
+          1 - sp.tanh(tsym)**2, "tanh' = 1 - tanh^2")
+maxima_zero("diff((exp(t)-exp(-t))/(exp(t)+exp(-t)), t) - (1 - ((exp(t)-exp(-t))/(exp(t)+exp(-t)))^2)",
+            "tanh derivative in Maxima")
+close([xt.grad, yt.grad], num_grad(lambda u: math.tanh(u[0] * u[1]), [0.5, -1.0]), "tanh finite differences",
+      tol=1e-8)
+```

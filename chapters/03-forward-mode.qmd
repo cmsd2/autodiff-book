@@ -1,12 +1,1095 @@
 # Computational graphs and forward mode {#sec-forward-mode}
 
-::: {.callout-note}
-## Not yet written
+A computer evaluates a formula one elementary operation at a time, an
+addition or an exponential, say. Each of these operations has a
+derivative that we know in closed form, and @sec-chain-rule showed
+how to combine them: by @thm-chain-rule-paths, a partial derivative
+of the whole computation is a sum, over paths through the
+intermediate variables, of products of local partial derivatives.
+Automatic differentiation is the bookkeeping that does this combining,
+inside the computer, while it evaluates the formula. It gives
+derivatives that are exact apart from rounding, at a cost proportional
+to the cost of evaluating the function.
 
-This chapter will cover:
+This chapter writes a function as a list of elementary steps, an
+evaluation trace, and as the directed graph that the list describes.
+It then carries a derivative along with each value through the list.
+That is *forward mode*, and dual numbers, an extension of the real
+numbers by a new element $\varepsilon$ with $\varepsilon^2 = 0$, give
+it an algebraic form. Forward mode computes one directional
+derivative per pass, so a gradient with respect to $n$ inputs costs
+$n$ passes. @sec-reverse-mode removes that factor of $n$.
 
-- expressions as directed acyclic graphs, and evaluation traces
-- dual numbers and the algebra behind forward mode
-- Jacobian–vector products and their cost
-- comparison with symbolic differentiation and finite differences
+```{python}
+#| include: false
+import math
+
+import matplotlib.pyplot as plt
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+from checks.ch03 import tree_diff, tree_leaves
+```
+
+## Evaluation traces {#sec-fwd-traces}
+
+How does a computer evaluate $f(x, y) = x^2y + \sin(xy)$, the function
+of @exm-partials? It cannot work with the formula as a whole. It
+computes one operation at a time and gives each result a name, so
+that later operations can refer to it. At $(x, y) = (2, 0.5)$ the
+steps are those of @tbl-fwd-trace.
+
+| variable | operation | value |
+|---|---|---|
+| $v_1$ | $x$ | $2$ |
+| $v_2$ | $y$ | $0.5$ |
+| $v_3$ | $v_1^2$ | $4$ |
+| $v_4$ | $v_3 v_2$ | $2$ |
+| $v_5$ | $v_1 v_2$ | $1$ |
+| $v_6$ | $\sin v_5$ | $0.841471$ |
+| $v_7$ | $v_4 + v_6$ | $2.841471$ |
+
+: Evaluating $x^2y + \sin(xy)$ at $(2, 0.5)$ one operation at a time,
+with values rounded to six decimal places. {#tbl-fwd-trace}
+
+So $f(2, 0.5) = 2 + \sin 1 \approx 2.841471$. Each row applies one
+operation to variables computed in earlier rows. The variable $v_1$ is
+an argument of two later rows, $v_3$ and $v_5$, and so is $v_2$: the
+table computes $v_1$ once and reuses it, where the formula mentions
+$x$ twice.
+
+```{python}
+#| include: false
+# The trace of tbl-fwd-trace, line by line, against the formula.
+x, y = sp.symbols("x y", real=True)
+f_ex = x**2 * y + sp.sin(x * y)
+pt = {x: 2, y: sp.Rational(1, 2)}
+tr = {1: x, 2: y}
+tr[3] = tr[1] ** 2
+tr[4] = tr[3] * tr[2]
+tr[5] = tr[1] * tr[2]
+tr[6] = sp.sin(tr[5])
+tr[7] = tr[4] + tr[6]
+sym_equal(tr[7], f_ex, "trace computes x^2 y + sin(xy)")
+vals = {k: e.subs(pt) for k, e in tr.items()}
+check([vals[k] for k in (1, 2, 3, 4, 5)] == [2, sp.Rational(1, 2), 4, 2, 1], "exact values v1..v5")
+close([float(vals[6]), float(vals[7])], [0.841471, 2.841471], "values v6, v7", tol=1e-6)
+sym_equal(vals[7], 2 + sp.sin(1), "f(2, 0.5) = 2 + sin 1")
+```
+
+The operations in such a list come from a short repertoire. The
+*elementary operations* of this book are addition, subtraction,
+multiplication and division of two numbers; adding a constant or
+multiplying by a constant; powers $t \mapsto t^c$ with a constant
+exponent; and $\exp$, $\log$, $\sin$ and $\cos$. Each is a function of
+one or two variables with continuous partial derivatives on an open
+domain (division needs a non-zero denominator, and $\log t$ and
+non-integer powers $t^c$ need $t > 0$). So by
+@thm-continuous-partials each is differentiable at every point of its
+domain, with partial derivatives we can write down. The function
+$\max(t, 0)$, which has a corner at $0$, waits until @sec-networks.
+
+A list like @tbl-fwd-trace is a system of intermediate variables in
+the sense of @def-intermediate-variables, in which every step is an
+elementary operation.
+
+::: {#def-evaluation-trace}
+## Evaluation trace
+
+An *evaluation trace* with inputs $x_1, \dots, x_n$ is a system of
+intermediate variables $v_1, \dots, v_N$ (@def-intermediate-variables)
+with inputs $v_j = x_j$ for $j \le n$, in which each step
+$$
+v_k = \varphi_k\bigl((v_i)_{i\in P(k)}\bigr) \qquad (k = n+1, \dots, N)
+$$
+applies an elementary operation $\varphi_k$, together with a choice of
+$m$ of the variables as *outputs* $y_1, \dots, y_m$. We call step
+$k$ *line* $k$ of the trace, and the variables $v_i$ with
+$i \in P(k)$ its *arguments*. The trace is *defined* at
+$\mathbf{a} \in \mathbb{R}^n$ if, with $\mathbf{x} = \mathbf{a}$,
+every line applies its operation at a point of the operation's
+domain. On the set $D$ of such $\mathbf{a}$, the trace *computes* the
+function $f\colon D \to \mathbb{R}^m$ that sends $\mathbf{a}$ to the
+values of the outputs.
+:::
+
+The condition $P(k) \subseteq \{1, \dots, k-1\}$ of
+@def-intermediate-variables says that a line uses only variables
+already computed. Constants live inside the operations: $4t$ and
+$1 - t$ are operations of one variable. In @tbl-fwd-trace, $n = 2$,
+$N = 7$, the output is $v_7$, and the parent sets are $P(3) = \{1\}$,
+$P(4) = \{2, 3\}$, $P(5) = \{1, 2\}$, $P(6) = \{5\}$ and
+$P(7) = \{4, 6\}$. Each line names one operation and at most two
+earlier variables, so a trace is a program in *three-address form*:
+every instruction has at most two operands and one result. A trace is
+also called a *Wengert list*, after the program of
+@wengert1964simple that evaluated derivatives this way.
+
+As in @def-intermediate-variables, draw an arrow $i \to k$ whenever
+$v_i$ is an argument of line $k$. @fig-fwd-trace-graph shows the
+result for @tbl-fwd-trace.
+
+```{python}
+#| label: fig-fwd-trace-graph
+#| fig-cap: "The computational graph of the trace in @tbl-fwd-trace. Each arrow runs from an argument to the line that uses it."
+#| fig-width: 6.5
+#| fig-height: 2.4
+pos = {1: (0, 1.6), 2: (0, 0), 3: (1.3, 2.1), 5: (1.3, 0.55), 4: (2.6, 1.6), 6: (2.6, 0), 7: (3.9, 0.8)}
+labels = {1: r"$v_1 = x$", 2: r"$v_2 = y$", 3: r"$v_3 = v_1^2$", 4: r"$v_4 = v_3v_2$",
+          5: r"$v_5 = v_1v_2$", 6: r"$v_6 = \sin v_5$", 7: r"$v_7 = v_4 + v_6$"}
+edges = [(1, 3), (1, 5), (2, 4), (2, 5), (3, 4), (5, 6), (4, 7), (6, 7)]
+fig, ax = plt.subplots()
+for j, k in edges:
+    ax.annotate("", xy=pos[k], xytext=pos[j],
+                arrowprops=dict(arrowstyle="-|>", color="0.35", shrinkA=20, shrinkB=20, lw=1))
+for k, (px, py) in pos.items():
+    ax.text(px, py, labels[k], ha="center", va="center", fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.2"))
+ax.set_xlim(-0.6, 4.5)
+ax.set_ylim(-0.4, 2.5)
+ax.axis("off")
+plt.show()
+```
+
+```{python}
+#| include: false
+# The drawn edges are exactly the pairs (i, k) with i in P(k).
+P = {3: {1}, 4: {2, 3}, 5: {1, 2}, 6: {5}, 7: {4, 6}}
+check(sorted(edges) == sorted((i, k) for k, ps in P.items() for i in ps), "figure edges match P(k)")
+```
+
+A program that builds expressions as it runs does not number its
+variables. What it has is the picture: nodes joined by
+arrows, with an operation at each node. The next definition describes such
+pictures without reference to a numbering.
+
+::: {#def-computational-graph}
+## Directed acyclic graph, computational graph
+
+A *directed graph* is a finite set of *nodes* together with a set of
+*edges*, each an ordered pair $(i, k)$ of distinct nodes, drawn as an
+arrow $i \to k$. Then $i$ is a *parent* of $k$, and $k$ a *child* of
+$i$. A *path* from $j$ to $k$ is a sequence of edges
+$j = i_0 \to i_1 \to \dots \to i_r = k$ with $r \ge 0$, where $r = 0$
+gives the *empty path* from $k$ to itself, as in
+@def-intermediate-variables. A *cycle* is a path with $r \ge 1$ from a
+node to itself. A graph with no cycle is *acyclic*, and a *directed
+acyclic graph* is a DAG for short.
+
+A *computational graph* with inputs $x_1, \dots, x_n$ is a DAG in
+which $n$ nodes, labelled $x_1, \dots, x_n$, have no parents, every
+other node $k$ is labelled with an elementary operation $\varphi_k$ of
+the values at its parents, and some nodes are marked as outputs.
+:::
+
+The graph of a trace is a computational graph: an edge $i \to k$
+needs $i < k$, so the numbers strictly increase along every non-empty
+path, and no such path returns to its start.
+
+## Topological orders {#sec-fwd-topological}
+
+Going the other way, from a computational graph to a trace, means
+numbering the nodes so that every node comes after its parents. The
+graph of @fig-fwd-trace-graph allows several such numberings. Its
+nodes could be computed in the order $v_1, v_2, v_5, v_3, v_6, v_4,
+v_7$, for example, since $v_5$ needs only the inputs and $v_6$ needs
+only $v_5$. The order $v_1, v_2, v_4, v_3, \dots$ fails, because $v_4$
+uses $v_3$, which would not yet exist.
+
+::: {#def-topological-order}
+## Topological order
+
+A *topological order* of a directed graph with $N$ nodes is a
+numbering of the nodes by $1, \dots, N$ such that $i < k$ for every
+edge $i \to k$.
+:::
+
+A graph with a cycle $k_0 \to k_1 \to \dots \to k_r = k_0$ has no
+topological order, since the numbers would satisfy
+$k_0 < k_1 < \dots < k_r = k_0$. The converse is the main result of
+this section. Its proof needs one fact about DAGs.
+
+::: {#lem-dag-source}
+Every DAG with at least one node has a node with no parents.
+:::
+
+::: {.proof}
+Suppose that every node has a parent, and let the graph have $N$
+nodes. Start at any node $u_0$, let $u_1$ be a parent of $u_0$, $u_2$ a
+parent of $u_1$, and so on, up to $u_N$. These are $N + 1$ nodes from
+a set of $N$, so by the pigeonhole principle $u_i = u_j$ for some
+$i < j$. Then $u_j \to u_{j-1} \to \dots \to u_i = u_j$ is a cycle,
+which is impossible.
+:::
+
+::: {#thm-topological-order}
+## Topological orders exist
+
+Every DAG has a topological order. If some of its nodes have no
+parents, there is a topological order in which those nodes come
+first.
+:::
+
+::: {.proof}
+By induction on the number of nodes $N$. A graph with one node has no
+edges, and numbering the node $1$ is a topological order.
+
+Let $N \ge 2$ and suppose the result for graphs with $N - 1$ nodes.
+Let $S$ be the set of nodes without parents, which is not empty by
+@lem-dag-source, and choose $s$ in $S$. Remove $s$ and its edges. The
+remaining graph has $N-1$ nodes and no cycle, since a cycle in it
+would be a cycle in the whole graph, and the nodes of $S$ other than
+$s$ still have no parents in it. By the induction hypothesis it has a
+topological order with those nodes first. Number $s$ as $1$ and add
+$1$ to every other number. An edge either leaves $s$, and then goes
+from $1$ to a larger number, or joins two remaining nodes, and then
+goes forward because the order of the remaining graph is topological.
+The nodes of $S$ receive the numbers $1, \dots, |S|$.
+:::
+
+The proof is an algorithm: repeatedly remove a node with no parents
+and give it the next number. @kahn1962topological described this
+method of *topological sorting*. @sec-reverse-mode gives a second
+algorithm, based on depth-first search. The file
+`lean/AutodiffBook/Ch03.lean` checks the theorem by machine.
+
+A topological order that numbers the inputs first turns a
+computational graph into an evaluation trace: line $k$ applies
+$\varphi_k$ to the values at the parents of node $k$, and those
+parents have smaller numbers. The graph of @fig-fwd-trace-graph has
+$12$ topological orders that number the inputs first
+(@exr-ch3-orders counts them). The value at each node does not depend
+on which one we use.
+
+::: {#cor-trace-evaluation}
+## Evaluation is well defined
+
+Let a computational graph be numbered by two topological orders, each
+with the inputs first, and evaluate the two resulting traces at the
+same input $\mathbf{a}$. Every node receives the same value in both,
+and one trace is defined at $\mathbf{a}$ exactly when the other is.
+:::
+
+::: {.proof}
+List the nodes in the first order and use strong induction along
+this list. An input node gets its component of $\mathbf{a}$ in both
+traces. An operation node $k$ gets $\varphi_k$ applied to the values
+at its parents in both traces. Its parents come before $k$ in the
+first order, so by the induction hypothesis their values agree, and
+so does the value at $k$, or the fact that it is undefined.
+:::
+
+```{python}
+#| include: false
+# Topological orders of the graph in fig-fwd-trace-graph: brute force over all
+# orderings. 12 have the inputs first; 1,2,5,3,6,4,7 is one of them and
+# 1,2,4,3,... is not; all give the same value.
+from itertools import permutations
+
+topo = [p for p in permutations(range(1, 8))
+        if all(p.index(i) < p.index(k) for i, k in edges)]
+inputs_first = [p for p in topo if set(p[:2]) == {1, 2}]
+check(len(inputs_first) == 12, f"12 topological orders with inputs first, got {len(inputs_first)}")
+check((1, 2, 5, 3, 6, 4, 7) in inputs_first, "example order")
+check(not any(p[:3] == (1, 2, 4) for p in topo), "v4 cannot come before v3")
+ops = {3: lambda a: a[1]**2, 4: lambda a: a[3] * a[2], 5: lambda a: a[1] * a[2],
+       6: lambda a: math.sin(a[5]), 7: lambda a: a[4] + a[6]}
+for p in topo:
+    val = {1: 2.0, 2: 0.5}
+    for k in p:
+        if k in ops:
+            val[k] = ops[k](val)
+    close(val[7], 2 + math.sin(1), "same value in every topological order")
+```
+
+From now on, a function is given by a trace $v_1, \dots, v_N$ in a
+topological order, with inputs $v_1, \dots, v_n$.
+
+## Forward mode {#sec-fwd-tangents}
+
+In @tbl-fwd-trace, give $x$ an increment $h$ and hold $y$ fixed. Every
+variable that depends on $x$ changes, and for small $h$ each changes
+by about a fixed multiple of $h$, its rate of change. These rates can
+be found line by line, in the same order as the values, using the
+partial derivatives of each operation.
+
+- $v_1 = x$ changes at rate $1$, and $v_2 = y$ at rate $0$.
+- $v_3 = v_1^2$ has derivative $2v_1 = 4$ with respect to $v_1$, so
+  it changes at rate $4 \cdot 1 = 4$.
+- $v_4 = v_3v_2$ changes at rate $v_2 \cdot 4 + v_3 \cdot 0 = 2$, by
+  the product rule (@thm-product-rule).
+- $v_5 = v_1v_2$ changes at rate $v_2\cdot 1 + v_1 \cdot 0 = 0.5$.
+- $v_6 = \sin v_5$ changes at rate $\cos(v_5)\cdot 0.5 = 0.5\cos 1$.
+- $v_7 = v_4 + v_6$ changes at rate $2 + 0.5\cos 1 \approx 2.270151$.
+
+The formula of @exm-partials gives $\partial f/\partial x = 2xy +
+y\cos(xy)$, which at $(2, 0.5)$ is $2 + 0.5\cos 1$, the rate found in
+the last line. Each rate was the sum, over the arguments of the line,
+of the rate of the argument times the local partial derivative of the
+operation. That recipe is forward mode.
+
+For each $k$ and each $\mathbf{x}$ in the set $D$ where the trace is
+defined, write $F_k(\mathbf{x})$ for the value of $v_k$, as in
+@def-intermediate-variables. So $F_j(\mathbf{x}) = x_j$ for $j \le n$,
+and the outputs are the components of $f$. As in
+@thm-chain-rule-paths, write $d_{ki} = \partial\varphi_k/\partial v_i$
+for the *local partial derivative* of line $k$ with respect to its
+argument $v_i$, evaluated at the values of the arguments of line $k$.
+
+::: {#def-fwd-tangent}
+## Seed and tangents
+
+Let a trace be defined at $\mathbf{a}$, and let $\mathbf{u} \in
+\mathbb{R}^n$, called the *seed*. The *tangents*
+$\dot v_1, \dots, \dot v_N$ are the numbers given by $\dot v_j = u_j$
+for $j \le n$ and
+$$
+\dot v_k = \sum_{i \in P(k)} d_{ki}\,\dot v_i
+\qquad (k = n+1, \dots, N),
+$$ {#eq-fwd-tangent}
+with the local partial derivatives evaluated at $\mathbf{x} =
+\mathbf{a}$. The *forward pass* computes each value $v_k$ and then its
+tangent $\dot v_k$, for $k = 1, \dots, N$.
+:::
+
+In words, @eq-fwd-tangent says that the tangent of a line is the sum,
+over its arguments, of the argument's tangent times the local partial
+derivative. For an operation of one variable it is the one-variable
+chain rule: if $v_k = \sin v_i$ then $\dot v_k = \cos(v_i)\,\dot v_i$.
+For a product $v_k = v_iv_l$ it is the product rule,
+$\dot v_k = v_l\dot v_i + v_i\dot v_l$. In the example above the seed
+was $\mathbf{u} = \mathbf{e}_1$, and $\dot v_k$ was the rate of change
+of $v_k$.
+
+@thm-chain-rule-paths assumes that the inputs range over an open set
+on which every line is defined. The set $D$ is such a set.
+
+::: {#lem-trace-open}
+The set $D$ on which a trace is defined is open, and each $F_k$ is
+continuous on $D$.
+:::
+
+::: {.proof}
+Let $D_k$ be the set of $\mathbf{x}$ at which lines $1, \dots, k$ are
+defined, so $D_n = \mathbb{R}^n$ and $D_N = D$. We show by induction on
+$k$ that $D_k$ is open and $F_1, \dots, F_k$ are continuous on it. The
+case $k = n$ holds because each coordinate function is continuous.
+For $k > n$, let $G(\mathbf{x}) = (F_i(\mathbf{x}))_{i \in P(k)}$ and
+let $U_k$ be the open domain of $\varphi_k$. Then $D_k$ is the set of
+$\mathbf{x}$ in $D_{k-1}$ with $G(\mathbf{x}) \in U_k$. Take such an
+$\mathbf{x}$. There is a disc of radius $\rho > 0$ around
+$G(\mathbf{x})$ inside $U_k$, and since $G$ is continuous at
+$\mathbf{x}$ there is a $\delta > 0$ such that every $\mathbf{x}'$ in
+$D_{k-1}$ within $\delta$ of $\mathbf{x}$ has $G(\mathbf{x}')$ within
+$\rho$ of $G(\mathbf{x})$. Shrinking $\delta$ so that the disc of
+radius $\delta$ around $\mathbf{x}$ lies in the open set $D_{k-1}$,
+that whole disc lies in $D_k$. So $D_k$ is open, and
+$F_k = \varphi_k \circ G$ is continuous on it as a composition of
+continuous functions.
+:::
+
+::: {#thm-forward-mode}
+## Forward mode computes Jacobian–vector products
+
+Let an evaluation trace with inputs $x_1, \dots, x_n$ compute
+$f\colon D \to \mathbb{R}^m$, let $\mathbf{a} \in D$, and let
+$\mathbf{u} \in \mathbb{R}^n$. Then every $F_k$ is differentiable at
+$\mathbf{a}$, and the tangents of @def-fwd-tangent with seed
+$\mathbf{u}$ satisfy
+$$
+\dot v_k = \nabla F_k(\mathbf{a}) \cdot \mathbf{u}
+\qquad (k = 1, \dots, N).
+$$
+In particular $f$ is differentiable at $\mathbf{a}$, and the tangents
+of the outputs $y_1, \dots, y_m$ are the components of the
+*Jacobian–vector product* $J_f(\mathbf{a})\,\mathbf{u}$.
+:::
+
+::: {.proof}
+By @lem-trace-open the inputs range over an open set on which every
+line is defined, and every elementary operation is differentiable on
+its domain. So @thm-chain-rule-paths applies: every $F_k$ is
+differentiable at $\mathbf{a}$, and $\partial F_k/\partial
+x_j(\mathbf{a})$ is the sum over paths from $j$ to $k$ of the
+products of local partial derivatives. For $k > n$, every path from
+an input $j$ to $k$ is non-empty, and grouping the paths by their last
+arrow $i \to k$ gives
+$$
+\frac{\partial F_k}{\partial x_j}(\mathbf{a})
+= \sum_{i\in P(k)} d_{ki}\,\frac{\partial F_i}{\partial x_j}(\mathbf{a}) ,
+$$
+which is @eq-paths-step. Multiplying by $u_j$ and adding over $j$,
+$$
+\nabla F_k(\mathbf{a})\cdot\mathbf{u}
+= \sum_{i\in P(k)} d_{ki}\,\nabla F_i(\mathbf{a})\cdot\mathbf{u} .
+$$
+So the numbers $\nabla F_k(\mathbf{a})\cdot\mathbf{u}$ satisfy the
+recurrence @eq-fwd-tangent. They also agree with the tangents on the
+inputs, since $\nabla F_j(\mathbf{a}) = \mathbf{e}_j$ and
+$\mathbf{e}_j\cdot\mathbf{u} = u_j$ for $j \le n$. The recurrence
+determines $\dot v_k$ from the earlier values, so by induction on $k$,
+$\dot v_k = \nabla F_k(\mathbf{a})\cdot\mathbf{u}$ for every $k$.
+
+The components of $f$ are the functions $F_k$ of the output variables.
+Each is differentiable at $\mathbf{a}$, so $f$ is (@lem-components),
+and row $l$ of $J_f(\mathbf{a})\mathbf{u}$ is
+$\nabla F_k(\mathbf{a})\cdot\mathbf{u}$ for the variable $v_k$ that is
+output $y_l$.
+:::
+
+So one forward pass gives the product of the Jacobian with one
+vector, without forming the Jacobian. With $\mathbf{u} = \mathbf{e}_j$
+it gives column $j$ of $J_f(\mathbf{a})$, the partial derivatives of
+every output with respect to $x_j$. With a unit vector it gives a
+directional derivative (@thm-directional).
+
+::: {#exm-fwd-pass}
+Run the trace of @tbl-fwd-trace at $(2, 0.5)$ with the seeds
+$\mathbf{e}_1$ and $\mathbf{e}_2$. Write $c = \cos 1 \approx 0.540302$.
+
+| variable | tangent rule | $\dot v$ for $\mathbf{e}_1$ | $\dot v$ for $\mathbf{e}_2$ |
+|---|---|---|---|
+| $v_1$ | seed | $1$ | $0$ |
+| $v_2$ | seed | $0$ | $1$ |
+| $v_3$ | $2v_1\dot v_1$ | $4$ | $0$ |
+| $v_4$ | $v_2\dot v_3 + v_3\dot v_2$ | $2$ | $4$ |
+| $v_5$ | $v_2\dot v_1 + v_1\dot v_2$ | $0.5$ | $2$ |
+| $v_6$ | $\cos(v_5)\,\dot v_5$ | $0.5c$ | $2c$ |
+| $v_7$ | $\dot v_4 + \dot v_6$ | $2 + 0.5c$ | $4 + 2c$ |
+
+The first column of tangents repeats the computation that opened this
+section. The last row gives $\nabla f(2, 0.5) = (2 + 0.5\cos 1,\;
+4 + 2\cos 1) \approx (2.270151, 5.080605)$, and the formula
+$\partial f/\partial y = x^2 + x\cos(xy)$ of @exm-partials gives the
+same second component at $(2, 0.5)$.
+:::
+
+```{python}
+#| include: false
+# Tangent table of exm-fwd-pass: tangents as gradients of F_k dotted with the seed.
+grads = {k: [sp.diff(e, s) for s in (x, y)] for k, e in tr.items()}
+c1 = sp.cos(1)
+want = {1: (1, 0), 2: (0, 1), 3: (4, 0), 4: (2, 4), 5: (sp.Rational(1, 2), 2),
+        6: (c1 / 2, 2 * c1), 7: (2 + c1 / 2, 4 + 2 * c1)}
+for k, (t1, t2) in want.items():
+    sym_equal(grads[k][0].subs(pt), t1, f"tangent of v{k} for e1")
+    sym_equal(grads[k][1].subs(pt), t2, f"tangent of v{k} for e2")
+# The tangent rules in the table, applied numerically.
+v = {k: float(val) for k, val in vals.items()}
+for u in ((1.0, 0.0), (0.0, 1.0), (0.3, -1.7)):
+    t_ = {1: u[0], 2: u[1]}
+    t_[3] = 2 * v[1] * t_[1]
+    t_[4] = v[2] * t_[3] + v[3] * t_[2]
+    t_[5] = v[2] * t_[1] + v[1] * t_[2]
+    t_[6] = math.cos(v[5]) * t_[5]
+    t_[7] = t_[4] + t_[6]
+    close(t_[7], float((grads[7][0] * u[0] + grads[7][1] * u[1]).subs(pt)), "tangent rules give J u")
+close(math.cos(1), 0.540302, "cos 1", tol=1e-6)
+close([2 + 0.5 * math.cos(1), 4 + 2 * math.cos(1)], [2.270151, 5.080605], "gradient values", tol=1e-6)
+sym_equal(sp.diff(f_ex, x).subs(pt), 2 + c1 / 2, "f_x(2, 0.5)")
+sym_equal(sp.diff(f_ex, y).subs(pt), 4 + 2 * c1, "f_y(2, 0.5)")
+sym_equal(sp.diff(f_ex, x), 2*x*y + y*sp.cos(x*y), "f_x formula")
+maxima_zero("diff(x^2*y + sin(x*y), y) - (x^2 + x*cos(x*y))", "f_y formula in Maxima")
+close(num_grad(lambda p: p[0]**2 * p[1] + np.sin(p[0] * p[1]), [2.0, 0.5]),
+      [2.270151, 5.080605], "finite-difference gradient", tol=1e-6)
+```
+
+Each tangent line costs a few arithmetic operations more than the
+value line beside it: the partial derivatives of the operation, then
+one multiplication and one addition for each argument. So a forward
+pass costs a constant multiple of evaluating $f$, and @sec-reverse-mode
+makes the constant precise. A gradient of $f\colon\mathbb{R}^n \to
+\mathbb{R}$ needs $n$ passes, one for each $\mathbf{e}_j$, and costs
+about $n$ times as much as $f$. For the language model of
+@sec-small-gpt, $n = 4192$.
+
+## Dual numbers {#sec-fwd-dual}
+
+Each line of a forward pass handles a pair: a value and its tangent.
+Pairs of this kind form a number system of their own, in which the
+rules for tangents become ordinary arithmetic. To see it, take
+$p(t) = t^3 - 2t$ and evaluate it at $2 + \varepsilon$, where
+$\varepsilon$ is a formal symbol, an increment too small for its
+square to matter. Expanding and then discarding every term with
+$\varepsilon^2$ or a higher power,
+$$
+p(2 + \varepsilon) = (8 + 12\varepsilon + 6\varepsilon^2 + \varepsilon^3)
+- (4 + 2\varepsilon) \;\longrightarrow\; 4 + 10\varepsilon .
+$$
+The number without $\varepsilon$ is $p(2) = 4$, and the coefficient of
+$\varepsilon$ is $p'(2) = 3\cdot 2^2 - 2 = 10$. Discarding
+$\varepsilon^2$ keeps exactly the first-order part of the increment,
+which is the derivative. Making "discard $\varepsilon^2$" a rule of
+arithmetic gives the dual numbers.
+
+::: {#def-dual-numbers}
+## Dual numbers
+
+A *dual number* is an expression $a + b\varepsilon$ with $a$, $b$
+real. Its *real part* is $a$ and its *$\varepsilon$-part* is $b$, and
+two dual numbers are equal when both parts are equal. Dual numbers
+are added and multiplied as polynomials in $\varepsilon$, followed by
+the rule $\varepsilon^2 = 0$:
+$$
+(a + b\varepsilon) + (c + d\varepsilon) = (a + c) + (b + d)\varepsilon,
+\qquad
+(a + b\varepsilon)(c + d\varepsilon) = ac + (ad + bc)\varepsilon .
+$$
+We write $\mathbb{R}[\varepsilon]$ for the set of dual numbers, and
+identify a real number $a$ with $a + 0\varepsilon$.
+:::
+
+The $\varepsilon$-part of a product is the product rule. If $a$ and
+$b$ are the value and the derivative of a function $p$ at some point,
+and $c$ and $d$ those of $q$, then $ac$ and $ad + bc$ are the value
+and the derivative of $pq$.
+
+Dual numbers have a model in $2\times2$ matrices. Let
+$$
+E = \begin{pmatrix} 0 & 1 \\ 0 & 0 \end{pmatrix},
+\qquad
+M(a + b\varepsilon) = aI + bE = \begin{pmatrix} a & b \\ 0 & a \end{pmatrix}.
+$$
+The matrix $M(a + b\varepsilon)$ holds the real part twice on its
+diagonal and the $\varepsilon$-part in its top right corner, and
+$E = M(\varepsilon)$. Then $E^2 = 0$, and expanding
+$(aI + bE)(cI + dE)$ gives $acI + (ad + bc)E$. So $M$ sends sums to
+sums and products to products, and different dual numbers go to
+different matrices. The associative and distributive laws of matrix
+arithmetic therefore hold for dual numbers. The formula for the
+product is symmetric in the two factors, so multiplication of dual
+numbers is also commutative, which matrix multiplication in general is
+not. In particular a polynomial $p(t) = c_0 + c_1t + \dots + c_dt^d$
+with real coefficients has a well-defined value $p(a + b\varepsilon)$.
+
+A dual number $a + b\varepsilon$ with $a \ne 0$ has an inverse, since
+$$
+(a + b\varepsilon)\Bigl(\frac1a - \frac{b}{a^2}\varepsilon\Bigr)
+= 1 + \Bigl(\frac{b}{a} - \frac{b}{a}\Bigr)\varepsilon = 1 .
+$$
+A dual number $b\varepsilon$ with zero real part has none, because
+$(b\varepsilon)(c + d\varepsilon) = bc\,\varepsilon$ is never $1$.
+
+```{python}
+#| include: false
+# Dual arithmetic in the matrix model, and the inverse.
+a_, b_, c_, d_ = sp.symbols("a b c d", real=True)
+E = sp.Matrix([[0, 1], [0, 0]])
+Md = lambda a, b: a * sp.eye(2) + b * E
+check(E**2 == sp.zeros(2, 2), "E^2 = 0")
+check(sp.expand(Md(a_, b_) * Md(c_, d_) - Md(a_ * c_, a_ * d_ + b_ * c_)) == sp.zeros(2, 2),
+      "matrix model of the product")
+check(sp.expand(Md(a_, b_) * Md(c_, d_) - Md(c_, d_) * Md(a_, b_)) == sp.zeros(2, 2),
+      "dual multiplication commutes")
+check(sp.simplify(Md(a_, b_) * Md(1 / a_, -b_ / a_**2) - sp.eye(2)) == sp.zeros(2, 2),
+      "inverse of a + b eps")
+maxima_zero("block([E: matrix([0,1],[0,0]), M], "
+            "M: (a*ident(2)+b*E) . (c*ident(2)+d*E) - (a*c*ident(2)+(a*d+b*c)*E), "
+            "M[1][1]^2 + M[1][2]^2 + M[2][1]^2 + M[2][2]^2)",
+            "matrix model of the product in Maxima")
+# The opening example: expansion of p(2 + eps), then discarding eps^2 and eps^3.
+eps_ = sp.symbols("epsilon")
+p_ex = lambda s: s**3 - 2 * s
+check(sp.expand((2 + eps_)**3) == 8 + 12 * eps_ + 6 * eps_**2 + eps_**3, "(2 + eps)^3 expanded")
+check(sp.expand(p_ex(2 + eps_)).coeff(eps_, 0) == 4 and sp.expand(p_ex(2 + eps_)).coeff(eps_, 1) == 10,
+      "p(2 + eps) -> 4 + 10 eps")
+check(p_ex(Md(2, 1)) == Md(4, 10), "p(2 + eps) = 4 + 10 eps in the matrix model")
+```
+
+::: {#lem-dual-powers}
+For every integer $k \ge 1$ and all real $a$, $b$,
+$(a + b\varepsilon)^k = a^k + k a^{k-1} b\,\varepsilon$.
+:::
+
+::: {.proof}
+For $k = 1$ both sides are $a + b\varepsilon$. If the formula holds
+for $k$, then
+$$
+(a + b\varepsilon)^{k+1} = (a^k + k a^{k-1}b\varepsilon)(a + b\varepsilon)
+= a^{k+1} + (a^k b + k a^{k}b)\varepsilon
+= a^{k+1} + (k+1)a^k b\,\varepsilon .
+$$
+:::
+
+Part (a) of the next theorem says that the opening example is no
+accident: for polynomials, dual arithmetic computes the value and the
+derivative. For any other operation, such as $\sin$ or $\exp$, the
+value at a dual number is not yet defined, and we *define* it by the
+same formula: for a function $g$ of one variable, differentiable at
+$a$,
+$$
+g(a + b\varepsilon) = g(a) + g'(a)\,b\,\varepsilon ,
+$$ {#eq-dual-extension}
+so the real part is the value of $g$ and the $\varepsilon$-part is
+the derivative times $b$. For an operation $\varphi$ of two variables,
+differentiable at $(a_1, a_2)$,
+$$
+\varphi(a_1 + b_1\varepsilon,\; a_2 + b_2\varepsilon) = \varphi(a_1, a_2)
++ \Bigl(\frac{\partial\varphi}{\partial t_1}\,b_1
++ \frac{\partial\varphi}{\partial t_2}\,b_2\Bigr)\varepsilon ,
+$$
+with the partial derivatives evaluated at $(a_1, a_2)$: the
+$\varepsilon$-part is the directional derivative of $\varphi$ in the
+direction $(b_1, b_2)$. For addition and multiplication this agrees
+with @def-dual-numbers, and for division it agrees with multiplying by
+the inverse (@exr-ch3-quotient). Parts (b) and (c) say that the
+definition is consistent with composition, so that any function built
+from elementary operations obeys the same formula.
+
+::: {#thm-dual-numbers}
+## Derivatives from dual numbers
+
+(a) For every polynomial $p$ with real coefficients and all real $a$
+and $b$,
+$$
+p(a + b\varepsilon) = p(a) + p'(a)\,b\,\varepsilon .
+$$
+
+(b) Let $h$ be differentiable at $a$ and $g$ differentiable at $h(a)$,
+both extended to dual numbers by @eq-dual-extension. Then
+$g(h(a + b\varepsilon)) = (g\circ h)(a) + (g\circ h)'(a)\,b\,\varepsilon$:
+extending $g\circ h$ directly gives the same dual number as extending
+$h$ and $g$ and composing.
+
+(c) Let an evaluation trace with inputs $x_1, \dots, x_n$ compute
+$f\colon D \to \mathbb{R}^m$, and let $\mathbf{a} \in D$ and
+$\mathbf{u} \in \mathbb{R}^n$. Evaluate the trace in dual arithmetic,
+with each operation extended as above and inputs
+$x_j = a_j + u_j\varepsilon$. Then output $l$ is
+$f_l(\mathbf{a}) + \bigl(J_f(\mathbf{a})\mathbf{u}\bigr)_l\,\varepsilon$.
+In particular, for $n = m = 1$, $f(a + b\varepsilon) = f(a) + f'(a)\,b\,\varepsilon$.
+:::
+
+::: {.proof}
+(a) Write $p(t) = \sum_{k=0}^d c_k t^k$. By @lem-dual-powers, and
+because the term $k = 0$ is the constant $c_0$,
+$$
+p(a + b\varepsilon) = c_0 + \sum_{k=1}^d c_k\bigl(a^k + k a^{k-1}b\varepsilon\bigr)
+= \sum_{k=0}^d c_k a^k + \Bigl(\sum_{k=1}^d k c_k a^{k-1}\Bigr) b\,\varepsilon
+= p(a) + p'(a)\,b\,\varepsilon .
+$$
+
+(b) Apply @eq-dual-extension twice and then the chain rule of
+one-variable calculus:
+$$
+g(h(a + b\varepsilon)) = g\bigl(h(a) + h'(a)b\,\varepsilon\bigr)
+= g(h(a)) + g'(h(a))\,h'(a)\,b\,\varepsilon
+= (g\circ h)(a) + (g\circ h)'(a)\,b\,\varepsilon .
+$$
+
+(c) We show by induction on $k$ that the dual value of $v_k$ is
+$v_k + \dot v_k\varepsilon$, where $v_k$ and $\dot v_k$ are the value
+and the tangent of @def-fwd-tangent with seed $\mathbf{u}$. For
+$k \le n$ this is the choice of inputs. For $k > n$, the extended
+operation applied to the dual arguments $v_i + \dot v_i\varepsilon$,
+$i \in P(k)$, has real part $\varphi_k((v_i)_{i\in P(k)}) = v_k$ and
+$\varepsilon$-part $\sum_{i\in P(k)} d_{ki}\,\dot v_i$, which is
+$\dot v_k$ by @eq-fwd-tangent. The claim about the outputs is now
+@thm-forward-mode.
+:::
+
+So a program that knows nothing about derivatives computes them when
+it receives dual numbers instead of real ones, provided each
+elementary operation knows its own derivative. The file
+`lean/AutodiffBook/Ch03.lean` checks part (a) by machine, and also
+the product rule in the $\varepsilon$-part of a product.
+
+::: {#exm-dual-composite}
+Take $f(t) = e^{\sin t}$ at $t = 0$, which is not a polynomial. By
+@eq-dual-extension, $\sin(0 + \varepsilon) = \sin 0 + \cos(0)\,
+\varepsilon = \varepsilon$, and then $\exp(\varepsilon) = e^0 + e^0
+\varepsilon = 1 + \varepsilon$. By @thm-dual-numbers (b), $f(0) = 1$
+and $f'(0) = 1$, which agrees with $f'(t) = \cos(t)\,e^{\sin t}$.
+:::
+
+```{python}
+#| include: false
+# thm-dual-numbers (a) in the matrix model, for a general quartic, and exm-dual-composite.
+t = sp.symbols("t", real=True)
+cs = sp.symbols("c0:5", real=True)
+p_gen = sum(ci * t**i for i, ci in enumerate(cs))
+pm_gen = sum((ci * Md(a_, b_) ** i for i, ci in enumerate(cs)), sp.zeros(2, 2))
+want_m = Md(p_gen.subs(t, a_), sp.diff(p_gen, t).subs(t, a_) * b_)
+check(sp.expand(pm_gen - want_m) == sp.zeros(2, 2), "thm-dual-numbers (a) for quartics")
+for k in range(1, 8):
+    check(sp.expand(Md(a_, b_) ** k - Md(a_**k, k * a_**(k - 1) * b_)) == sp.zeros(2, 2),
+          f"lem-dual-powers k = {k}")
+fs = sp.exp(sp.sin(t))
+check(fs.subs(t, 0) == 1 and sp.diff(fs, t).subs(t, 0) == 1, "e^sin t at 0")
+sym_equal(sp.diff(fs, t), sp.cos(t) * sp.exp(sp.sin(t)), "derivative of e^sin t")
+```
+
+## Forward mode in code {#sec-fwd-code}
+
+A dual number is a pair of floating-point numbers, and the rules of
+@def-dual-numbers and @eq-dual-extension take a few lines each. The
+class below overloads Python's arithmetic operators, so that an
+ordinary function written with `+`, `*` and `/` works on dual numbers
+unchanged.
+
+```{python}
+#| label: dual-class
+#| echo: true
+import math
+
+
+class Dual:
+    """The dual number a + b eps, where eps**2 = 0."""
+
+    def __init__(self, a, b=0.0):
+        self.a, self.b = a, b
+
+    def __add__(self, other):
+        other = as_dual(other)
+        return Dual(self.a + other.a, self.b + other.b)
+
+    def __mul__(self, other):
+        other = as_dual(other)
+        return Dual(self.a * other.a, self.a * other.b + self.b * other.a)
+
+    def __neg__(self):
+        return Dual(-self.a, -self.b)
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __truediv__(self, other):
+        other = as_dual(other)
+        return self * Dual(1 / other.a, -other.b / other.a**2)
+
+    def __rsub__(self, other):
+        return as_dual(other) - self
+
+    def __rtruediv__(self, other):
+        return as_dual(other) / self
+
+    __radd__ = __add__
+    __rmul__ = __mul__
+
+    def __repr__(self):
+        return f"{self.a:.6f} + {self.b:.6f} eps"
+
+
+def as_dual(x):
+    """Treat a real number x as x + 0 eps."""
+    return x if isinstance(x, Dual) else Dual(x)
+
+
+def extend(g, dg):
+    """Extend g, with derivative dg, to dual numbers: g(a + b eps) = g(a) + g'(a) b eps."""
+    def g_dual(x):
+        x = as_dual(x)
+        return Dual(g(x.a), dg(x.a) * x.b)
+    return g_dual
+
+
+exp = extend(math.exp, math.exp)
+log = extend(math.log, lambda a: 1 / a)
+sin = extend(math.sin, math.cos)
+cos = extend(math.cos, lambda a: -math.sin(a))
+```
+
+One forward pass with seed $\mathbf{u}$ gives $f(\mathbf{a})$ and
+$J_f(\mathbf{a})\mathbf{u}$, by @thm-dual-numbers (c). For a function
+with one output, $n$ passes give the gradient.
+
+```{python}
+#| label: dual-forward
+#| echo: true
+def jvp(f, a, u):
+    """Return f(a) and the directional derivative grad f(a) . u, by one forward pass."""
+    out = f(*[Dual(ai, ui) for ai, ui in zip(a, u)])
+    return out.a, out.b
+
+
+def gradient(f, a):
+    """Return grad f(a) by n forward passes with seeds e_1, ..., e_n."""
+    n = len(a)
+    return [jvp(f, a, [1.0 if i == j else 0.0 for i in range(n)])[1] for j in range(n)]
+```
+
+Applied to the function of @tbl-fwd-trace, the passes reproduce the
+tangent table of @exm-fwd-pass.
+
+```{python}
+#| echo: true
+def f(x, y):
+    return x * x * y + sin(x * y)
+
+
+print(f(Dual(2.0, 1.0), Dual(0.5, 0.0)))   # seed e_1
+print(f(Dual(2.0, 0.0), Dual(0.5, 1.0)))   # seed e_2
+print(gradient(f, [2.0, 0.5]))
+```
+
+```{python}
+#| include: false
+# The printed values, against SymPy.
+r1, r2 = f(Dual(2.0, 1.0), Dual(0.5, 0.0)), f(Dual(2.0, 0.0), Dual(0.5, 1.0))
+close([r1.a, r1.b, r2.a, r2.b],
+      [2 + math.sin(1), 2 + 0.5 * math.cos(1), 2 + math.sin(1), 4 + 2 * math.cos(1)],
+      "dual evaluation of f", tol=1e-14)
+close(gradient(f, [2.0, 0.5]), [float(sp.diff(f_ex, s).subs(pt)) for s in (x, y)], "gradient", tol=1e-14)
+check(repr(r1) == "2.841471 + 2.270151 eps", f"printed form {r1!r}")
+# The class on functions using every operation, at random points, against SymPy.
+rng = np.random.default_rng(3)
+z = sp.symbols("z", real=True)
+tests = [
+    (lambda x, y, z: exp(x * y) / (1 + z * z) - log(2 + cos(y)),
+     sp.exp(x * y) / (1 + z**2) - sp.log(2 + sp.cos(y))),
+    (lambda x, y, z: (x - y) * sin(z) / (3 - x) + 2 / (x * x + 1),
+     (x - y) * sp.sin(z) / (3 - x) + 2 / (x**2 + 1)),
+]
+for fpy, fsym in tests:
+    for _ in range(5):
+        a = rng.uniform(-1, 1, size=3)
+        u = rng.normal(size=3)
+        val, dirder = jvp(fpy, a, u)
+        sub = dict(zip((x, y, z), a))
+        gsym = [float(sp.diff(fsym, s).subs(sub)) for s in (x, y, z)]
+        close(val, float(fsym.subs(sub)), "value")
+        close(dirder, np.dot(gsym, u), "directional derivative", tol=1e-12)
+        close(gradient(fpy, a), gsym, "gradient by n passes", tol=1e-12)
+```
+
+## Symbolic differentiation and expression swell {#sec-fwd-swell}
+
+A computer algebra system differentiates formulas by the rules of
+calculus and returns a formula. That is exact, but the formula can be
+far larger than the computation it describes, because a formula
+written out in full repeats every subexpression each time it is used,
+while a trace computes it once and refers to it by name.
+
+::: {#exm-fwd-swell}
+## Expression swell
+
+Let $g_0(x) = x$ and $g_k(x) = 4\,g_{k-1}(x)\bigl(1 - g_{k-1}(x)\bigr)$
+for $k \ge 1$, the $k$th iterate of the logistic map. A trace
+computes $g_k$ with $3k$ operations, three per step:
+$$
+u = 1 - v, \qquad w = v\,u, \qquad v_{\text{new}} = 4w .
+$$
+Written out as a formula, $g_k$ contains $g_{k-1}$ twice, so the
+number $L_k$ of occurrences of $x$ satisfies $L_k = 2L_{k-1}$ with
+$L_0 = 1$, and $L_k = 2^k$. Differentiating by the product and
+constant-multiple rules, without simplifying,
+$$
+g_k' = 4\bigl(g_{k-1}'\,(1 - g_{k-1}) + g_{k-1}\,(-g_{k-1}')\bigr),
+$$
+which contains $g_{k-1}'$ twice and $g_{k-1}$ twice. The number
+$D_k$ of occurrences of $x$ in the formula for $g_k'$ therefore
+satisfies the first-order recurrence
+$$
+D_k = 2D_{k-1} + 2L_{k-1} = 2D_{k-1} + 2^k, \qquad D_0 = 0,
+$$
+because $g_0' = 1$ contains no $x$. Dividing by $2^k$ gives
+$D_k/2^k = D_{k-1}/2^{k-1} + 1$, so $D_k = k\,2^k$. For $k = 10$ the
+formula for $g_{10}$ contains $x$ $1024$ times and the formula for its
+derivative $10\,240$ times, while forward mode computes both with a
+trace of $30$ operations and $30$ tangent lines. Expanding $g_k$ into
+powers of $x$ does not help, since $g_k$ is a polynomial of degree
+$2^k$.
+:::
+
+```{python}
+#| include: false
+# exm-swell: build the formula trees and differentiate by the rules.
+g_tree = "x"
+for k in range(1, 11):
+    g_prev = g_tree
+    g_tree = ("*", 4, ("*", g_prev, ("-", 1, g_prev)))
+    check(tree_leaves(g_tree) == 2**k, f"L_{k} = 2^k")
+    check(tree_leaves(tree_diff(g_tree)) == k * 2**k, f"D_{k} = k 2^k")
+check(tree_leaves(g_tree) == 1024 and tree_leaves(tree_diff(g_tree)) == 10240, "k = 10 counts")
+# The derivative formula of the text is what tree_diff produces.
+check(tree_diff(("*", 4, ("*", "x", ("-", 1, "x")))) ==
+      ("*", 4, ("+", ("*", 1, ("-", 1, "x")), ("*", "x", ("-", 0, 1)))), "shape of g_1'")
+# Degree 2^k, and the derivative recurrence solved.
+gs = x
+for k in range(1, 6):
+    gs = sp.expand(4 * gs * (1 - gs))
+    check(sp.degree(gs, x) == 2**k, f"degree of g_{k}")
+kk = sp.symbols("k", integer=True, nonnegative=True)
+Dk = sp.Function("D")
+sol = sp.rsolve(Dk(kk) - 2 * Dk(kk - 1) - 2**kk, Dk(kk), {Dk(0): 0})
+sym_equal(sol, kk * 2**kk, "D_k = k 2^k from rsolve")
+# Forward mode on the 3k-operation trace gives the derivative.
+def logistic_trace(v, k):
+    for _ in range(k):
+        u = 1 - v
+        w = v * u
+        v = 4 * w
+    return v
+gs10 = x
+for _ in range(10):
+    gs10 = 4 * gs10 * (1 - gs10)
+for a0 in (0.1, 0.37):
+    d = logistic_trace(Dual(a0, 1.0), 10)
+    close(d.b, float(sp.diff(gs10, x).subs(x, a0)), "forward mode on the logistic trace", tol=1e-9)
+```
+
+Computer algebra systems store formulas with shared subexpressions,
+which removes much of this growth, and differentiating a formula with
+sharing while keeping the sharing amounts to automatic
+differentiation. The remaining difference is that automatic
+differentiation never builds a formula for the derivative at all: it
+computes numbers, at one point.
+
+## Finite differences {#sec-fwd-finite-differences}
+
+The simplest way to estimate a derivative numerically is a difference
+quotient. For $f$ of one variable and a small step $h > 0$, the
+*forward difference* and *central difference* are
+$$
+\frac{f(a + h) - f(a)}{h}
+\qquad\text{and}\qquad
+\frac{f(a + h) - f(a - h)}{2h} .
+$$
+If $f''$ is continuous on $[a, a+h]$, Taylor's theorem with the
+Lagrange remainder gives $f(a+h) = f(a) + f'(a)h + \tfrac12
+f''(\xi)h^2$ for some $\xi$ in $(a, a+h)$, so the forward difference
+differs from $f'(a)$ by $\tfrac12 f''(\xi)h$: the *truncation error*
+is of order $h$. The central difference cancels the $h^2$ terms and
+has truncation error of order $h^2$ (@exr-ch3-central).
+
+Making $h$ small reduces the truncation error but not the total
+error. A computer stores $f(a+h)$ and $f(a)$ with a relative rounding
+error of about $10^{-16}$, and when $h$ is small these two numbers
+agree in most of their digits, so their difference keeps only a few
+correct ones. The *rounding error* in the quotient grows like
+$10^{-16}/h$. The two errors balance near $h = 10^{-8}$ for the
+forward difference, where the total error is about $10^{-8}$, so at
+best about half the digits of the derivative are correct.
+@tbl-fwd-fd shows both effects, and @thm-fd-error in
+@sec-floating-point proves the estimates.
+
+```{python}
+#| label: tbl-fwd-fd
+#| tbl-cap: "Errors of difference quotients for the derivative of $e^x$ at $x = 1$, computed in double precision."
+from IPython.display import Markdown
+
+
+def sci(value):
+    mantissa, exponent = f"{value:.1e}".split("e")
+    return rf"${mantissa} \times 10^{{{int(exponent)}}}$"
+
+
+rows = ["| $h$ | forward difference error | central difference error |", "|---|---|---|"]
+for e in (1, 2, 4, 6, 8, 10, 12):
+    h = 10.0**-e
+    fwd = abs((math.exp(1 + h) - math.exp(1)) / h - math.e)
+    cen = abs((math.exp(1 + h) - math.exp(1 - h)) / (2 * h) - math.e)
+    rows.append(f"| $10^{{-{e}}}$ | {sci(fwd)} | {sci(cen)} |")
+Markdown("\n".join(rows))
+```
+
+```{python}
+#| include: false
+# Claims about the table: forward error ~ 0.14 at h = 0.1 and ~ h e/2 at
+# h = 1e-4 (order h); central error ~ 4.5e-3 at 0.1 and scales as h^2; the
+# smallest forward error is near h = 1e-8 and about 1e-8; rounding dominates
+# for smaller h.
+fe = lambda h: abs((math.exp(1 + h) - math.exp(1)) / h - math.e)
+ce = lambda h: abs((math.exp(1 + h) - math.exp(1 - h)) / (2 * h) - math.e)
+close(fe(0.1), 0.14, "forward error at 0.1", tol=0.01)
+close(fe(1e-4) / 1e-4, math.e / 2, "forward error ~ h f''/2", tol=0.01)
+close(ce(0.1), 0.0045, "central error at 0.1", tol=0.001)
+close(ce(0.01) / ce(0.1), 0.01, "central error scales as h^2", tol=0.01)
+errs = {e: fe(10.0**-e) for e in range(1, 15)}
+best = min(errs, key=errs.get)
+check(best in (7, 8, 9) and 1e-10 < errs[best] < 1e-7, f"best forward step {best}, error {errs[best]}")
+check(errs[12] > 1e3 * errs[8], "rounding error dominates at h = 1e-12")
+check(len(rows) == 9 and rows[2].startswith(r"| $10^{-1}$ | $1.4 \times 10^{-1}$"), f"table row {rows[2]}")
+```
+
+A forward difference for each input costs $n + 1$ evaluations of $f$
+for a gradient, about the same as $n$ forward passes, and gives
+around eight correct digits instead of sixteen. Finite differences
+still have a use: they need no access to how $f$ is computed, which
+makes them a check on a gradient computed some other way. The source
+of this book uses central differences to test the gradients that
+automatic differentiation produces.
+
+## Notes and further reading {#sec-fwd-notes}
+
+@wengert1964simple described a program that splits a function into
+elementary steps and differentiates each step, which is forward mode.
+@griewank2008evaluating is the standard reference on automatic
+differentiation; its early chapters treat evaluation traces and
+forward mode, with their cost, in far more detail than here. The
+survey of @baydin2018automatic compares automatic differentiation with
+symbolic and numerical differentiation for readers from machine
+learning, and uses the
+logistic map of @exm-fwd-swell as its example of expression swell. Dual
+numbers go back to @clifford1871preliminary. The source-removal
+algorithm in the proof of @thm-topological-order is the one of
+@kahn1962topological.
+
+## Exercises {#sec-fwd-exercises}
+
+::: {#exr-ch3-trace}
+Write an evaluation trace for
+$f(x_1, x_2, x_3) = (x_1 + x_2)(x_2 + x_3)\,e^{x_1}$, draw its
+computational graph, and evaluate it at $(0, 1, 2)$.
+:::
+
+::: {#exr-ch3-forward}
+For the trace of @exr-ch3-trace, run one forward pass at $(0, 1, 2)$
+with seed $\mathbf{u} = (1, -1, 2)$. Check the result against
+$\nabla f(0, 1, 2)\cdot\mathbf{u}$ computed from the formula.
+:::
+
+::: {#exr-ch3-orders}
+Show that the graph of @fig-fwd-trace-graph has exactly $12$ topological
+orders that number the two inputs first. (Hint: the nodes $3$ and $4$
+form one chain, $5$ and $6$ another, and node $7$ comes last.)
+:::
+
+::: {#exr-ch3-quotient}
+(a) Show that if $c \ne 0$,
+$(a + b\varepsilon)/(c + d\varepsilon) = a/c + \bigl((bc - ad)/c^2\bigr)\varepsilon$,
+where division means multiplication by the inverse.
+
+(b) Deduce that for polynomials $p$ and $q$ with $q(a) \ne 0$, the
+rational function $r = p/q$ satisfies
+$r(a + b\varepsilon) = r(a) + r'(a)\,b\,\varepsilon$, and that this
+agrees with @eq-dual-extension.
+:::
+
+::: {#exr-ch3-sqrt}
+Extend $g(t) = \sqrt t$ to dual numbers with $a > 0$ by
+@eq-dual-extension. Show that $\bigl(\sqrt{a + b\varepsilon}\bigr)^2
+= a + b\varepsilon$, and compute $\sqrt{4 + \varepsilon}$.
+:::
+
+::: {#exr-ch3-second}
+Let $\mathbb{R}[\varepsilon]_3$ be the numbers $a + b\varepsilon +
+c\varepsilon^2$, multiplied as polynomials in $\varepsilon$ with the
+rule $\varepsilon^3 = 0$. Show that for every polynomial $p$,
+$$
+p(a + \varepsilon) = p(a) + p'(a)\,\varepsilon + \tfrac12 p''(a)\,\varepsilon^2 ,
+$$
+and use it to find $p''(1)$ for $p(t) = t^4 - 3t^2$.
+:::
+
+::: {#exr-ch3-swell}
+Let $s_0(x) = x$ and $s_k(x) = s_{k-1}(x)\cdot s_{k-1}(x) + x$.
+
+(a) Find the number of occurrences of $x$ in the formula for $s_k$
+written out in full.
+
+(b) Differentiating by the sum and product rules without simplifying
+gives $s_k' = s_{k-1}'\,s_{k-1} + s_{k-1}\,s_{k-1}' + 1$. Find the
+number of occurrences of $x$ in the formula for $s_k'$.
+
+(c) How many operations does a trace for $s_k$ need, and how many
+tangent lines does forward mode add?
+:::
+
+::: {#exr-ch3-central}
+Suppose $f'''$ is continuous on $[a - h, a + h]$ and $|f'''(t)| \le M$
+there. Show that
+$$
+\left|\frac{f(a+h) - f(a-h)}{2h} - f'(a)\right| \le \frac{M h^2}{6} .
+$$
 :::
