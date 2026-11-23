@@ -333,10 +333,11 @@ $8.3\times10^{-10}$; and with $h = 2^{-40}$ by $2.7\times10^{-5}$
 again. The function values carry rounding errors, the difference
 cancels their leading digits, and the division by $h$ magnifies what
 is left. The total error has two parts that pull in opposite
-directions: the *truncation error*, the error of the exact difference
-quotient, which comes from cutting off the Taylor series of $f$ and
-shrinks with $h$; and the *rounding error*, which comes from the
-computed values of $f$ and grows as $h$ shrinks.
+directions, which @sec-fwd-finite-differences introduced: the
+truncation error, the error of the exact difference quotient, which
+comes from cutting off the Taylor series of $f$ and shrinks with $h$;
+and the rounding error, which comes from the computed values of $f$
+and grows as $h$ shrinks.
 
 ::: {#thm-fd-error}
 ## Error of finite differences
@@ -556,7 +557,7 @@ logarithms.
 :::
 
 The function $\operatorname{lse}(\mathbf{z}) = \ln\sum_j e^{z_j}$ is
-the *log-sum-exp* function. It appears in the cross-entropy loss,
+the log-sum-exp function of @def-prob-lse. It appears in the cross-entropy loss,
 because
 $-\ln\operatorname{softmax}(\mathbf{z})_y = \operatorname{lse}(\mathbf{z}) - z_y$ (@sec-probability-loss). In words, @eq-fp-lse-shift says that
 log-sum-exp may be computed after subtracting any number $m$ from

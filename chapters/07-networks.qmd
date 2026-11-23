@@ -11,7 +11,7 @@ piece has a derivative we already know from @sec-several-variables,
 and the chain rule of @sec-chain-rule combines them. This chapter
 writes that combination out for the multilayer perceptron, which
 also appears inside the language model that @sec-small-gpt builds
-(a *transformer*), and finds that the gradient of the loss comes from
+(a transformer), and finds that the gradient of the loss comes from
 one backward sweep of matrix–vector products. That sweep is reverse
 mode (@sec-reverse-mode) organised by layers.
 
@@ -400,22 +400,25 @@ $(\mathbf{b}_l)_i$ by $t$ changes $\mathbf{z}_l$ by $t\mathbf{e}_i$,
 and the same argument gives $(\boldsymbol{\delta}_l)_i$.
 :::
 
-The name *backpropagation* describes the order of work. The forward
-pass computes and stores every $\mathbf{z}_l$ and $\mathbf{a}_l$.
-The backward pass starts from $\boldsymbol{\delta}_D$, applies @eq-nn-backprop to get $\boldsymbol{\delta}_{D-1}, \dots,
-\boldsymbol{\delta}_1$ in turn, and at each layer reads off the
-parameter gradients from @eq-nn-backprop-params. @def-adjoint calls
-the partial derivative $\bar v = \partial L/\partial v$ of the final
-output with respect to an intermediate quantity $v$ the *adjoint* of
-$v$, and @thm-reverse-mode shows that reverse accumulation, one sweep
-from the output back to the inputs, computes every adjoint of an
-acyclic computational graph. The vector $\boldsymbol{\delta}_l$ is the
-vector of adjoints $\bar{\mathbf{z}}_l$, and @eq-nn-backprop is
-reverse accumulation applied to the graph of the network, with the
-scalar nodes of each layer grouped into one vector. The transpose
-$W_{l+1}^\top$ appears because reverse mode multiplies by Jacobians
-from the left: a row vector times $W_{l+1}$ is, after transposing,
-$W_{l+1}^\top$ times a column.
+The name backpropagation, which @sec-reverse-mode gives to reverse
+mode applied to a network, describes the order of work. The forward
+pass computes and stores every $\mathbf{z}_l$ and $\mathbf{a}_l$. The
+backward pass starts from $\boldsymbol{\delta}_D$,
+applies @eq-nn-backprop to get
+$\boldsymbol{\delta}_{D-1}, \dots, \boldsymbol{\delta}_1$ in turn, and
+at each layer reads off the parameter gradients
+from @eq-nn-backprop-params. @def-adjoint calls the partial derivative
+$\bar v = \partial L/\partial v$ of the final output with respect to
+an intermediate quantity $v$ the adjoint of $v$, and @thm-reverse-mode
+shows that reverse accumulation, one sweep from the output back to the
+inputs, computes every adjoint of an acyclic computational graph. The
+vector $\boldsymbol{\delta}_l$ is the vector of adjoints
+$\bar{\mathbf{z}}_l$, and @eq-nn-backprop is reverse accumulation
+applied to the graph of the network, with the scalar nodes of each
+layer grouped into one vector. The transpose $W_{l+1}^\top$ appears
+because reverse mode multiplies by Jacobians from the left: a row
+vector times $W_{l+1}$ is, after transposing, $W_{l+1}^\top$ times a
+column.
 
 **Cost.** Count multiplications, since each comes with roughly one
 addition. The forward pass spends $n_ln_{l-1}$ multiplications on

@@ -358,7 +358,7 @@ operation. That recipe is forward mode.
 For each $k$ and each $\mathbf{x}$ in the set $D$ where the trace is
 defined, write $F_k(\mathbf{x})$ for the value of $v_k$, as in @def-intermediate-variables. So $F_j(\mathbf{x}) = x_j$ for $j \le n$,
 and the outputs are the components of $f$. As in @thm-chain-rule-paths, write $d_{ki} = \partial\varphi_k/\partial v_i$
-for the *local partial derivative* of line $k$ with respect to its
+for the local partial derivative of line $k$ with respect to its
 argument $v_i$, evaluated at the values of the arguments of line $k$.
 
 ::: {#def-fwd-tangent}

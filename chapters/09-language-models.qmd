@@ -617,7 +617,8 @@ $L = -\frac1N\cdot N\ln(1/|V|) = \ln|V|$ and $e^L = |V|$.
 :::
 
 For the 27-token vocabulary of names, the uniform model has loss
-$\ln 27 \approx 3.30$. This is where training starts. The book's model
+$\ln 27 \approx 3.30$, the value that @exm-uniform-loss found for a
+single prediction. This is where training starts. The book's model
 starts from small random weights, so its first predictions are close to
 uniform: @exm-uniform-loss estimates its expected loss at the start as
 about 3.35, and the loss on the first training step of microgpt is
@@ -716,8 +717,8 @@ $(2, -1)^\top$.
 ## One-hot vector and embedding
 
 Number the tokens of a vocabulary $V$ as $1, \dots, |V|$. The
-*one-hot vector* of token $a$ is the standard basis vector
-$\mathbf{e}_a$ of $\mathbb{R}^{|V|}$. An *embedding matrix* of width
+one-hot vector of token $a$, as in @sec-prob-softmax-ce, is the
+standard basis vector $\mathbf{e}_a$ of $\mathbb{R}^{|V|}$. An *embedding matrix* of width
 $d$ is a $|V|\times d$ matrix $E$, and the *embedding* of token $a$ is
 $$
 \mathbf{u}_a = E^\top\mathbf{e}_a \in \mathbb{R}^d ,
@@ -765,7 +766,7 @@ $$
 p(\,\cdot \mid a) = \operatorname{softmax}(\mathbf{z}_a),
 \qquad \mathbf{z}_a = W\mathbf{u}_a = WE^\top\mathbf{e}_a .
 $$
-The vector $\mathbf{z}_a \in \mathbb{R}^{|V|}$ holds the *logits*
+The vector $\mathbf{z}_a \in \mathbb{R}^{|V|}$ holds the logits
 (the scores that go into the softmax, as in @def-softmax) for the
 token after $a$. The
 $|V|\times|V|$ matrix $Z = WE^\top$ is the *logit matrix*.

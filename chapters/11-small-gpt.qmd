@@ -210,7 +210,7 @@ because $1/s^2 = \mu + \varepsilon$.
 :::
 
 In reverse mode every intermediate vector $\mathbf{v}$ carries an
-*adjoint* $\bar{\mathbf{v}}$ (@def-adjoint), the gradient of the loss
+adjoint $\bar{\mathbf{v}}$ (@def-adjoint), the gradient of the loss
 $L$ with respect to $\mathbf{v}$, and reverse mode (@thm-reverse-mode) obtains the adjoint of a function's input by
 multiplying the adjoint of its output by the transposed Jacobian.
 Write $\mathbf{y} = \operatorname{rms}(\mathbf{x})$. Since $J$ is
@@ -998,14 +998,15 @@ parameter, so each parameter's step is scaled by the recent size of
 its own gradients.
 Here $\beta_1 = 0.85$, $\beta_2 = 0.99$ and $\epsilon = 10^{-8}$ (a
 different constant from the $\varepsilon$ of RMS normalisation), and
-training runs for 1000 steps. Each step $k = 0, 1, \dots, 999$ takes one name from a shuffled
-list and computes $L$ and its gradient, and Adam then updates
-$\boldsymbol\theta$ with learning rate
+training runs for 1000 steps. Each step $k = 1, \dots, 1000$, numbered
+as in @def-adam, takes one name from a shuffled list and computes $L$
+and its gradient, and Adam then updates $\boldsymbol\theta$ with
+learning rate
 $$
-\eta_k = 0.01\Bigl(1 - \frac{k}{1000}\Bigr),
+\eta_k = 0.01\Bigl(1 - \frac{k - 1}{1000}\Bigr),
 $$
 which falls linearly from $0.01$ at the first step to $10^{-5}$ at the
-last. There is no batching: each gradient comes from a single name.
+last, as in @sec-stoch-adam. (The source numbers the steps from 0.) There is no batching: each gradient comes from a single name.
 The list holds 32,033 names [@karpathy2026microgpt], so 1000 steps use
 about 3% of it, each name at most once. Adam keeps two numbers per
 parameter, so the optimiser state is $2\times4192 = 8384$ numbers.
@@ -1018,7 +1019,7 @@ function of the logits.
 
 ```{python}
 #| include: false
-etas = [0.01 * (1 - k / 1000) for k in range(1000)]
+etas = [0.01 * (1 - (k - 1) / 1000) for k in range(1, 1001)]
 close(etas[0], 0.01, "first learning rate")
 close(etas[-1], 1e-5, "last learning rate")
 check(all(a > b for a, b in zip(etas, etas[1:])), "learning rate decreases")
@@ -1256,7 +1257,7 @@ $(0.3367, 0.3333, 0.3300)$, close to uniform.
 :::
 
 As $T$ falls the distribution approaches the standard basis vector
-$\mathbf{e}_1$, the *one-hot* vector that puts probability 1 on the
+$\mathbf{e}_1$, the one-hot vector (@sec-prob-softmax-ce) that puts probability 1 on the
 token with the largest logit, and as $T$ grows it approaches the uniform
 distribution. The limits are exact, and the only subtlety is a tie
 for the largest logit.
@@ -1557,7 +1558,7 @@ example with $\|J_F(\mathbf{a})\|_F = 1$ where it is not.
 :::
 
 ::: {#exr-ch11-kv-cost}
-Count only the multiplications in attention scores
+Extend @exr-ch10-cache-cost to the model of @def-small-gpt. Count only the multiplications in attention scores
 ($\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_j$, $d_h$ each) and in
 weighted sums of values ($d_h$ per head for each $j$). Show that
 generating $n$ positions with the cache costs $d\,n(n+1)$ such

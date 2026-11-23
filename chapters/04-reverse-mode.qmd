@@ -13,8 +13,8 @@ $n$ is.
 This is *reverse mode*, and applied to a neural network it goes by the
 name *backpropagation*. The chapter proves that it is correct on any
 acyclic computational graph and bounds its cost. It then builds a
-small reverse-mode engine in Python, which the rest of the book uses
-to train models.
+small reverse-mode engine in Python, of the kind that the dependency-free
+program behind the model of @sec-small-gpt uses to train it.
 
 ```{python}
 #| include: false
