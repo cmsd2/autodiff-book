@@ -11,13 +11,15 @@ parameters serve every context length.
 
 This chapter defines attention and the variants that the book's model
 uses: scaled dot products, the causal mask, several heads and
-position embeddings. Each comes with a mathematical reason. The scale
-$1/\sqrt{d_h}$ keeps the softmax away from the region where its
-derivatives vanish; the mask makes each prediction depend only on the
-past, which is what makes caching possible; and position embeddings
-are needed because attention without them ignores the order of the
-tokens. The chapter ends with the derivative of attention, which shows
-how gradients pass through it, and with its cost.
+position embeddings. Each comes with a mathematical reason. Dividing
+the scores by the square root of the length of the vectors keeps the
+softmax away from the region where its derivatives vanish. The causal
+mask stops each position from drawing on later ones, so each
+prediction depends only on the past, and work done for earlier
+positions can be stored and reused. Position embeddings are needed
+because attention without them ignores the order of the tokens. The
+chapter ends with the derivative of attention, which shows how
+gradients pass through it, and with its cost.
 
 ```{python}
 #| include: false
@@ -33,11 +35,12 @@ rng = np.random.default_rng(10)
 
 ## Attention as a lookup {#sec-attention-lookup}
 
-A dictionary stores pairs of keys and values and answers a query by
-returning the value whose key equals the query. A model that wants to
-use earlier tokens could store, for each earlier position, a key
-describing it and a value carrying its information, and look up the
-positions that match what the current position needs. An exact lookup
+A *lookup table* (a dictionary, in programming) stores pairs of a
+*key* and a *value*, and answers a *query* by returning the value
+whose key equals the query. A model that wants to use earlier tokens
+could store, for each earlier position, a key describing it and a
+value carrying its information, and give the current position a query
+describing what it needs, to be matched against the keys. An exact lookup
 cannot be trained by gradient descent: moving the query slightly
 either changes nothing or jumps to a different value, so its
 derivative with respect to the query is zero wherever it exists.
@@ -50,7 +53,9 @@ $\mathbf{v}_1 = (1, 0)$, $\mathbf{v}_2 = (0, 1)$,
 $\mathbf{v}_3 = (0, 0)$. Score each key by its dot product with the
 query: $2, 0, 0$. Divide the scores by $2$ (the square root of the
 width 4; @sec-attention-scale explains why), giving $1, 0, 0$. The
-softmax turns the scores into weights that are positive and sum to 1,
+softmax of @def-softmax,
+$\operatorname{softmax}(\mathbf{s})_j = e^{s_j}/\sum_r e^{s_r}$,
+turns the scores into weights that are positive and sum to 1,
 $$
 \frac{(e, 1, 1)}{e + 2} \approx (0.576, 0.212, 0.212),
 $$
@@ -89,8 +94,10 @@ $$ {#eq-attention-matrix}
 where softmax acts on each row separately.
 :::
 
-In @eq-attention-matrix, entry $(t, j)$ of $QK^\top/\sqrt{d_h}$ is the
-score of key $j$ for query $t$. After the softmax, row $t$ of the
+In @eq-attention-matrix, row $t$ of $Q$ is query $t$, and row $j$ of
+$K$ and row $j$ of $V$ are the key and the value stored together as
+item $j$. Entry $(t, j)$ of the $m\times T$ matrix $QK^\top/\sqrt{d_h}$
+is the score of key $j$ for query $t$. After the softmax, row $t$ of the
 $m\times T$ matrix $A$ holds the weights that query $t$ gives to the
 $T$ keys, so each row sums to 1, and row $t$ of $AV$ is the output for
 query $t$. (In this chapter $V$ is the matrix of values; the
@@ -143,15 +150,29 @@ $-2$ with probabilities $\tfrac14$, $\tfrac12$, $\tfrac14$. Its mean is
 $0$ and its variance is
 $\tfrac14\cdot4 + \tfrac12\cdot0 + \tfrac14\cdot4 = 2$. The variance
 equals the width, and the next theorem shows that this is no
-coincidence. So the typical size of an unscaled score grows like
-$\sqrt{d_h}$, and dividing by $\sqrt{d_h}$ undoes the growth.
+coincidence. So the standard deviation of an unscaled score, its
+typical size, grows like $\sqrt{d_h}$, and dividing by $\sqrt{d_h}$
+undoes the growth.
 
-The proof uses expectation and variance on finite probability spaces (@def-expectation-finite, @def-variance-finite), independence of
-random vectors (@def-independent-finite), and three facts from @sec-stochastic: functions of independent random vectors are
-independent (@lem-independent-functions), the expectation of a product
-of independent random variables is the product of the expectations (@thm-independent-product), and
+The proof uses the probability of @sec-stochastic, on finite
+probability spaces. The expectation $\mathbb{E}[X]$ of a random
+variable $X$ is the average of its values, each weighted by its
+probability (@def-finite-probability), and its variance is the
+expectation
+$\operatorname{Var}[X] = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$ of
+the squared deviation from the mean (@def-variance-finite). Random
+vectors $\mathbf{X}$ and $\mathbf{Y}$ are independent when
+$P(\mathbf{X} = \mathbf{x}, \mathbf{Y} = \mathbf{y}) = P(\mathbf{X} = \mathbf{x})\,P(\mathbf{Y} = \mathbf{y})$
+for all values $\mathbf{x}$ and $\mathbf{y}$ (@def-independent-finite).
+We also use four facts from that chapter.
+Expectation is linear, by @thm-expectation-linear. Functions of
+independent random vectors are independent, by @lem-independent-functions.
+The expectation of a
+product of independent random variables is the product of the
+expectations, by @thm-independent-product. Finally, by the formulas
+of @lem-variance-formula,
 $\operatorname{Var}[X] = \mathbb{E}[X^2] - \mathbb{E}[X]^2$ and
-$\operatorname{Var}[cX] = c^2\operatorname{Var}[X]$ (@lem-variance-formula).
+$\operatorname{Var}[cX] = c^2\operatorname{Var}[X]$ for every real $c$.
 
 ::: {#thm-attention-scale}
 ## Size of a random dot product
@@ -293,8 +314,8 @@ maxima_zero("diff(exp(z1)/(exp(z1)+exp(z2)+exp(z3)), z2)"
             " + exp(z1)*exp(z2)/(exp(z1)+exp(z2)+exp(z3))^2", "off-diagonal entry -a1 a2")
 ```
 
-@tbl-attention-saturation shows the effect for random queries and keys
-with independent standard normal components, $T = 8$ keys, and 20,000
+The effect shows in @tbl-attention-saturation, for random queries and
+keys with independent standard normal components, $T = 8$ keys, and 20,000
 random trials for each row, with and without the scale.
 
 | $d_h$ | scores | spread of scores | mean largest weight | median largest Jacobian entry | largest weight above 0.99 |
@@ -335,22 +356,84 @@ keys. The book's model has $d_h = 4$, where the unscaled spread is
 only 2 and the effect is mild; the scale matters for wider heads, and
 the model keeps it to follow the standard design.
 
+Why divide by $\sqrt{d_h}$ and not by some other power of $d_h$, such
+as $d_h$ itself? Under the hypotheses of @thm-attention-scale, the
+score $\mathbf{q}\cdot\mathbf{k}/d_h^{\alpha}$ has variance
+$d_h/d_h^{2\alpha} = d_h^{1-2\alpha}$, which is the same for every
+width only when $\alpha = \tfrac12$. A smaller power lets the scores
+grow with the width, and the softmax saturates as in the table. A
+larger power makes them shrink. Dividing by $d_h$ gives scores of
+variance $1/d_h$, so for wide heads every score is close to $0$ and
+every weight close to $1/T$, whatever the query and the keys. At
+$d_h = 64$ with $T = 8$ keys these scores have standard deviation
+$1/8$, and in 20,000 random trials like those of the table the
+largest weight averages about $0.15$ and the smallest about $0.10$,
+on either side of the uniform weight $1/8 = 0.125$. Attention would
+then return nearly the plain average of the values, whatever the
+query. Among the powers of $d_h$, only $\sqrt{d_h}$ keeps the scores
+at variance 1 for every width, neither saturating the softmax nor flattening it.
+
+```{python}
+#| include: false
+# Dividing by d_h instead of sqrt(d_h): the exponent, and the flattened weights at d_h = 64.
+alpha_, dh_ = sp.symbols("alpha d_h", positive=True)
+sym_equal(dh_ / (dh_**alpha_) ** 2, dh_ ** (1 - 2 * alpha_), "variance d_h^(1 - 2 alpha)")
+check(sp.solve(sp.Eq(1 - 2 * alpha_, 0), alpha_) == [sp.Rational(1, 2)], "alpha = 1/2")
+flat_rng = np.random.default_rng(10)
+qf, kf = flat_rng.normal(size=(20000, 64)), flat_rng.normal(size=(20000, 8, 64))
+sf = np.einsum("nd,ntd->nt", qf, kf) / 64
+close(sf.std(), 1 / 8, "standard deviation 1/8", tol=0.01)
+af = np.exp(sf - sf.max(axis=1, keepdims=True))
+af /= af.sum(axis=1, keepdims=True)
+rounds_to(af.max(axis=1).mean(), 0.15, 2, "largest weight about 0.15")
+rounds_to(af.min(axis=1).mean(), 0.10, 2, "smallest weight about 0.10")
+```
+
 ## Self-attention and the causal mask {#sec-attention-self}
 
 In a language model the queries, keys and values all come from the
-same sequence. Each position $t = 1, \dots, T$ holds a vector
-$\mathbf{x}_t\in\mathbb{R}^d$ (in the book's model, built from the
-token's embedding, @def-embedding, as @sec-attention-position
-describes), and three $d_h\times d$ matrices $W_Q$, $W_K$, $W_V$ turn
-it into a query, a key and a value:
+same sequence. The sequence has $T$ positions, $t = 1, \dots, T$, and
+position $t$ holds the token $x_t$; the computation at position $t$
+ends in the prediction of the token at position $t + 1$. Each position
+holds a vector $\mathbf{x}_t\in\mathbb{R}^d$. In the book's model this
+vector is built from the embedding of the token, the learned vector
+$\mathbf{u}_{x_t}$ that is row $x_t$ of the embedding matrix $E$
+of @def-embedding, as @sec-attention-position describes. Three
+$d_h\times d$ matrices $W_Q$, $W_K$, $W_V$ turn it into a query, a key
+and a value:
 $$
 \mathbf{q}_t = W_Q\mathbf{x}_t, \qquad
 \mathbf{k}_t = W_K\mathbf{x}_t, \qquad
 \mathbf{v}_t = W_V\mathbf{x}_t .
 $$
-If $X$ is the $T\times d$ matrix whose row $t$ is $\mathbf{x}_t^\top$,
+Row $i$ of $W_Q$ gives component $i$ of a query as a linear
+combination of the $d$ components of the vector at that position, and
+likewise for $W_K$ and $W_V$; the same three matrices serve every
+position. If $X$ is the $T\times d$ matrix whose row $t$ is
+$\mathbf{x}_t^\top$ (one row per position, one column per component),
 then the queries are the rows of $Q = XW_Q^\top$, and similarly
 $K = XW_K^\top$ and $V = XW_V^\top$.
+
+For the smallest example take $d = d_h = 1$ and all three matrices
+equal to $1$, so $q_t = k_t = v_t = x_t$, and take two positions with
+$x_1 = 1$ and $x_2 = 2$. Position 1 has query $1$ and keys $1$ and
+$2$, so its scores are $1$ and $2$ (the scale $\sqrt{d_h}$ is $1$).
+Its weights are $(e, e^2)/(e + e^2) \approx (0.27, 0.73)$, and its
+output is
+$$
+y_1 = \frac{e\cdot1 + e^2\cdot2}{e + e^2} \approx 1.731 .
+$$
+
+```{python}
+#| include: false
+X12 = np.array([[1.0], [2.0]])
+A12, Y12_ = attention(X12, X12, X12)
+close(A12[0], np.array([np.e, np.e**2]) / (np.e + np.e**2), "weights (e, e^2)/(e + e^2)")
+rounds_to(A12[0, 0], 0.27, 2, "weight 0.27 on position 1")
+rounds_to(A12[0, 1], 0.73, 2, "weight 0.73 on position 2")
+close(Y12_[0, 0], (np.e + 2 * np.e**2) / (np.e + np.e**2), "y_1 formula")
+rounds_to(Y12_[0, 0], 1.731, 3, "y_1 = 1.731")
+```
 
 ::: {#def-self-attention}
 ## Self-attention
@@ -365,41 +448,46 @@ They are the rows of $\operatorname{Attn}(XW_Q^\top, XW_K^\top, XW_V^\top)$.
 :::
 
 In self-attention every position sees every other, including later
-ones, and that is a problem for a language model. Take $d = d_h = 1$
-and all three matrices equal to $1$, so $q_t = k_t = v_t = x_t$, and
-the inputs $x_1 = 1$, $x_2 = 2$. Position 1 has query $1$ and scores
-$1$ and $2$, so it puts weight $e^2/(e + e^2) \approx 0.73$ on position
-2. A language model predicts the token at position 2 from the vector
-at position 1; if that vector could see position 2, the model could
-read the answer instead of predicting it, and the product of its
-predictions would not be the chain rule factorisation of @thm-sequence-chain-rule. The *causal mask* removes the later
-positions.
+ones, and that is a problem for a language model. In the example,
+position 1 puts weight $0.73$ on position 2. A language model predicts
+the token at position 2 from the vector at position 1. If that vector
+could see position 2, the model could read the answer instead of
+predicting it, and the product of its predictions would not be the
+factorisation of @thm-sequence-chain-rule, in which the probability
+of each token is conditioned only on the tokens before it. The
+*causal mask* removes the later positions.
 
 ::: {#def-causal-mask}
 ## Causal mask
 
-Let $\mathbf{q}_t$, $\mathbf{k}_t$, $\mathbf{v}_t$ be as in @def-self-attention. *Causal* (or *masked*) self-attention gives
-position $t$ weights only on positions $s \le t$:
+Let $\mathbf{q}_t$, $\mathbf{k}_t$, $\mathbf{v}_t$ for
+$t = 1, \dots, T$ be as in @def-self-attention, with scores
+$s_{tj} = \mathbf{q}_t\cdot\mathbf{k}_j/\sqrt{d_h}$. *Causal* (or
+*masked*) self-attention gives position $t$ weights only on positions
+$j \le t$:
 $$
-a_{ts} = \begin{cases}
-\dfrac{e^{s_{ts}}}{\sum_{r=1}^{t} e^{s_{tr}}} & s \le t,\\[2ex]
-0 & s > t,
+a_{tj} = \begin{cases}
+\dfrac{e^{s_{tj}}}{\sum_{r=1}^{t} e^{s_{tr}}} & j \le t,\\[2ex]
+0 & j > t,
 \end{cases}
 \qquad
-s_{ts} = \frac{\mathbf{q}_t\cdot\mathbf{k}_s}{\sqrt{d_h}},
-\qquad
-\mathbf{y}_t = \sum_{s=1}^{T} a_{ts}\mathbf{v}_s .
+\mathbf{y}_t = \sum_{j=1}^{T} a_{tj}\mathbf{v}_j .
 $$
+The *causal mask* is the $T\times T$ matrix $M$ with entries
+$m_{tj} = 0$ for $j \le t$ and $m_{tj} = -\infty$ for $j > t$. With
+the convention $e^{-\infty} = 0$, the weight matrix $A = (a_{tj})$ is
+the softmax, row by row, of $S + M$, where $S = QK^\top/\sqrt{d_h}$ is
+the matrix of scores $s_{tj}$.
 :::
 
-The weight $a_{ts}$ is how much position $t$ draws on position $s$:
+The weight $a_{tj}$ is how much position $t$ draws on position $j$:
 the softmax of the scores of positions $1$ to $t$, and $0$ for later
-positions. The weight matrix $A = (a_{ts})$ is lower triangular (row
-$t$ has non-zero entries only in columns $1$ to $t$), and each row
-still sums to 1. In the example above, position 1 now attends only to
-itself, and $y_1 = 1$. Programs compute $A$ as in @eq-attention-matrix after setting the scores above the diagonal to
-$-\infty$, using $e^{-\infty} = 0$, which is the definition above in a
-different notation.
+positions. The weight matrix $A$ is lower triangular (row $t$ has
+non-zero entries only in columns $1$ to $t$), and each row still sums
+to 1. Adding $M$ hides, or *masks*, the scores of the later positions,
+which is where the name comes from, and programs compute $A$ this way.
+In the example above, position 1 now attends only to itself, and
+$y_1 = 1$.
 
 The mask has a consequence that the rest of the book relies on: the
 output at position $t$ can be computed from positions $1$ to $t$
@@ -423,15 +511,15 @@ positions, leaves $\mathbf{y}_t$ unchanged.
 :::
 
 ::: {.proof}
-(a) In @def-causal-mask the terms with $s > t$ have weight $0$, so
-$\mathbf{y}_t = \sum_{s=1}^{t} a_{ts}\mathbf{v}_s$, and for $s \le t$
-the weight $a_{ts}$ is the softmax of the $t$ scores
+(a) In @def-causal-mask the terms with $j > t$ have weight $0$, so
+$\mathbf{y}_t = \sum_{j=1}^{t} a_{tj}\mathbf{v}_j$, and for $j \le t$
+the weight $a_{tj}$ is the softmax of the $t$ scores
 $s_{t1}, \dots, s_{tt}$. That is @def-attention with the $t$ keys
 $\mathbf{k}_1, \dots, \mathbf{k}_t$ and values
 $\mathbf{v}_1, \dots, \mathbf{v}_t$.
 
 (b) By (a), $\mathbf{y}_t$ is computed from $\mathbf{q}_t$ and from
-$\mathbf{k}_s$, $\mathbf{v}_s$ for $s \le t$, and each of these is a
+$\mathbf{k}_j$, $\mathbf{v}_j$ for $j \le t$, and each of these is a
 fixed matrix times one of $\mathbf{x}_1, \dots, \mathbf{x}_t$.
 :::
 
@@ -484,8 +572,15 @@ close(Y_masked, attention(Q, K, V, causal=True)[1], "visible code matches the he
 A_vis = attention(Q, K, V, causal=True)[0]
 check(np.allclose(np.triu(A_vis, k=1), 0) and np.allclose(A_vis.sum(axis=1), 1),
       "causal weights are lower triangular with rows summing to 1")
+# The definition: row-wise softmax of S + M with the mask matrix M.
+for T_ in range(1, 7):
+    M_ = np.where(np.tril(np.ones((T_, T_), dtype=bool)), 0.0, -np.inf)
+    Qr_, Kr_ = rng.normal(size=(T_, 3)), rng.normal(size=(T_, 3))
+    SM_ = Qr_ @ Kr_.T / np.sqrt(3) + M_
+    AM_ = np.exp(SM_ - SM_.max(axis=1, keepdims=True))
+    AM_ /= AM_.sum(axis=1, keepdims=True)
+    close(AM_, attention(Qr_, Kr_, Kr_, causal=True)[0], "softmax of S + M is the causal weights")
 # The lead-in example: unmasked position 1 looks ahead; masked it does not.
-X12 = np.array([[1.0], [2.0]])
 rounds_to(attention(X12, X12, X12)[0][0, 1], 0.73, 2, "weight 0.73 on position 2")
 close(attention(X12, X12, X12, causal=True)[1][0], [1.0], "masked y_1 = 1")
 # Theorem, part (b): changing later positions or appending positions leaves y_t unchanged.
@@ -505,8 +600,10 @@ for _ in range(20):
           "causal output equals attention over the prefix")
 ```
 
-The same property makes a causal model a language model in the sense of @def-language-model. Every other operation in the book's model acts on
-each position separately, so the vector at position $t$, and with it
+The same property makes a causal model a language model in the sense
+of @def-language-model, a distribution for the next token given each
+context. Every other operation in the book's model acts on each
+position separately, so the vector at position $t$, and with it
 the prediction of the token at position $t + 1$, depends only on the
 tokens at positions $1, \dots, t$.
 
@@ -523,8 +620,9 @@ In the first halves the query $(1, 0)$ matches $\mathbf{k}_1$'s
 $(1, 0)$ and not $\mathbf{k}_2$'s $(0, 0)$; the scores are
 $1/\sqrt2$ and $0$, and the weights are about $(0.67, 0.33)$. In the
 second halves the roles swap and the weights are about $(0.33, 0.67)$.
-The two halves, called heads, draw mainly on different positions, and
-their outputs are kept side by side.
+Each half is called a *head*, here of width $d_h = 2$. The two heads
+draw mainly on different positions, and their outputs are kept side by
+side.
 
 ::: {#def-multi-head}
 ## Multi-head attention
@@ -536,17 +634,18 @@ compute $\mathbf{q}_t = W_Q\mathbf{x}_t$, $\mathbf{k}_t = W_K\mathbf{x}_t$
 and $\mathbf{v}_t = W_V\mathbf{x}_t$, and split each into $h$ blocks of
 $d_h$ consecutive components,
 $\mathbf{q}_t = (\mathbf{q}_t^{(1)}, \dots, \mathbf{q}_t^{(h)})$ and
-likewise for keys and values. *Head* $i$ applies causal self-attention (@def-causal-mask) of width $d_h$ to the $i$th blocks:
+likewise for keys and values. *Head* $i$ applies causal
+self-attention (@def-causal-mask) of width $d_h$ to the $i$th blocks:
 $$
-\mathbf{o}_t^{(i)} = \sum_{s\le t} a^{(i)}_{ts}\mathbf{v}_s^{(i)},
+\mathbf{o}_t^{(i)} = \sum_{j\le t} a^{(i)}_{tj}\mathbf{v}_j^{(i)},
 \qquad
-a^{(i)}_{ts} = \frac{e^{\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_s/\sqrt{d_h}}}
+a^{(i)}_{tj} = \frac{e^{\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_j/\sqrt{d_h}}}
 {\sum_{r\le t}e^{\mathbf{q}^{(i)}_t\cdot\mathbf{k}^{(i)}_r/\sqrt{d_h}}} .
 $$
 The heads' outputs are stacked into
 $\mathbf{o}_t = (\mathbf{o}_t^{(1)}, \dots, \mathbf{o}_t^{(h)})\in\mathbb{R}^d$,
 and the output of *multi-head attention* at position $t$ is
-$\mathbf{y}_t = W_O\mathbf{o}_t$. Without the mask (sums over all $s$
+$\mathbf{y}_t = W_O\mathbf{o}_t$. Without the mask (sums over all $j$
 and $r$ from $1$ to $T$) this is *unmasked* multi-head attention.
 :::
 
@@ -555,9 +654,14 @@ $W_Q^{(i)}\mathbf{x}_t$, where $W_Q^{(i)}$ consists of rows
 $(i-1)d_h + 1$ to $id_h$ of $W_Q$. So each head is the single-head
 attention of @sec-attention-self with its own $d_h\times d$ matrices,
 and the heads differ only in which rows of $W_Q$, $W_K$ and $W_V$
-they use. Each head has its own weights $a^{(i)}_{ts}$, and the output
-matrix $W_O$ mixes the heads' results. The scale is $1/\sqrt{d_h}$,
-the width of a head, which is the length of the dot products (@thm-attention-scale).
+they use. Each head has its own weights $a^{(i)}_{tj}$. In the
+product $W_O\mathbf{o}_t$, columns $(i-1)d_h + 1$ to $id_h$ of $W_O$
+multiply the output of head $i$, so row $k$ of the $d\times d$ matrix
+$W_O$ gives component $k$ of $\mathbf{y}_t$ as a linear combination
+of the outputs of all the heads: the *output matrix* $W_O$ mixes the
+heads' results (@exr-ch10-heads-sum). The scale is $1/\sqrt{d_h}$
+because $d_h$, the width of a head, is the length of the dot products
+in each head (@thm-attention-scale).
 
 The book's model has $d = 16$ and $h = 4$ heads of width $d_h = 4$,
 following microgpt [@karpathy2026microgpt]. Its four matrices have
@@ -616,7 +720,15 @@ $\mathbf{x}_{\pi(1)}, \dots, \mathbf{x}_{\pi(T)}$ has at position $t$
 the vector that was at position $\pi(t)$. Its *permutation matrix* is
 the $T\times T$ matrix $\Pi$ with $\Pi_{t,\pi(t)} = 1$ and all other
 entries $0$; row $t$ of $\Pi$ is $\mathbf{e}_{\pi(t)}^\top$, so row $t$
-of $\Pi X$ is row $\pi(t)$ of $X$.
+of $\Pi X$ is row $\pi(t)$ of $X$. For $T = 2$, the swap
+$\pi(1) = 2$, $\pi(2) = 1$ has permutation matrix
+$\Pi = \begin{pmatrix} 0 & 1\\ 1 & 0 \end{pmatrix}$, and the example
+says that $F(\Pi X) = \Pi F(X)$ when $F$ is unmasked self-attention
+and $X = (1, 2)^\top$. A map $F$ from $T\times d$ matrices to
+$T\times d$ matrices is *permutation equivariant* if
+$F(\Pi X) = \Pi F(X)$ for every $T\times T$ permutation matrix $\Pi$:
+reordering the rows of the input reorders the rows of the output in
+the same way.
 
 ::: {#thm-permutation-equivariance}
 ## Permutation equivariance
@@ -625,28 +737,27 @@ Let $d = hd_h$, let $W_Q$, $W_K$, $W_V$, $W_O$ be $d\times d$ matrices,
 and let $F$ be unmasked multi-head attention (@def-multi-head) with
 these matrices, written as the map from the $T\times d$ matrix $X$ with
 rows $\mathbf{x}_t^\top$ to the $T\times d$ matrix $F(X)$ with rows
-$\mathbf{y}_t^\top$. For every $T\times T$ permutation matrix $\Pi$,
+$\mathbf{y}_t^\top$. Then $F$ is permutation equivariant: for every
+$T\times T$ permutation matrix $\Pi$ and every $T\times d$ matrix $X$,
 $$
 F(\Pi X) = \Pi F(X) .
 $$
 :::
 
-Permuting the input positions permutes the outputs in the same way.
-
 ::: {.proof}
 Let $X' = \Pi X$, so $\mathbf{x}'_t = \mathbf{x}_{\pi(t)}$. The
 queries, keys and values are computed position by position, so
-$\mathbf{q}'_t = \mathbf{q}_{\pi(t)}$, $\mathbf{k}'_s = \mathbf{k}_{\pi(s)}$
-and $\mathbf{v}'_s = \mathbf{v}_{\pi(s)}$, and the same holds for
+$\mathbf{q}'_t = \mathbf{q}_{\pi(t)}$, $\mathbf{k}'_j = \mathbf{k}_{\pi(j)}$
+and $\mathbf{v}'_j = \mathbf{v}_{\pi(j)}$, and the same holds for
 their blocks. For head $i$,
 $$
 \mathbf{o}'^{(i)}_t
-= \frac{\sum_{s=1}^{T} e^{\mathbf{q}^{(i)}_{\pi(t)}\cdot\mathbf{k}^{(i)}_{\pi(s)}/\sqrt{d_h}}\,\mathbf{v}^{(i)}_{\pi(s)}}
+= \frac{\sum_{j=1}^{T} e^{\mathbf{q}^{(i)}_{\pi(t)}\cdot\mathbf{k}^{(i)}_{\pi(j)}/\sqrt{d_h}}\,\mathbf{v}^{(i)}_{\pi(j)}}
 {\sum_{r=1}^{T} e^{\mathbf{q}^{(i)}_{\pi(t)}\cdot\mathbf{k}^{(i)}_{\pi(r)}/\sqrt{d_h}}} .
 $$
-As $s$ runs over $1, \dots, T$, so does $\pi(s)$, each value once, so
-the sum in the numerator is the same sum as with $\pi(s)$ replaced by
-$s$, and the same holds for the denominator. So
+As $j$ runs over $1, \dots, T$, so does $\pi(j)$, each value once, so
+the sum in the numerator is the same sum as with $\pi(j)$ replaced by
+$j$, and the same holds for the denominator. So
 $\mathbf{o}'^{(i)}_t = \mathbf{o}^{(i)}_{\pi(t)}$ for every head, hence
 $\mathbf{o}'_t = \mathbf{o}_{\pi(t)}$ and
 $\mathbf{y}'_t = W_O\mathbf{o}_{\pi(t)} = \mathbf{y}_{\pi(t)}$. Row $t$
@@ -663,6 +774,10 @@ close(Y12, [(np.e + 2 * np.e**2) / (np.e + np.e**2), (np.e**2 + 2 * np.e**4) / (
 rounds_to(Y12[0], 1.731, 3, "y_1 = 1.731")
 rounds_to(Y12[1], 1.881, 3, "y_2 = 1.881")
 close(Y21, Y12[::-1], "swapped inputs give swapped outputs")
+Pi2 = np.array([[0.0, 1.0], [1.0, 0.0]])
+close(Pi2 @ X12, X12[::-1], "the swap matrix reverses the rows")
+close(attention(Pi2 @ X12, Pi2 @ X12, Pi2 @ X12)[1], Pi2 @ attention(X12, X12, X12)[1],
+      "F(Pi X) = Pi F(X) for the swap")
 for _ in range(20):
     T, h, dh = rng.integers(2, 8), rng.integers(1, 5), rng.integers(1, 4)
     d = h * dh
@@ -707,14 +822,40 @@ information, its prediction after position $t$ would depend only on
 the token at $t$ and on which tokens came before, not on their order:
 it would give the same distribution for the letter after `emm` as after
 `mem`. Position embeddings remove this limitation by giving each
-position a vector of its own.
+position a vector of its own, added to the vector of whatever token
+sits there.
+
+In the example with $d = 1$, add the number $p_1 = 0$ at position 1
+and $p_2 = 1$ at position 2. The inputs $(1, 2)$ become $(1, 3)$, and
+the swapped inputs $(2, 1)$ become $(2, 2)$, which is not a reordering
+of $(1, 3)$. Unmasked self-attention now gives the outputs
+$(2.762, 2.995)$ for the first order and $(2, 2)$ for the second, so
+the two orders are told apart.
+
+```{python}
+#| include: false
+P12 = np.array([[0.0], [1.0]])
+Xa_, Xb_ = X12 + P12, X12[::-1] + P12
+close(Xa_.ravel(), [1, 3], "inputs (1, 3)")
+close(Xb_.ravel(), [2, 2], "inputs (2, 2)")
+Ya_, Yb_ = attention(Xa_, Xa_, Xa_)[1].ravel(), attention(Xb_, Xb_, Xb_)[1].ravel()
+close(Ya_, [(np.e + 3 * np.e**3) / (np.e + np.e**3), (np.e**3 + 3 * np.e**9) / (np.e**3 + np.e**9)],
+      "outputs for (1, 3)")
+rounds_to(Ya_[0], 2.762, 3, "2.762")
+rounds_to(Ya_[1], 2.995, 3, "2.995")
+close(Yb_, [2, 2], "outputs for (2, 2)")
+check(not np.allclose(Yb_, Ya_[::-1]), "the orders are told apart")
+```
 
 ::: {#def-position-embedding}
 ## Position embeddings
 
-Let $V$ be a vocabulary with embedding matrix $E$ of width $d$ (@def-embedding), and let $T_{\max}$ be the longest context the model
-accepts. A *position embedding matrix* is a $T_{\max}\times d$ matrix
-$E_{\mathrm{pos}}$ with rows
+Let $V$ be a vocabulary with an embedding matrix $E$ of width $d$, as
+in @def-embedding, so that token $a$ has embedding $\mathbf{u}_a$, row
+$a$ of $E$ written as a column. Let $T_{\max}$, the *context length*,
+be the largest number of positions the model accepts. A *position
+embedding matrix* is a $T_{\max}\times d$ matrix $E_{\mathrm{pos}}$
+with rows
 $\mathbf{p}_1^\top, \dots, \mathbf{p}_{T_{\max}}^\top$. The input
 vector at position $t$ of a sequence of tokens $x_1, x_2, \dots$ is the
 sum of the token embedding and the position embedding,
@@ -726,7 +867,8 @@ $$
 Row $t$ of $E_{\mathrm{pos}}$ is the vector added at position $t$,
 whatever token sits there. Permuting the tokens now moves the vectors
 $\mathbf{u}_{x_t}$ but leaves the $\mathbf{p}_t$ in place, so the new
-inputs are not a permutation of the old ones, and @thm-permutation-equivariance says nothing about them. The book's
+inputs are not a permutation of the old ones, and the conclusion
+of @thm-permutation-equivariance does not apply to them. The book's
 model, like microgpt, learns $E_{\mathrm{pos}}$ along with the other
 parameters, with $T_{\max} = 16$ and $d = 16$, so 256 parameters;
 microgpt adds the two embeddings and then normalises the sum (@sec-small-gpt). The original transformer used fixed vectors built
@@ -794,8 +936,8 @@ $$ {#eq-attention-jacobian}
 
 The Jacobian is a $d_v\times d_h$ matrix: entry $(i, l)$ is the rate at
 which component $i$ of the output changes per unit increment of
-component $l$ of the query. The second form reads as a weighted
-covariance between values and keys: each position contributes the
+component $l$ of the query. The second form has the shape of a
+covariance, an average of products of deviations: each position contributes the
 deviation of its value from the output, times the deviation of its key
 from the average key, weighted by its attention weight.
 
@@ -931,7 +1073,7 @@ The first term grows linearly with $T$ and the second quadratically,
 so attention takes $O(T^2d)$ time (at most a constant multiple of
 $T^2d$ operations), on top of the $O(Td^2)$ for the matrices, and storing the weights takes $T^2$
 numbers per head. The causal mask halves the attention term, since
-only the $T(T+1)/2$ pairs with $s \le t$ are needed. The quadratic
+only the $T(T+1)/2$ pairs with $j \le t$ are needed. The quadratic
 term overtakes the linear one when $T > 2d$. For the book's model,
 $T \le 16$ and $d = 16$, so the matrices cost
 $4\cdot16\cdot16^2 = 16{,}384$ multiplications and the masked
@@ -959,8 +1101,8 @@ check(count_mults(16, 16, 4, True) == 16384 + 4352, "masked count")
 
 ## Notes and further reading {#sec-attention-notes}
 
-@bahdanau2014neural introduced attention for translation, with scores
-from a small network rather than a dot product. @vaswani2017attention
+Attention was introduced for translation by @bahdanau2014neural,
+with scores from a small network rather than a dot product. @vaswani2017attention
 built the transformer from scaled dot-product attention, with several
 heads, a causal mask for generation and position encodings, and their
 footnote 4 gives the variance argument of @thm-attention-scale. @jurafsky2026speech [ch. 7] explain attention, causal masking and
@@ -1001,7 +1143,7 @@ $\operatorname{Var}[\mathbf{q}\cdot\mathbf{k}] = d_h\sigma^2\tau^2$.
 
 (b) In the book's model, at initialisation each entry of $W_Q$ and
 $W_K$ is drawn independently from the normal distribution with mean 0
-and standard deviation $0.08$, and after normalisation the input
+and standard deviation $0.08$, and after RMS normalisation (@sec-small-gpt) the input
 vectors to attention have squared norm close to 16. Treat a query
 $\mathbf{q} = W_Q\mathbf{x}$ and a key $\mathbf{k} = W_K\mathbf{x}'$
 as coming from fixed vectors with $\|\mathbf{x}\|^2 = \|\mathbf{x}'\|^2 = 16$.
@@ -1013,7 +1155,7 @@ training?
 
 ::: {#exr-ch10-cache-cost}
 A model generates $T$ tokens one at a time with one head of causal
-attention. Count the dot products $\mathbf{q}_t\cdot\mathbf{k}_s$ it
+attention. Count the dot products $\mathbf{q}_t\cdot\mathbf{k}_j$ it
 computes (a) with a key–value cache, and (b) if at each step it
 recomputes attention for every position so far from scratch. Evaluate
 both for $T = 16$.

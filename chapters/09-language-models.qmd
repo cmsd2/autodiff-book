@@ -15,8 +15,8 @@ pairs, and we can compute them by counting. The same model written as
 a small neural network introduces embeddings, the vectors that
 represent tokens in every later model, and shows how a neural model
 shares information between tokens. The chapter ends with the problem
-that counting cannot solve, longer contexts, which @sec-attention takes
-up.
+that counting cannot solve, predicting from many earlier characters at
+once, which @sec-attention takes up.
 
 ```{python}
 #| include: false
@@ -131,10 +131,17 @@ the probability that the name begins `av`, counted directly: one name
 in five. The probability of the first two letters is the probability
 of the first, times the probability of the second given the first.
 
-We work on finite probability spaces (@def-finite-probability). A
-random variable there is a real-valued function on the outcomes; since
+We work on finite probability spaces (@def-finite-probability): a
+finite set $\Omega$ of outcomes, each outcome $\omega$ with a
+probability $P(\omega) \ge 0$, these probabilities adding up to 1. An
+event is a subset $A$ of $\Omega$, and its probability $P(A)$ is the
+sum of the probabilities of its outcomes. In the example, $\Omega$ is
+the set of the five names, each with probability $1/5$, and "starts
+with $\mathtt{a}$" is the event $\{\mathtt{anna}, \mathtt{ava}, \mathtt{ada}\}$.
+A random variable is a real-valued function on the outcomes; since
 tokens are numbered, a function from the outcomes to the tokens is a
-random variable too. We write
+random variable too. The first letter $X_1$ and the second letter
+$X_2$ of the chosen name are random variables of this kind. We write
 $P(X_1 = x_1, \dots, X_t = x_t)$ for the probability of the event
 $\{X_1 = x_1\}\cap\dots\cap\{X_t = x_t\}$ that all $t$ statements hold.
 
@@ -207,7 +214,7 @@ P(X_1 = \mathtt{a}, X_2 = \mathtt{v})
 = P(X_1 = \mathtt{a})\,P(X_2 = \mathtt{v} \mid X_1 = \mathtt{a})
 = \frac35\cdot\frac13 = \frac15 .
 $$
-@exr-ch9-chain applies the theorem in the other order, conditioning
+The theorem applies in the other order too: @exr-ch9-chain conditions
 on the second letter first.
 :::
 
@@ -215,6 +222,7 @@ on the second letter first.
 #| include: false
 p_a = sum(F(1, 5) for w in CORPUS if w[0] == "a")
 p_av = sum(F(1, 5) for w in CORPUS if w[:2] == "av")
+check({w for w in CORPUS if w[0] == "a"} == {"anna", "ava", "ada"}, "the event 'starts with a'")
 check(p_a == F(3, 5), "P(X1 = a) = 3/5")
 check(p_av / p_a == F(1, 3), "P(X2 = v | X1 = a) = 1/3")
 check(p_a * (p_av / p_a) == F(1, 5) == p_av, "chain rule for the av example")
@@ -228,9 +236,9 @@ for x in [(0, 1, 2), (3, 3, 0), (2, 0, 1)]:
     close(p1 * p2 * p3, joint[x], "chain rule on a random joint distribution")
 ```
 
-@thm-sequence-chain-rule says that to give a probability to every
-sequence, it is enough to give, for every possible beginning of a
-sequence, a probability distribution for the next token. That is how
+By @thm-sequence-chain-rule, to give a probability to every sequence
+it is enough to give, for every possible beginning of a sequence, a
+probability distribution for the next token. That is how
 every model in this book is built.
 
 ::: {#def-language-model}
@@ -241,7 +249,8 @@ Let $V$ be a vocabulary containing a boundary token $\diamond$. A
 $(x_0, x_1, \dots, x_{t-1})$ of tokens with $x_0 = \diamond$, a
 probability distribution $p(\,\cdot \mid x_0, \dots, x_{t-1})$ on $V$.
 The sequence $(x_0, \dots, x_{t-1})$ is the *context*. A *document*
-$w = (w_1, \dots, w_n)$ of tokens other than $\diamond$ is wrapped as
+(a name, in our examples) is a finite sequence
+$w = (w_1, \dots, w_n)$ of tokens other than $\diamond$. It is wrapped as
 $x = (\diamond, w_1, \dots, w_n, \diamond)$ and receives the
 probability
 $$
@@ -251,8 +260,17 @@ $$ {#eq-lm-document-probability}
 
 The product has one factor for each of the $n + 1$ predictions: the
 probability that the model gives to the token that actually comes
-next, given everything before it. The model's distributions play the
-part of the conditional probabilities in @eq-lm-chain-rule. A model
+next, given everything before it. For `emma` the five factors are
+$$
+p(\mathtt{e}\mid\diamond),\quad
+p(\mathtt{m}\mid\diamond\,\mathtt{e}),\quad
+p(\mathtt{m}\mid\diamond\,\mathtt{e}\,\mathtt{m}),\quad
+p(\mathtt{a}\mid\diamond\,\mathtt{e}\,\mathtt{m}\,\mathtt{m}),\quad
+p(\diamond\mid\diamond\,\mathtt{e}\,\mathtt{m}\,\mathtt{m}\,\mathtt{a}),
+$$
+one for each prediction listed in @sec-lm-tokens. The model's
+distributions play the part of the conditional probabilities in the
+chain rule (@eq-lm-chain-rule). A model
 *generates* a document by the same route: start from $\diamond$, draw
 a token from $p(\,\cdot \mid \diamond)$, append it, draw the next token
 from the distribution for the longer context, and stop when it draws
@@ -303,8 +321,13 @@ every wrapped name, and $n_a = \sum_b n_{ab}$ for the number of pairs
 that start with $a$. By @eq-lm-document-probability, the probability
 of one name is a product with one factor $p(b \mid a)$ for each of its
 pairs. The names are treated as independent, so the probability of the
-corpus is the product over all names, and gathering equal factors
-gives the *likelihood* (@def-likelihood)
+corpus is the product over all names. @sec-probability-loss calls the
+probability that a model gives to the observed data, viewed as a
+function of the model's parameters with the data held fixed, the
+*likelihood* (@def-likelihood). There the observations were
+independent draws from one distribution; here each factor is a
+transition probability, but the idea is the same. Gathering equal
+factors, the likelihood of the bigram model is
 $$
 \prod_{a, b\in V} p(b \mid a)^{n_{ab}} ,
 $$
@@ -314,7 +337,8 @@ logarithm, the *log-likelihood*
 $$
 \ell(p) = \sum_{a, b\in V} n_{ab}\ln p(b\mid a) ,
 $$ {#eq-lm-log-likelihood}
-where terms with $n_{ab} = 0$ count as $0$, and $\ell(p) = -\infty$ if
+where $p$ stands for the whole table of transition probabilities,
+terms with $n_{ab} = 0$ count as $0$, and $\ell(p) = -\infty$ if
 $p(b\mid a) = 0$ for a pair with $n_{ab} > 0$.
 
 Counting the pairs takes a few lines of code. Here the boundary token
@@ -342,7 +366,7 @@ for (a, b), c in counts.items():
 check(sum(counts.values()) == n_counts.sum() == 22, "22 pairs")
 ```
 
-@tbl-lm-bigram-counts shows the same counts as a matrix. Row $a$ lists
+The same counts form the matrix in @tbl-lm-bigram-counts. Row $a$ lists
 what followed $a$, the entry in column $b$ is $n_{ab}$, and the last
 column is the row total $n_a$.
 
@@ -374,8 +398,16 @@ check(list(n_counts.sum(axis=1)) == [5, 8, 1, 2, 2, 2, 2], "row totals")
 check(list(n_counts[INDEX["a"]]) == [5, 0, 1, 0, 0, 1, 1], "what follows a")
 ```
 
-The maximiser of @eq-lm-log-likelihood comes from an inequality that @sec-probability-loss proves as @thm-gibbs. We need it in a form with
-counts that allows zero probabilities, so we prove that form here.
+The maximiser of @eq-lm-log-likelihood comes from Gibbs' inequality,
+which @sec-probability-loss proves as @thm-gibbs: for distributions
+$p$ and $q$ on a finite set, the Kullback–Leibler divergence
+$\sum_{v} p(v)\ln\bigl(p(v)/q(v)\bigr)$, summed over the $v$ with
+$p(v) > 0$, is non-negative, and it is zero only when $q = p$. The
+next lemma is that inequality with $p$ the observed frequencies
+$c_i/N$, written in terms of counts. The proof of @thm-bigram-mle
+applies it to one row at a time, where zero counts and zero
+probabilities both occur, so we prove it directly with those cases
+explicit.
 
 ::: {#lem-gibbs-counts}
 Let $c_1, \dots, c_m \ge 0$ with $N = c_1 + \dots + c_m > 0$, and let
@@ -548,9 +580,9 @@ predictions for `eva` have probabilities $\frac25, \frac12, 1, \frac58$,
 and their *geometric mean*, the fourth root of their product, is
 $(1/8)^{1/4} \approx 0.595$. For `anna` the geometric mean of the five
 probabilities is $(3/256)^{1/5} \approx 0.411$. Per prediction, the
-model finds `eva` easier. Its reciprocal, $8^{1/4} \approx 1.68$ for
-`eva`, reads as a number of choices: the model is as uncertain, on
-average, as if it were choosing among $1.68$ equally likely tokens at
+model finds `eva` easier. The reciprocal of the geometric mean,
+$8^{1/4} \approx 1.68$ for `eva`, reads as a number of choices: the
+model is as uncertain, on average, as if it were choosing among $1.68$ equally likely tokens at
 each step. Taking logarithms turns the geometric mean into an ordinary
 average, which is easier to compute and to differentiate.
 
@@ -572,13 +604,31 @@ $$ {#eq-lm-perplexity}
 The loss is the average, over the predictions, of how surprised the
 model is by the correct token ($-\ln p_i$ is $0$ when $p_i = 1$ and
 grows as $p_i$ falls), and the perplexity is the reciprocal of the
-geometric mean of the $p_i$. The loss is the cross-entropy of @def-cross-entropy averaged over the predictions, and it is the
-quantity that training minimises. For a bigram model on a corpus with
-pair counts $n_{ab}$, the loss is $-\ell(p)/N$, with
+geometric mean of the $p_i$. The loss $L$ is the average negative
+log-likelihood of @sec-probability-loss, the loss that every model in
+the book uses, and training minimises it. For a bigram model on
+a corpus with pair counts $n_{ab}$, the loss is $-\ell(p)/N$, with
 $N = \sum_{a,b} n_{ab}$ and $\ell$ from @eq-lm-log-likelihood, so
 minimising the loss and maximising the likelihood are the same
-problem. The next result makes the reading of perplexity as a number
-of choices exact.
+problem.
+
+The loss is also an average of cross-entropies. The cross-entropy of
+a distribution $q$ relative to a distribution $r$ on $V$ is
+$H(r, q) = -\sum_{v\in V} r(v)\ln q(v)$ (@def-cross-entropy), the
+average of $-\ln q$ when outcomes are drawn from $r$. For a token $a$
+with $n_a > 0$, let $\hat r_a(b) = n_{ab}/n_a$ be the observed
+frequency of $b$ after $a$. Grouping the predictions by the current
+token,
+$$
+L = -\frac1N\sum_{a, b\in V} n_{ab}\ln p(b\mid a)
+= \sum_{a:\, n_a > 0}\frac{n_a}{N}\,H\bigl(\hat r_a,\ p(\,\cdot\mid a)\bigr) .
+$$
+In words, the loss averages, over the current tokens and weighted by
+how often each occurs, the cross-entropy of the model's prediction
+relative to the frequencies observed after that token.
+
+The next result makes the reading of perplexity as a number of choices
+exact.
 
 ::: {#thm-uniform-perplexity}
 ## The uniform model
@@ -650,6 +700,16 @@ rounds_to(loss_dana, 1.66, 2, "dana loss 1.66")
 close(ppl_dana, 4050 ** 0.2, "dana perplexity formula")
 rounds_to(ppl_dana, 5.27, 2, "dana perplexity 5.27")
 rounds_to(math.log(27), 3.30, 2, "ln 27 is about 3.30")
+# The loss as an average of cross-entropies of the rows.
+for model, loss_model in ((p_mle, loss_mle), (p_add, loss_add)):
+    ce_avg = 0.0
+    for i in range(7):
+        n_i = n_counts[i].sum()
+        if n_i > 0:
+            ce = -sum(n_counts[i, j] / n_i * math.log(model[i][j]) for j in range(7)
+                      if n_counts[i, j] > 0)
+            ce_avg += n_i / 22 * ce
+    close(ce_avg, loss_model, "loss is the weighted average of row cross-entropies")
 uniform = [[F(1, 7)] * 7 for _ in range(7)]
 lu, pu, _ = average_nll(CORPUS, uniform)
 close(lu, math.log(7), "uniform loss ln 7")
@@ -709,7 +769,9 @@ The book's model has an embedding matrix with $|V| = 27$ rows and
 width $d = 16$. An embedding alone predicts nothing. The smallest
 neural language model maps the embedding of the current token to one
 score for each possible next token, and turns the scores into
-probabilities with the softmax function of @def-softmax. Continue the
+probabilities with the softmax function of @def-softmax,
+$\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$, which
+turns any vector into positive numbers that sum to 1. Continue the
 example with a second $3\times2$ matrix $W$, with rows
 $(1, 0)$, $(0, 1)$ and $(1, 1)$. After token 2, the scores are
 $W\mathbf{u}_2 = (2, -1, 1)$, one for each token that could come next,
@@ -729,7 +791,8 @@ p(\,\cdot \mid a) = \operatorname{softmax}(\mathbf{z}_a),
 \qquad \mathbf{z}_a = W\mathbf{u}_a = WE^\top\mathbf{e}_a .
 $$
 The vector $\mathbf{z}_a \in \mathbb{R}^{|V|}$ holds the *logits*
-(scores before the softmax) for the token after $a$. The
+(the scores that go into the softmax, as in @def-softmax) for the
+token after $a$. The
 $|V|\times|V|$ matrix $Z = WE^\top$ is the *logit matrix*.
 :::
 
@@ -853,9 +916,14 @@ because $\ln$ is continuous at positive numbers. So the loss of
 $p_\delta$ tends to $L^*$.
 :::
 
-In case (b), gradient descent keeps lowering the loss by pushing the
-logits of unseen pairs towards $-\infty$, and the weights grow without
-bound.
+In case (b), the models $p_\delta$ approach the infimum as the
+probabilities of unseen pairs tend to $0$. A softmax entry satisfies
+$e^{z_b}/\sum_c e^{z_c} \ge e^{z_b - \max_c z_c}/|V|$, so it can tend
+to $0$ only if its logit falls without bound below the largest logit
+in its column, and then some entries of $E$ or $W$ grow without bound.
+Gradient descent behaves this way: on the five names, with
+$d = |V| = 7$, it keeps lowering the loss towards the infimum while the
+weights keep growing.
 
 ```{python}
 #| include: false
@@ -885,6 +953,25 @@ for delta in (0.5, 0.1, 1e-2, 1e-4, 1e-6):
     check(loss_mle < Ld < prev, "loss of p_delta decreases towards L*")
     prev = Ld
 close(prev, loss_mle, "loss of p_delta tends to L*", tol=1e-4)
+# The softmax lower bound used after the corollary.
+for _ in range(200):
+    zr = rng.normal(scale=3, size=7)
+    check((softmax(zr) >= np.exp(zr - zr.max()) / 7 - 1e-15).all(), "softmax lower bound")
+# Gradient descent on the five names (zero counts): the loss falls towards L*
+# and the weights keep growing.
+Eg0 = rng.normal(scale=0.1, size=(7, 7))
+Wg0 = rng.normal(scale=0.1, size=(7, 7))
+losses_gd, norms_gd = [], []
+for step in range(1, 40001):
+    P = softmax(Wg0 @ Eg0.T)
+    G = (P * n_counts.sum(axis=1) - n_counts.T) / 22
+    Wg0, Eg0 = Wg0 - G @ Eg0, Eg0 - G.T @ Wg0
+    if step in (1000, 5000, 20000, 40000):
+        losses_gd.append(-(n_counts.T * np.log(softmax(Wg0 @ Eg0.T))).sum() / 22)
+        norms_gd.append(np.sqrt((Eg0**2).sum() + (Wg0**2).sum()))
+check(all(x > y > loss_mle for x, y in zip(losses_gd, losses_gd[1:])), "GD loss keeps falling")
+check(losses_gd[-1] - loss_mle < 0.01, "GD loss approaches L*")
+check(all(x < y for x, y in zip(norms_gd, norms_gd[1:])), "GD weights keep growing")
 ```
 
 ### How a neural model shares information
@@ -1052,7 +1139,7 @@ attention, the subject of @sec-attention.
 
 ## Notes and further reading {#sec-lm-notes}
 
-@shannon1948mathematical [§3] builds a series of approximations to
+Section 3 of @shannon1948mathematical builds a series of approximations to
 English from letter and word frequencies, including letter-pair
 (bigram) models, and treats them as Markov processes. @jurafsky2026speech [ch. 3] cover $n$-gram models, perplexity and
 smoothing at greater length, and @chen1999empirical compare smoothing
