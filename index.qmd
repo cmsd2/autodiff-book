@@ -1,0 +1,75 @@
+# Preface {.unnumbered}
+
+A modern language model is a function with a great many adjustable
+numbers in it. Training it means changing those numbers, a little at a
+time, so that the function's output gets closer to the text it learns
+from. Each change needs the same piece of information: how the error
+responds to a small change in every one of the numbers. That
+information is a gradient, and the method that computes it efficiently
+is reverse-mode automatic differentiation.
+
+This book develops the mathematics behind that process, from the
+derivative of a function of several variables to a complete, small
+transformer language model. It proves what it can and says plainly
+where it relies on a result proved elsewhere. Code appears where it
+shows an idea more clearly than prose, but the book is about the
+mathematics, and no chapter depends on running a program.
+
+## What the book assumes
+
+The book assumes a first university course in calculus, vectors and
+matrices, such as the Open University modules MST124 and MST125. In
+particular it assumes:
+
+- differentiation and integration of functions of one variable,
+  including the chain rule, the product rule and the mean value
+  theorem;
+- vectors in two and three dimensions, and the dot product;
+- matrices, their products, and the eigenvalues and eigenvectors of
+  small matrices;
+- linear transformations of the plane;
+- first-order differential equations and recurrence relations;
+- elementary counting and probability;
+- direct proof, proof by contradiction and proof by induction.
+
+Everything beyond that is developed in the text. The first part of
+the book extends calculus to functions of several variables, which
+the later parts use constantly.
+
+## How the book is organised
+
+The book has five parts.
+
+1. **Calculus in several variables** defines the derivative of a
+   function from $\mathbb{R}^n$ to $\mathbb{R}^m$ as a linear map and
+   proves the chain rule.
+2. **Automatic differentiation** turns the chain rule into
+   algorithms. Forward mode computes derivatives alongside values.
+   Reverse mode computes a whole gradient for a small multiple of the
+   cost of evaluating the function.
+3. **Learning as optimisation** studies gradient descent and its
+   stochastic and adaptive variants, including Adam.
+4. **Neural networks** introduces networks as compositions of simple
+   functions, and loss functions as measures of how well a probability
+   model fits data.
+5. **Language models** builds up to attention and assembles a small
+   transformer of the kind used in modern language models.
+
+Each chapter ends with exercises. Solutions are in the appendix.
+
+## How the claims are checked
+
+Every computed example and exercise solution in this book is checked
+by computer algebra (SymPy and Maxima) each time the book is built,
+and a failed check stops the build. Selected theorems are also proved
+in the Lean proof assistant. These checks stay out of the text unless
+they help explain something, but their sources are part of the book's
+repository.
+
+## Conventions
+
+Vectors are columns and are printed in bold, as in
+$\mathbf{x} = (x_1, \dots, x_n)^\top$. The norm $\|\mathbf{x}\|$ is
+always the Euclidean length. Theorems, definitions and examples are
+numbered within each chapter, and the symbol $\square$ marks the end
+of a proof.

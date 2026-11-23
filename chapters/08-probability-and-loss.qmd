@@ -1,0 +1,13 @@
+# Probability and loss functions {#sec-probability-loss}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- discrete distributions and likelihood
+- maximum likelihood estimation
+- entropy, cross-entropy and Kullback–Leibler divergence
+- the softmax function and its Jacobian
+- numerical stability through log-sum-exp
+:::

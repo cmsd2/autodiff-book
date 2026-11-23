@@ -1,0 +1,57 @@
+project:
+  type: book
+  output-dir: _book
+  execute-dir: project
+
+book:
+  title: "From the Chain Rule to the Transformer"
+  subtitle: "The mathematics of automatic differentiation and neural language models"
+  author: "C. Dawes"
+  date: last-modified
+  chapters:
+    - index.qmd
+    - part: "Calculus in several variables"
+      chapters:
+        - chapters/01-several-variables.qmd
+        - chapters/02-chain-rule.qmd
+    - part: "Automatic differentiation"
+      chapters:
+        - chapters/03-forward-mode.qmd
+        - chapters/04-reverse-mode.qmd
+    - part: "Learning as optimisation"
+      chapters:
+        - chapters/05-gradient-descent.qmd
+        - chapters/06-stochastic-methods.qmd
+    - part: "Neural networks"
+      chapters:
+        - chapters/07-networks.qmd
+        - chapters/08-probability-and-loss.qmd
+    - part: "Language models"
+      chapters:
+        - chapters/09-language-models.qmd
+        - chapters/10-attention.qmd
+        - chapters/11-small-gpt.qmd
+    - references.qmd
+  appendices:
+    - chapters/a-floating-point.qmd
+    - chapters/b-solutions.qmd
+
+bibliography: references.bib
+
+execute:
+  echo: false
+  warning: false
+
+jupyter: python3
+
+format:
+  html:
+    theme: cosmo
+    number-depth: 2
+  pdf:
+    documentclass: scrbook
+    classoption: [oneside]
+    pdf-engine: lualatex
+    number-depth: 2
+    toc-depth: 2
+    colorlinks: true

@@ -1,0 +1,13 @@
+# Attention {#sec-attention}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- attention as a differentiable lookup
+- scaled dot-product attention and why the scale is the square root of the dimension
+- causal masking
+- multi-head attention
+- permutation equivariance and position embeddings
+:::

@@ -1,0 +1,831 @@
+# Functions of several variables {#sec-several-variables}
+
+The small language model in the last chapter of this book has 4192
+adjustable numbers, and training it means answering one question
+thousands of times: if every one of those numbers changes a little,
+how much does the error change? For a function of one variable the
+derivative answers that question. This chapter builds the
+corresponding idea for functions of many variables.
+
+The central idea is that a differentiable function looks, close to a
+point, like a linear map. That linear map is the derivative. Its
+matrix holds the partial derivatives, and for a function with a single
+output it can be written as a vector, the gradient, which points in
+the direction of steepest increase. The rest of the book computes
+gradients and uses them.
+
+```{python}
+#| include: false
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, sym_equal
+
+rng = np.random.default_rng(1)
+```
+
+## Vectors and lengths in $\mathbb{R}^n$ {#sec-rn}
+
+::: {#def-rn}
+## The space $\mathbb{R}^n$
+
+For a positive integer $n$, $\mathbb{R}^n$ is the set of columns
+$\mathbf{x} = (x_1, \dots, x_n)^\top$ of $n$ real numbers. Vectors are
+added and multiplied by real numbers component by component. The
+*standard basis vector* $\mathbf{e}_j$ has $1$ in position $j$ and $0$
+everywhere else.
+:::
+
+Every vector is a combination of the standard basis vectors,
+$\mathbf{x} = x_1\mathbf{e}_1 + \dots + x_n\mathbf{e}_n$. When $n$ is 2
+or 3 these are the vectors of the plane and of space, written as
+columns.
+
+::: {#def-dot}
+## Dot product and norm
+
+The *dot product* of $\mathbf{x}$ and $\mathbf{y}$ in $\mathbb{R}^n$
+is
+$$
+\mathbf{x}\cdot\mathbf{y} = x_1y_1 + \dots + x_ny_n = \mathbf{x}^\top\mathbf{y},
+$$
+and the *norm* of $\mathbf{x}$ is
+$\|\mathbf{x}\| = \sqrt{\mathbf{x}\cdot\mathbf{x}}$. A vector of norm
+1 is a *unit vector*.
+:::
+
+The dot product is symmetric and linear in each argument. The norm
+satisfies $\|\mathbf{x}\| \ge 0$, with equality only when
+$\mathbf{x} = \mathbf{0}$, and $\|c\mathbf{x}\| = |c|\,\|\mathbf{x}\|$
+for every real $c$. In the plane and in space, $\|\mathbf{x}\|$ is the
+length of $\mathbf{x}$, and $\mathbf{x}\cdot\mathbf{y}$ equals
+$\|\mathbf{x}\|\,\|\mathbf{y}\|\cos\theta$ where $\theta$ is the angle
+between the vectors. In higher dimensions there is no picture to
+measure an angle on. The next theorem supplies what a picture would.
+
+::: {#thm-cauchy-schwarz}
+## Cauchy–Schwarz inequality
+
+For all $\mathbf{x}$ and $\mathbf{y}$ in $\mathbb{R}^n$,
+$$
+|\mathbf{x}\cdot\mathbf{y}| \le \|\mathbf{x}\|\,\|\mathbf{y}\|.
+$$
+Equality holds if and only if one of the vectors is a scalar multiple
+of the other.
+:::
+
+::: {.proof}
+If $\mathbf{y} = \mathbf{0}$, both sides are $0$, and
+$\mathbf{y} = 0\mathbf{x}$. Suppose $\mathbf{y} \ne \mathbf{0}$. For
+every real $t$,
+$$
+q(t) = \|\mathbf{x} - t\mathbf{y}\|^2
+     = \|\mathbf{x}\|^2 - 2t\,\mathbf{x}\cdot\mathbf{y} + t^2\|\mathbf{y}\|^2
+     \ge 0 .
+$$
+This quadratic in $t$ has positive leading coefficient and never takes
+a negative value, so its discriminant is not positive:
+$4(\mathbf{x}\cdot\mathbf{y})^2 - 4\|\mathbf{x}\|^2\|\mathbf{y}\|^2 \le 0$.
+Taking square roots gives the inequality.
+
+If equality holds, the discriminant is $0$, so $q$ has a real root
+$t_0$. Then $\|\mathbf{x} - t_0\mathbf{y}\| = 0$, and so
+$\mathbf{x} = t_0\mathbf{y}$. Conversely, if $\mathbf{x} = c\mathbf{y}$
+then $|\mathbf{x}\cdot\mathbf{y}| = |c|\,\|\mathbf{y}\|^2 =
+\|\mathbf{x}\|\,\|\mathbf{y}\|$, and the case
+$\mathbf{y} = c\mathbf{x}$ is the same with the roles exchanged.
+:::
+
+So the ratio $\mathbf{x}\cdot\mathbf{y}/(\|\mathbf{x}\|\,\|\mathbf{y}\|)$
+always lies between $-1$ and $1$, and we can define the angle between
+two non-zero vectors in any dimension as the $\theta$ in $[0, \pi]$
+whose cosine is that ratio.
+
+::: {#cor-triangle}
+## Triangle inequality
+
+For all $\mathbf{x}$ and $\mathbf{y}$ in $\mathbb{R}^n$,
+$\|\mathbf{x} + \mathbf{y}\| \le \|\mathbf{x}\| + \|\mathbf{y}\|$.
+:::
+
+::: {.proof}
+By @thm-cauchy-schwarz,
+$$
+\|\mathbf{x}+\mathbf{y}\|^2
+= \|\mathbf{x}\|^2 + 2\,\mathbf{x}\cdot\mathbf{y} + \|\mathbf{y}\|^2
+\le \|\mathbf{x}\|^2 + 2\|\mathbf{x}\|\,\|\mathbf{y}\| + \|\mathbf{y}\|^2
+= (\|\mathbf{x}\| + \|\mathbf{y}\|)^2 ,
+$$
+and both sides of the result are non-negative.
+:::
+
+```{python}
+#| include: false
+# Cauchy–Schwarz and the triangle inequality on random vectors, including
+# the equality case for parallel vectors. The proofs are also checked in Lean.
+for n in (1, 2, 5, 50):
+    for _ in range(200):
+        x, y = rng.normal(size=n), rng.normal(size=n)
+        check(abs(x @ y) <= np.linalg.norm(x) * np.linalg.norm(y) + 1e-12, "Cauchy-Schwarz")
+        check(np.linalg.norm(x + y) <= np.linalg.norm(x) + np.linalg.norm(y) + 1e-12, "triangle")
+    x = rng.normal(size=n)
+    close(abs(x @ (-3 * x)), np.linalg.norm(x) * np.linalg.norm(-3 * x), "Cauchy-Schwarz equality")
+```
+
+## Linear maps and matrices {#sec-linear-maps}
+
+Linear transformations of the plane send lines through the origin to
+lines through the origin, and each one is given by a $2\times2$
+matrix. The same holds in any dimension.
+
+::: {#def-linear}
+## Linear map
+
+A function $L\colon \mathbb{R}^n \to \mathbb{R}^m$ is *linear* if
+$L(\mathbf{x} + \mathbf{y}) = L(\mathbf{x}) + L(\mathbf{y})$ and
+$L(c\mathbf{x}) = cL(\mathbf{x})$ for all vectors $\mathbf{x}$,
+$\mathbf{y}$ and all real numbers $c$.
+:::
+
+::: {#thm-matrix-of-linear}
+For every linear map $L\colon\mathbb{R}^n\to\mathbb{R}^m$ there is
+exactly one $m\times n$ matrix $A$ with $L(\mathbf{x}) = A\mathbf{x}$
+for all $\mathbf{x}$. The $j$th column of $A$ is $L(\mathbf{e}_j)$.
+:::
+
+::: {.proof}
+Let $A$ be the matrix whose $j$th column is $L(\mathbf{e}_j)$. By
+linearity,
+$$
+L(\mathbf{x}) = L\Bigl(\sum_{j} x_j\mathbf{e}_j\Bigr)
+             = \sum_j x_j L(\mathbf{e}_j) = A\mathbf{x},
+$$
+because $A\mathbf{x}$ is the combination of the columns of $A$ with
+weights $x_1, \dots, x_n$. If $B$ is another matrix with
+$B\mathbf{x} = L(\mathbf{x})$ for all $\mathbf{x}$, then column $j$ of
+$B$ is $B\mathbf{e}_j = L(\mathbf{e}_j)$, which is column $j$ of $A$.
+:::
+
+From now on we often use the same letter for a linear map and its
+matrix. Composing linear maps corresponds to multiplying their
+matrices, exactly as for transformations of the plane:
+$L(M(\mathbf{x})) = A(B\mathbf{x}) = (AB)\mathbf{x}$.
+
+Later proofs need a bound on how far a linear map can stretch a
+vector.
+
+::: {#lem-linear-bound}
+For an $m\times n$ matrix $A = (a_{ij})$, let
+$\|A\|_F = \bigl(\sum_{i,j} a_{ij}^2\bigr)^{1/2}$. Then
+$\|A\mathbf{x}\| \le \|A\|_F\,\|\mathbf{x}\|$ for every $\mathbf{x}$
+in $\mathbb{R}^n$.
+:::
+
+::: {.proof}
+Let $\mathbf{r}_i$ be row $i$ of $A$, written as a column. Component
+$i$ of $A\mathbf{x}$ is $\mathbf{r}_i\cdot\mathbf{x}$, and by
+@thm-cauchy-schwarz $(\mathbf{r}_i\cdot\mathbf{x})^2 \le
+\|\mathbf{r}_i\|^2\|\mathbf{x}\|^2$. Summing over $i$ gives
+$\|A\mathbf{x}\|^2 \le \bigl(\sum_i\|\mathbf{r}_i\|^2\bigr)\|\mathbf{x}\|^2
+= \|A\|_F^2\,\|\mathbf{x}\|^2$.
+:::
+
+The number $\|A\|_F$ is the *Frobenius norm* of $A$. It is rarely the
+smallest constant that works, but any constant is enough for what
+follows.
+
+```{python}
+#| include: false
+for _ in range(300):
+    m, n = rng.integers(1, 6, size=2)
+    A, x = rng.normal(size=(m, n)), rng.normal(size=n)
+    check(np.linalg.norm(A @ x) <= np.linalg.norm(A, "fro") * np.linalg.norm(x) + 1e-12,
+          "Frobenius bound")
+```
+
+## Limits and continuity {#sec-limits}
+
+For a function of one variable, $f(x) \to L$ as $x \to a$ means that
+$|f(x) - L|$ can be made as small as we like by taking $x$ close
+enough to $a$. In $\mathbb{R}^n$ a point can approach $\mathbf{a}$
+from infinitely many directions, and the definition has to cover all
+of them at once. It does so by measuring closeness with the norm.
+
+::: {#def-limit}
+## Limit and continuity
+
+Let $f$ take values in $\mathbb{R}^m$ and be defined at every
+$\mathbf{x}$ with $0 < \|\mathbf{x} - \mathbf{a}\| < r$, for some
+$r > 0$. Then $f(\mathbf{x}) \to \mathbf{L}$ as
+$\mathbf{x} \to \mathbf{a}$ if for every $\varepsilon > 0$ there is a
+$\delta > 0$ such that
+$$
+\|f(\mathbf{x}) - \mathbf{L}\| < \varepsilon
+\quad\text{whenever}\quad 0 < \|\mathbf{x} - \mathbf{a}\| < \delta .
+$$
+The function $f$ is *continuous* at $\mathbf{a}$ if it is defined at
+$\mathbf{a}$ and $f(\mathbf{x}) \to f(\mathbf{a})$ as
+$\mathbf{x} \to \mathbf{a}$.
+:::
+
+The rules for limits of one variable carry over with the same proofs:
+sums, products and quotients (with non-zero denominator) of continuous
+functions are continuous, and so are compositions. Each coordinate
+function $\mathbf{x} \mapsto x_j$ is continuous, because
+$|x_j - a_j| \le \|\mathbf{x} - \mathbf{a}\|$. So every polynomial in
+$x_1, \dots, x_n$ is continuous, and so is any expression built from
+polynomials with $\exp$, $\sin$, $\cos$ and $\log$, wherever it is
+defined. A function with values in $\mathbb{R}^m$ is continuous if and
+only if each of its components is, because each component is at most
+the norm in absolute value, and the norm is at most the sum of the
+components' absolute values.
+
+What is new is that a limit must not depend on the direction of
+approach.
+
+::: {#exm-no-limit}
+Let $f(x, y) = xy/(x^2 + y^2)$ for $(x, y) \ne (0, 0)$, and
+$f(0, 0) = 0$. Along the line $y = mx$, for $x \ne 0$,
+$$
+f(x, mx) = \frac{mx^2}{x^2 + m^2x^2} = \frac{m}{1 + m^2} .
+$$
+So $f$ is constant along each line through the origin, but the
+constant depends on the line: it is $0$ along the $x$-axis and $1/2$
+along the line $y = x$. Every disc around the origin contains points
+of both lines, so no number $L$ is within $1/4$ of both values, and
+$f$ has no limit at the origin. In particular $f$ is not continuous
+there.
+:::
+
+```{python}
+#| include: false
+x, y, m, t = sp.symbols("x y m t", real=True)
+f_nolimit = x * y / (x**2 + y**2)
+sym_equal(f_nolimit.subs(y, m * x), m / (1 + m**2), "f(x, mx)")
+check(f_nolimit.subs({x: 1, y: 0}) == 0 and f_nolimit.subs({x: 1, y: 1}) == sp.Rational(1, 2),
+      "values 0 and 1/2 on the two lines")
+```
+
+## Partial derivatives {#sec-partial}
+
+::: {#def-partial}
+## Partial derivative
+
+Let $f$ be a real-valued function defined on a disc around
+$\mathbf{a}$ in $\mathbb{R}^n$. The *partial derivative* of $f$ with
+respect to $x_j$ at $\mathbf{a}$ is
+$$
+\frac{\partial f}{\partial x_j}(\mathbf{a})
+= \lim_{t\to0}\frac{f(\mathbf{a} + t\mathbf{e}_j) - f(\mathbf{a})}{t},
+$$
+if this limit exists.
+:::
+
+This is the ordinary derivative of the function of one variable
+$t \mapsto f(\mathbf{a} + t\mathbf{e}_j)$. In practice we hold every
+variable except $x_j$ fixed and differentiate with respect to $x_j$,
+using the familiar rules.
+
+::: {#exm-partials}
+Let $f(x, y) = x^2y + \sin(xy)$. Treating $y$ as a constant,
+$\partial f/\partial x = 2xy + y\cos(xy)$, and treating $x$ as a
+constant, $\partial f/\partial y = x^2 + x\cos(xy)$. At $(1, 0)$ these
+are $0$ and $2$.
+:::
+
+```{python}
+#| include: false
+f_ex = x**2 * y + sp.sin(x * y)
+sym_equal(sp.diff(f_ex, x), 2*x*y + y*sp.cos(x*y), "f_x")
+sym_equal(sp.diff(f_ex, y), x**2 + x*sp.cos(x*y), "f_y")
+check(sp.diff(f_ex, x).subs({x: 1, y: 0}) == 0, "f_x(1,0)")
+check(sp.diff(f_ex, y).subs({x: 1, y: 0}) == 2, "f_y(1,0)")
+maxima_zero("diff(x^2*y + sin(x*y), x) - (2*x*y + y*cos(x*y))", "f_x in Maxima")
+```
+
+A partial derivative looks along one coordinate direction only, and
+the next example shows how much that misses.
+
+::: {#exm-partials-not-enough}
+Return to the function $f$ of @exm-no-limit. On the $x$-axis,
+$f(t, 0) = 0$ for every $t$, so $\partial f/\partial x(0,0) = 0$, and
+in the same way $\partial f/\partial y(0,0) = 0$. Both partial
+derivatives exist at the origin, yet $f$ is not even continuous there.
+:::
+
+```{python}
+#| include: false
+check(sp.limit((f_nolimit.subs({x: t, y: 0}) - 0) / t, t, 0) == 0, "f_x(0,0)")
+check(sp.limit((f_nolimit.subs({x: 0, y: t}) - 0) / t, t, 0) == 0, "f_y(0,0)")
+```
+
+So the existence of partial derivatives is too weak to serve as the
+definition of differentiability. Whatever "differentiable" means, it
+should imply continuity, as it does for functions of one variable.
+
+## The derivative as a linear map {#sec-derivative}
+
+A function $f$ of one variable is differentiable at $a$, with
+derivative $f'(a)$, when
+$$
+\frac{f(a+h) - f(a) - f'(a)h}{h} \to 0 \quad\text{as } h \to 0 .
+$$
+That is, $f(a+h) \approx f(a) + f'(a)h$ with an error that is small
+compared with $h$. The map $h \mapsto f'(a)h$ is a linear map from
+$\mathbb{R}$ to $\mathbb{R}$, and this is the form of the definition
+that generalises.
+
+A set $U \subseteq \mathbb{R}^n$ is *open* if around each of its
+points it contains a disc of some positive radius. Functions in the
+rest of the chapter are defined on open sets, so a point of $U$ can
+be approached from every direction without leaving $U$.
+
+::: {#def-differentiable}
+## Differentiable function
+
+Let $U \subseteq \mathbb{R}^n$ be open and $f\colon U \to
+\mathbb{R}^m$. The function $f$ is *differentiable* at
+$\mathbf{a} \in U$ if there is a linear map
+$L\colon\mathbb{R}^n\to\mathbb{R}^m$ such that
+$$
+\lim_{\mathbf{h}\to\mathbf{0}}
+\frac{\|f(\mathbf{a} + \mathbf{h}) - f(\mathbf{a}) - L\mathbf{h}\|}{\|\mathbf{h}\|} = 0 .
+$$ {#eq-derivative}
+The map $L$ is the *derivative* of $f$ at $\mathbf{a}$, written
+$Df(\mathbf{a})$. The function is *differentiable on $U$* if it is
+differentiable at every point of $U$.
+:::
+
+If we write
+$\mathbf{r}(\mathbf{h}) = f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) - Df(\mathbf{a})\mathbf{h}$,
+the definition says
+$$
+f(\mathbf{a}+\mathbf{h}) = f(\mathbf{a}) + Df(\mathbf{a})\mathbf{h} + \mathbf{r}(\mathbf{h}),
+\qquad \frac{\|\mathbf{r}(\mathbf{h})\|}{\|\mathbf{h}\|} \to 0 .
+$$
+Near $\mathbf{a}$, $f$ is a constant plus a linear map, plus a
+remainder that is small compared with the step $\mathbf{h}$. The
+definition says "the" derivative, which the next theorem justifies.
+
+::: {#thm-derivative-unique}
+If two linear maps $L$ and $M$ both satisfy @eq-derivative, then
+$L = M$.
+:::
+
+::: {.proof}
+Fix a unit vector $\mathbf{u}$ and put $\mathbf{h} = t\mathbf{u}$ with
+$t > 0$. By the triangle inequality,
+$$
+\|(L - M)(t\mathbf{u})\|
+\le \|f(\mathbf{a}+t\mathbf{u}) - f(\mathbf{a}) - L(t\mathbf{u})\|
+  + \|f(\mathbf{a}+t\mathbf{u}) - f(\mathbf{a}) - M(t\mathbf{u})\| .
+$$
+Divide by $t = \|t\mathbf{u}\|$. The left side becomes
+$\|(L - M)\mathbf{u}\|$, which does not depend on $t$, and as
+$t \to 0$ the right side tends to $0$. So $(L - M)\mathbf{u} =
+\mathbf{0}$ for every unit vector $\mathbf{u}$. Every non-zero vector
+is a multiple of a unit vector, so $L - M$ sends every vector to
+$\mathbf{0}$.
+:::
+
+::: {#thm-differentiable-continuous}
+If $f$ is differentiable at $\mathbf{a}$, then $f$ is continuous at
+$\mathbf{a}$.
+:::
+
+::: {.proof}
+Let $A$ be the matrix of $Df(\mathbf{a})$. Then
+$f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) = A\mathbf{h} + \mathbf{r}(\mathbf{h})$.
+By @lem-linear-bound, $\|A\mathbf{h}\| \le \|A\|_F\,\|\mathbf{h}\|$,
+which tends to $0$. Also
+$\|\mathbf{r}(\mathbf{h})\| = \|\mathbf{h}\| \cdot
+\|\mathbf{r}(\mathbf{h})\|/\|\mathbf{h}\|$, a product of two
+quantities that tend to $0$. So $f(\mathbf{a}+\mathbf{h}) \to
+f(\mathbf{a})$.
+:::
+
+By this theorem, the function of @exm-no-limit is not differentiable
+at the origin, although both its partial derivatives exist there.
+
+The derivative is a linear map, so by @thm-matrix-of-linear it has a
+matrix. The next theorem identifies the entries of that matrix as
+partial derivatives, and that is how derivatives are computed.
+
+::: {#thm-jacobian}
+## The Jacobian matrix
+
+Let $f = (f_1, \dots, f_m)$ be differentiable at $\mathbf{a}$. Then
+every partial derivative $\partial f_i/\partial x_j(\mathbf{a})$
+exists, and the matrix of $Df(\mathbf{a})$ is the $m\times n$
+*Jacobian matrix*
+$$
+J_f(\mathbf{a}) =
+\begin{pmatrix}
+\dfrac{\partial f_1}{\partial x_1}(\mathbf{a}) & \cdots & \dfrac{\partial f_1}{\partial x_n}(\mathbf{a})\\
+\vdots & & \vdots\\
+\dfrac{\partial f_m}{\partial x_1}(\mathbf{a}) & \cdots & \dfrac{\partial f_m}{\partial x_n}(\mathbf{a})
+\end{pmatrix}.
+$$
+:::
+
+::: {.proof}
+Put $\mathbf{h} = t\mathbf{e}_j$ in @eq-derivative and let $t \to 0$.
+Then
+$$
+\left\|\frac{f(\mathbf{a}+t\mathbf{e}_j) - f(\mathbf{a})}{t} - Df(\mathbf{a})\mathbf{e}_j\right\|
+= \frac{\|\mathbf{r}(t\mathbf{e}_j)\|}{\|t\mathbf{e}_j\|} \to 0 .
+$$
+So the vector of difference quotients tends to $Df(\mathbf{a})\mathbf{e}_j$,
+and therefore so does each of its components:
+$$
+\frac{f_i(\mathbf{a}+t\mathbf{e}_j) - f_i(\mathbf{a})}{t} \to
+\bigl(Df(\mathbf{a})\mathbf{e}_j\bigr)_i .
+$$
+The left side is the difference quotient that defines
+$\partial f_i/\partial x_j(\mathbf{a})$, which therefore exists. The
+right side is entry $(i, j)$ of the matrix of $Df(\mathbf{a})$,
+because column $j$ of that matrix is $Df(\mathbf{a})\mathbf{e}_j$.
+:::
+
+Two special cases are worth stating. For a real-valued function
+($m = 1$) the Jacobian is the row
+$\bigl(\partial f/\partial x_1 \;\cdots\; \partial f/\partial x_n\bigr)$.
+For $n = m = 1$ it is the $1\times1$ matrix $(f'(a))$, so the new
+definition agrees with the old one.
+
+@thm-jacobian tells us how to compute a derivative that exists, but
+@exm-partials-not-enough shows that partial derivatives can exist
+without a derivative. The next theorem gives a practical test that
+covers every function we meet.
+
+::: {#thm-continuous-partials}
+## Continuous partial derivatives
+
+Suppose every partial derivative $\partial f_i/\partial x_j$ exists at
+every point of an open disc around $\mathbf{a}$, and is continuous at
+$\mathbf{a}$. Then $f$ is differentiable at $\mathbf{a}$.
+:::
+
+::: {.proof}
+A vector-valued function satisfies @eq-derivative if and only if each
+component $f_i$ satisfies it with row $i$ of $L$, because for every
+vector $\mathbf{v}$, each $|v_i| \le \|\mathbf{v}\|$ and
+$\|\mathbf{v}\| \le |v_1| + \dots + |v_m|$. So it is enough to treat
+a real-valued $f$. Write $g_j = \partial f/\partial x_j$. We show that
+$$
+\frac{\bigl|f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) - \sum_j g_j(\mathbf{a})h_j\bigr|}{\|\mathbf{h}\|} \to 0 .
+$$
+
+Take $\mathbf{h}$ with $\|\mathbf{h}\|$ less than the radius of the
+disc, and walk from $\mathbf{a}$ to $\mathbf{a} + \mathbf{h}$ one
+coordinate at a time, through the points
+$$
+\mathbf{p}_0 = \mathbf{a}, \qquad
+\mathbf{p}_k = \mathbf{a} + h_1\mathbf{e}_1 + \dots + h_k\mathbf{e}_k
+\quad (k = 1, \dots, n),
+$$
+so that $\mathbf{p}_n = \mathbf{a}+\mathbf{h}$. Every point on the
+segment from $\mathbf{p}_{k-1}$ to $\mathbf{p}_k$ has the form
+$\mathbf{a} + (h_1, \dots, h_{k-1}, sh_k, 0, \dots, 0)^\top$ with
+$0 \le s \le 1$, so its distance from $\mathbf{a}$ is at most
+$\|\mathbf{h}\|$, and the segment lies in the disc. Along the segment
+only $x_k$ changes. The function
+$\varphi(s) = f(\mathbf{p}_{k-1} + s\mathbf{e}_k)$, for $s$ between
+$0$ and $h_k$, has derivative $\varphi'(s) = g_k(\mathbf{p}_{k-1} +
+s\mathbf{e}_k)$, so by the mean value theorem there is a point
+$\mathbf{q}_k$ on the segment with
+$$
+f(\mathbf{p}_k) - f(\mathbf{p}_{k-1}) = h_k\,g_k(\mathbf{q}_k) .
+$$
+(If $h_k = 0$ both sides are $0$, and we take
+$\mathbf{q}_k = \mathbf{p}_{k-1}$.) Adding these $n$ equations,
+$f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) = \sum_k h_k\,g_k(\mathbf{q}_k)$,
+and so
+$$
+\Bigl|f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) - \sum_k g_k(\mathbf{a})h_k\Bigr|
+= \Bigl|\sum_k h_k\bigl(g_k(\mathbf{q}_k) - g_k(\mathbf{a})\bigr)\Bigr|
+\le \|\mathbf{h}\|\sum_k \bigl|g_k(\mathbf{q}_k) - g_k(\mathbf{a})\bigr| ,
+$$
+using $|h_k| \le \|\mathbf{h}\|$. As $\mathbf{h} \to \mathbf{0}$, each
+$\mathbf{q}_k \to \mathbf{a}$, because
+$\|\mathbf{q}_k - \mathbf{a}\| \le \|\mathbf{h}\|$, and each $g_k$ is
+continuous at $\mathbf{a}$. So the sum tends to $0$, which proves the
+claim.
+:::
+
+A function whose partial derivatives all exist and are continuous on
+$U$ is *continuously differentiable* on $U$. Every function built from
+polynomials, $\exp$, $\log$, $\sin$ and $\cos$ by arithmetic and
+composition is continuously differentiable wherever it is defined,
+because its partial derivatives are built the same way. The one
+important exception in this book is the function
+$\max(x, 0)$, which has a corner at $0$, and @sec-networks deals with
+it.
+
+::: {#exm-jacobian}
+Let $f\colon\mathbb{R}^2\to\mathbb{R}^2$ be
+$f(x, y) = (x^2y,\; x + \sin y)$. Its partial derivatives are
+continuous everywhere, so by @thm-continuous-partials and
+@thm-jacobian it is differentiable everywhere, with
+$$
+J_f(x, y) = \begin{pmatrix} 2xy & x^2\\ 1 & \cos y\end{pmatrix},
+\qquad
+J_f(1, 0) = \begin{pmatrix} 0 & 1\\ 1 & 1\end{pmatrix}.
+$$
+So near $(1, 0)$,
+$f(1 + h_1, h_2) \approx (0, 1) + (h_2,\; h_1 + h_2)$. For
+$\mathbf{h} = (0.1, 0.1)$ the approximation gives $(0.1, 1.2)$, and
+the true value is $f(1.1, 0.1) = (0.121, 1.19983\ldots)$. The errors,
+about $0.021$ and $0.00017$, are small compared with
+$\|\mathbf{h}\| \approx 0.141$. Halving $\mathbf{h}$ divides the first
+error by about 4 and the second by about 8, so both shrink faster than
+$\mathbf{h}$ itself, as @eq-derivative requires.
+:::
+
+```{python}
+#| include: false
+F = sp.Matrix([x**2 * y, x + sp.sin(y)])
+J = F.jacobian([x, y])
+check(J == sp.Matrix([[2*x*y, x**2], [1, sp.cos(y)]]), "Jacobian of f")
+check(J.subs({x: 1, y: 0}) == sp.Matrix([[0, 1], [1, 1]]), "J(1,0)")
+f_num = lambda p: np.array([p[0]**2 * p[1], p[0] + np.sin(p[1])])
+lin = lambda h: np.array([0, 1]) + np.array([[0, 1], [1, 1]]) @ h
+h = np.array([0.1, 0.1])
+close(f_num(np.array([1.1, 0.1])), [0.121, 1.1 + np.sin(0.1)], "f(1.1, 0.1)")
+check(abs(np.sin(0.1) + 1.1 - 1.19983) < 1e-5, "1.19983...")
+err = np.abs(f_num(np.array([1, 0]) + h) - lin(h))
+close(err, [0.021, 0.00017], "approximation errors", tol=3e-3)
+close(np.linalg.norm(h), 0.141, "norm of h", tol=1e-3)
+err_half = np.abs(f_num(np.array([1, 0]) + h / 2) - lin(h / 2))
+close(err / err_half, [4, 8], "halving h divides the errors by about 4 and 8", tol=0.05)
+```
+
+## The gradient {#sec-gradient}
+
+For a real-valued function, the case of a loss, the Jacobian is a
+single row. It is convenient to stand it upright.
+
+::: {#def-gradient}
+## Gradient
+
+If $f\colon U\to\mathbb{R}$ is differentiable at $\mathbf{a}$, its
+*gradient* at $\mathbf{a}$ is the column vector
+$$
+\nabla f(\mathbf{a}) = \Bigl(\frac{\partial f}{\partial x_1}(\mathbf{a}),
+\dots, \frac{\partial f}{\partial x_n}(\mathbf{a})\Bigr)^\top ,
+$$
+so that $Df(\mathbf{a})\mathbf{h} = \nabla f(\mathbf{a})\cdot\mathbf{h}$
+for every $\mathbf{h}$.
+:::
+
+::: {#def-directional}
+## Directional derivative
+
+For a unit vector $\mathbf{u}$, the *directional derivative* of $f$ at
+$\mathbf{a}$ in the direction $\mathbf{u}$ is
+$$
+D_{\mathbf{u}}f(\mathbf{a})
+= \lim_{t\to0}\frac{f(\mathbf{a}+t\mathbf{u}) - f(\mathbf{a})}{t},
+$$
+if the limit exists.
+:::
+
+The partial derivatives are the directional derivatives in the
+directions $\mathbf{e}_1, \dots, \mathbf{e}_n$.
+
+::: {#thm-directional}
+If $f$ is differentiable at $\mathbf{a}$, then for every unit vector
+$\mathbf{u}$ the directional derivative exists and
+$$
+D_{\mathbf{u}}f(\mathbf{a}) = \nabla f(\mathbf{a})\cdot\mathbf{u} .
+$$
+:::
+
+::: {.proof}
+Put $\mathbf{h} = t\mathbf{u}$ in @eq-derivative. Since
+$\|t\mathbf{u}\| = |t|$,
+$$
+\left|\frac{f(\mathbf{a}+t\mathbf{u}) - f(\mathbf{a})}{t}
+- \nabla f(\mathbf{a})\cdot\mathbf{u}\right|
+= \frac{|r(t\mathbf{u})|}{\|t\mathbf{u}\|} \to 0
+\quad\text{as } t \to 0 .
+$$
+:::
+
+The next theorem is the reason gradients matter for learning.
+
+::: {#thm-steepest}
+## Steepest ascent
+
+Let $f$ be differentiable at $\mathbf{a}$ with
+$\nabla f(\mathbf{a}) \ne \mathbf{0}$. Among all unit vectors
+$\mathbf{u}$, the directional derivative $D_{\mathbf{u}}f(\mathbf{a})$
+is largest for $\mathbf{u} = \nabla f(\mathbf{a})/\|\nabla f(\mathbf{a})\|$,
+where it equals $\|\nabla f(\mathbf{a})\|$, and smallest for the
+opposite unit vector, where it equals $-\|\nabla f(\mathbf{a})\|$.
+:::
+
+::: {.proof}
+By @thm-directional and @thm-cauchy-schwarz,
+$|D_{\mathbf{u}}f(\mathbf{a})| = |\nabla f(\mathbf{a})\cdot\mathbf{u}|
+\le \|\nabla f(\mathbf{a})\|\,\|\mathbf{u}\| = \|\nabla f(\mathbf{a})\|$,
+so every directional derivative lies between
+$-\|\nabla f(\mathbf{a})\|$ and $\|\nabla f(\mathbf{a})\|$. For
+$\mathbf{u} = \nabla f(\mathbf{a})/\|\nabla f(\mathbf{a})\|$,
+$$
+\nabla f(\mathbf{a})\cdot\mathbf{u}
+= \frac{\nabla f(\mathbf{a})\cdot\nabla f(\mathbf{a})}{\|\nabla f(\mathbf{a})\|}
+= \|\nabla f(\mathbf{a})\| ,
+$$
+and replacing $\mathbf{u}$ by $-\mathbf{u}$ changes the sign.
+:::
+
+So the gradient points uphill, in the direction in which $f$
+increases fastest, and $-\nabla f(\mathbf{a})$ points downhill.
+Gradient descent, the subject of @sec-gradient-descent, changes the
+parameters of a model by a small step in the direction of minus the
+gradient of its loss. @sec-forward-mode and @sec-reverse-mode show how
+to compute that gradient when $n$ is in the thousands or the billions.
+
+::: {#exm-steepest}
+Let $f(x, y) = x^2 + 3y^2$ and $\mathbf{a} = (1, 1)$. Then
+$\nabla f(x, y) = (2x, 6y)$, so $\nabla f(1, 1) = (2, 6)$ with norm
+$2\sqrt{10} \approx 6.32$, and the direction of steepest descent is
+$-(1, 3)/\sqrt{10}$. The minimum of $f$ is at the origin, which lies
+in the direction $-(1, 1)/\sqrt{2}$ from $\mathbf{a}$: steepest
+descent does not head straight for the minimum. The level curves of
+$f$ are ellipses, and the gradient is perpendicular to them
+(@sec-chain-rule proves this), so it crosses each ellipse at a right
+angle instead of pointing at the centre. @sec-gradient-descent
+shows how this makes gradient descent zigzag along long, narrow
+valleys.
+:::
+
+```{python}
+#| include: false
+f_bowl = x**2 + 3 * y**2
+grad = sp.Matrix([sp.diff(f_bowl, v) for v in (x, y)])
+check(grad == sp.Matrix([2*x, 6*y]), "gradient of the bowl")
+g11 = grad.subs({x: 1, y: 1})
+sym_equal(g11.norm(), 2 * sp.sqrt(10), "norm of the gradient")
+close(float(2 * sp.sqrt(10)), 6.32, "2 sqrt 10", tol=1e-3)
+check(-g11 / g11.norm() == -sp.Matrix([1, 3]) / sp.sqrt(10), "steepest descent direction")
+# Steepest ascent on a fine grid of unit vectors (theorem also checked in Lean).
+angles = np.linspace(0, 2 * np.pi, 100001)
+d = 2 * np.cos(angles) + 6 * np.sin(angles)
+close(d.max(), 2 * np.sqrt(10), "max directional derivative", tol=1e-8)
+close(d.min(), -2 * np.sqrt(10), "min directional derivative", tol=1e-8)
+close([np.cos(angles[d.argmax()]), np.sin(angles[d.argmax()])], np.array([1, 3]) / np.sqrt(10),
+      "maximising direction", tol=1e-4)
+```
+
+## Three derivatives used throughout the book {#sec-three-derivatives}
+
+Three kinds of function recur in every model in this book: affine
+maps, functions applied to each component of a vector, and quadratic
+forms.
+
+::: {#exm-affine}
+## Affine maps
+
+Let $A$ be an $m\times n$ matrix, $\mathbf{b}$ in $\mathbb{R}^m$ and
+$f(\mathbf{x}) = A\mathbf{x} + \mathbf{b}$. Then
+$f(\mathbf{a}+\mathbf{h}) - f(\mathbf{a}) - A\mathbf{h} = \mathbf{0}$
+exactly, so $f$ is differentiable everywhere with
+$Df(\mathbf{a}) = A$. A linear map is its own derivative.
+:::
+
+::: {#exm-elementwise}
+## Functions applied componentwise
+
+Let $\sigma\colon\mathbb{R}\to\mathbb{R}$ be differentiable, and apply
+it to each component of a vector:
+$F(\mathbf{x}) = (\sigma(x_1), \dots, \sigma(x_n))^\top$. Component $i$
+of the remainder is
+$\sigma(a_i + h_i) - \sigma(a_i) - \sigma'(a_i)h_i$. It is $0$ when
+$h_i = 0$. Otherwise, divided by $|h_i|$, it tends to $0$ because
+$\sigma$ is differentiable at $a_i$, and since
+$|h_i| \le \|\mathbf{h}\|$, it also tends to $0$ when divided by
+$\|\mathbf{h}\|$. So $F$ is differentiable, and its Jacobian is
+diagonal:
+$$
+J_F(\mathbf{a}) = \begin{pmatrix}
+\sigma'(a_1) & & \\ & \ddots & \\ & & \sigma'(a_n)
+\end{pmatrix}.
+$$
+Component $i$ of $F$ depends only on $x_i$, and the zeros off the
+diagonal record that.
+:::
+
+::: {#exm-quadratic}
+## Quadratic forms
+
+Let $A$ be an $n\times n$ matrix and
+$f(\mathbf{x}) = \mathbf{x}^\top A\mathbf{x} = \sum_{i,j}a_{ij}x_ix_j$.
+Expanding,
+$$
+f(\mathbf{a}+\mathbf{h})
+= \mathbf{a}^\top A\mathbf{a} + \mathbf{a}^\top A\mathbf{h}
+  + \mathbf{h}^\top A\mathbf{a} + \mathbf{h}^\top A\mathbf{h}
+= f(\mathbf{a}) + (A + A^\top)\mathbf{a}\cdot\mathbf{h} + \mathbf{h}^\top A\mathbf{h},
+$$
+because $\mathbf{h}^\top A\mathbf{a} = (A\mathbf{a})\cdot\mathbf{h}$
+and $\mathbf{a}^\top A\mathbf{h} = (A^\top\mathbf{a})\cdot\mathbf{h}$.
+By @thm-cauchy-schwarz and @lem-linear-bound, the remainder satisfies
+$|\mathbf{h}^\top A\mathbf{h}| \le \|\mathbf{h}\|\,\|A\mathbf{h}\|
+\le \|A\|_F\,\|\mathbf{h}\|^2$, so divided by $\|\mathbf{h}\|$ it
+tends to $0$. Hence
+$$
+\nabla f(\mathbf{a}) = (A + A^\top)\mathbf{a},
+$$
+which is $2A\mathbf{a}$ when $A$ is symmetric. For $n = 1$ this is
+the familiar $\frac{d}{dx}(ax^2) = 2ax$.
+:::
+
+```{python}
+#| include: false
+# Quadratic-form gradient for a general 3x3 matrix, in SymPy and in Maxima.
+X = sp.Matrix(sp.symbols("x1:4", real=True))
+A3 = sp.Matrix(3, 3, sp.symbols("a1:10", real=True))
+q = (X.T * A3 * X)[0, 0]
+gq = sp.Matrix([sp.diff(q, v) for v in X])
+check(sp.simplify(gq - (A3 + A3.T) * X) == sp.zeros(3, 1), "gradient of x^T A x")
+maxima_zero("block([A: matrix([a,b],[c,d]), X: matrix([x],[y])], "
+            "expand(diff((transpose(X).A.X), x) - ((A + transpose(A)).X)[1][1]))",
+            "quadratic form gradient in Maxima")
+# Componentwise functions: diagonal Jacobian.
+v = sp.symbols("v1:4", real=True)
+Fe = sp.Matrix([sp.tanh(vi) for vi in v])
+check(Fe.jacobian(v) == sp.diag(*[1 - sp.tanh(vi)**2 for vi in v]), "componentwise Jacobian")
+```
+
+## Notes and further reading {#sec-notes-several}
+
+@zorich2015mathematical [ch. 8]
+develops differential calculus in several variables with full proofs
+and many more examples. @deisenroth2020mathematics [ch. 5] covers the
+same material from the point of view of machine learning, with an
+emphasis on computing gradients of vector and matrix expressions.
+
+## Exercises {#sec-exercises-several}
+
+::: {#exr-ch1-partials}
+Find the three partial derivatives of $f(x, y, z) = x e^{yz}$, and
+$\nabla f(1, 0, 2)$.
+:::
+
+::: {#exr-ch1-parallelogram}
+Prove the *parallelogram law*:
+$\|\mathbf{x}+\mathbf{y}\|^2 + \|\mathbf{x}-\mathbf{y}\|^2
+= 2\|\mathbf{x}\|^2 + 2\|\mathbf{y}\|^2$ for all $\mathbf{x}$,
+$\mathbf{y}$ in $\mathbb{R}^n$.
+:::
+
+::: {#exr-ch1-equality}
+Prove that $\|\mathbf{x}+\mathbf{y}\| = \|\mathbf{x}\| + \|\mathbf{y}\|$
+if and only if $\mathbf{x} = \mathbf{0}$ or $\mathbf{y} = c\mathbf{x}$
+for some $c \ge 0$.
+:::
+
+::: {#exr-ch1-polar}
+The polar-coordinate map is
+$P(r, \theta) = (r\cos\theta,\; r\sin\theta)$. Find its Jacobian
+matrix and show that the determinant of the Jacobian is $r$.
+:::
+
+::: {#exr-ch1-norm}
+(a) Show that $f(\mathbf{x}) = \|\mathbf{x}\|^2$ is differentiable on
+$\mathbb{R}^n$ with $\nabla f(\mathbf{x}) = 2\mathbf{x}$.
+
+(b) Show that $g(\mathbf{x}) = \|\mathbf{x}\|$ is differentiable at
+every $\mathbf{x} \ne \mathbf{0}$, with
+$\nabla g(\mathbf{x}) = \mathbf{x}/\|\mathbf{x}\|$, and that it is not
+differentiable at $\mathbf{0}$.
+:::
+
+::: {#exr-ch1-directional}
+For $f(x, y) = x^2 + 3y^2$, find the directional derivative at
+$(1, 1)$ in the direction $(3, 4)/5$. Then find every unit vector
+$\mathbf{u}$ with $D_{\mathbf{u}}f(1, 1) = 0$.
+:::
+
+::: {#exr-ch1-not-differentiable}
+Let $g(x, y) = x^2y/(x^2 + y^2)$ for $(x, y) \ne (0, 0)$, and
+$g(0, 0) = 0$.
+
+(a) Show that $g$ is continuous at the origin.
+
+(b) Show that for every unit vector $\mathbf{u} = (u_1, u_2)$,
+$D_{\mathbf{u}}g(0, 0) = u_1^2u_2$.
+
+(c) Deduce that $g$ is not differentiable at the origin, although it
+is continuous there and has a directional derivative in every
+direction.
+:::
+
+::: {#exr-ch1-rotation}
+Let $R$ be the matrix of rotation of the plane through an angle
+$\theta$, and $F(\mathbf{x}) = R\mathbf{x} + \mathbf{b}$. Show that
+$J_F = R$ at every point, and that
+$\|F(\mathbf{x}) - F(\mathbf{y})\| = \|\mathbf{x} - \mathbf{y}\|$ for
+all $\mathbf{x}$ and $\mathbf{y}$.
+:::

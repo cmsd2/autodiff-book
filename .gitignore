@@ -1,0 +1,9 @@
+_book/
+.quarto/
+.venv/
+__pycache__/
+lean/.lake/
+*_files/
+
+/.quarto/
+**/*.quarto_ipynb

@@ -1,0 +1,13 @@
+# Neural networks {#sec-networks}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- neurons, layers and multilayer perceptrons
+- activation functions, including the ReLU and its corner
+- backpropagation in matrix form
+- universal approximation for functions of one variable
+- initialisation and the variance of activations
+:::

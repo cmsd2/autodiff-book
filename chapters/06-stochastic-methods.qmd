@@ -1,0 +1,13 @@
+# Stochastic and adaptive methods {#sec-stochastic}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- expectation and unbiased gradient estimates
+- stochastic gradient descent and its convergence
+- momentum as a recurrence relation
+- exponential moving averages, bias correction and Adam
+- learning-rate schedules
+:::

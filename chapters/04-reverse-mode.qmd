@@ -1,0 +1,13 @@
+# Reverse mode and backpropagation {#sec-reverse-mode}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- adjoints and reverse accumulation
+- a proof that reverse accumulation computes the gradient on any acyclic graph
+- topological order and the cost of a gradient
+- memory use and checkpointing
+- a minimal scalar automatic-differentiation engine
+:::

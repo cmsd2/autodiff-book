@@ -1,0 +1,14 @@
+# The chain rule {#sec-chain-rule}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- the chain rule for functions between spaces of any dimension, with proof
+- derivatives as sums over paths through a composition
+- the product and quotient rules as special cases
+- gradients and level sets
+- second derivatives, the Hessian and Taylor's theorem in several variables
+- the second-derivative test through the eigenvalues of the Hessian
+:::

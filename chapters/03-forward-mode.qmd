@@ -1,0 +1,12 @@
+# Computational graphs and forward mode {#sec-forward-mode}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- expressions as directed acyclic graphs, and evaluation traces
+- dual numbers and the algebra behind forward mode
+- Jacobian–vector products and their cost
+- comparison with symbolic differentiation and finite differences
+:::

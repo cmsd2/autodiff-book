@@ -1,0 +1,11 @@
+# Floating-point arithmetic {#sec-floating-point}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- how real numbers are represented and rounded
+- cancellation and the error of finite differences
+- stable evaluation of softmax and log-sum-exp
+:::

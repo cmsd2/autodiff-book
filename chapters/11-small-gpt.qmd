@@ -1,0 +1,14 @@
+# A small transformer {#sec-small-gpt}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- RMS and layer normalisation
+- residual connections and the flow of gradients
+- the complete model and its parameter count
+- training with Adam
+- sampling with temperature
+- caching keys and values
+:::

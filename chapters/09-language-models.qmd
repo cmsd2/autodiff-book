@@ -1,0 +1,13 @@
+# Language models {#sec-language-models}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- sequences and the chain rule of probability
+- bigram models and maximum likelihood by counting
+- perplexity
+- character-level tokenisation
+- embeddings and neural bigram models
+:::

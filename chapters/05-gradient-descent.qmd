@@ -1,0 +1,12 @@
+# Gradient descent {#sec-gradient-descent}
+
+::: {.callout-note}
+## Not yet written
+
+This chapter will cover:
+
+- smoothness and the descent lemma
+- convergence for non-convex, convex and strongly convex functions
+- quadratic models, eigenvalues and the condition number
+- gradient flow as a differential equation
+:::
