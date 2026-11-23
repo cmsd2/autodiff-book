@@ -44,8 +44,7 @@ $\mathbf{x}\cdot\mathbf{y} = c\|\mathbf{x}\|^2 = \|\mathbf{x}\|\,\|c\mathbf{x}\|
 
 Conversely, suppose
 $\mathbf{x}\cdot\mathbf{y} = \|\mathbf{x}\|\,\|\mathbf{y}\|$ and
-$\mathbf{x} \ne \mathbf{0}$. Then equality holds in
-@thm-cauchy-schwarz, so one vector is a multiple of the other. If
+$\mathbf{x} \ne \mathbf{0}$. Then equality holds in @thm-cauchy-schwarz, so one vector is a multiple of the other. If
 $\mathbf{y} = \mathbf{0}$ then $\mathbf{y} = 0\mathbf{x}$. Otherwise
 $\mathbf{x} = t\mathbf{y}$ with $t \ne 0$, because
 $\mathbf{x} \ne \mathbf{0}$, and then $\mathbf{y} = (1/t)\mathbf{x}$.
@@ -77,8 +76,7 @@ everywhere with $\nabla f(\mathbf{x}) = (I + I^\top)\mathbf{x} = 2\mathbf{x}$.
 $g(\mathbf{x}) = (x_1^2 + \dots + x_n^2)^{1/2}$. Differentiating with
 respect to $x_j$ by the chain rule for one variable,
 $\partial g/\partial x_j = x_j/\|\mathbf{x}\|$. These partial
-derivatives are continuous on the open set of non-zero vectors, so by
-@thm-continuous-partials and @thm-jacobian, $g$ is differentiable
+derivatives are continuous on the open set of non-zero vectors, so by @thm-continuous-partials and @thm-jacobian, $g$ is differentiable
 there with $\nabla g(\mathbf{x}) = \mathbf{x}/\|\mathbf{x}\|$.
 
 At $\mathbf{0}$, $(g(t\mathbf{e}_1) - g(\mathbf{0}))/t = |t|/t$,
@@ -98,8 +96,7 @@ check(sp.limit(sp.Abs(t) / t, t, 0, "+") == 1 and sp.limit(sp.Abs(t) / t, t, 0, 
       "one-sided limits of |t|/t")
 ```
 
-**@exr-ch1-directional.** $\nabla f(1, 1) = (2, 6)$, so by
-@thm-directional the directional derivative in the direction
+**@exr-ch1-directional.** $\nabla f(1, 1) = (2, 6)$, so by @thm-directional the directional derivative in the direction
 $(3, 4)/5$ is $(2\cdot3 + 6\cdot4)/5 = 6$. A unit vector gives a zero
 directional derivative exactly when it is perpendicular to $(2, 6)$,
 that is, a multiple of $(3, -1)$. The two such unit vectors are

@@ -8,8 +8,7 @@ examples of inputs with the outputs the model should give, the
 outputs are from the desired ones. Fitting a line
 $\theta_1 + \theta_2 s$ through points $(s_i, y_i)$ by least squares is
 the simplest case: the loss is
-$\frac12\sum_i(\theta_1 + \theta_2 s_i - y_i)^2$
-(@exr-ch5-least-squares). *Training* the model means finding
+$\frac12\sum_i(\theta_1 + \theta_2 s_i - y_i)^2$ (@exr-ch5-least-squares). *Training* the model means finding
 parameters that make the loss small. @thm-steepest says which way is
 downhill from any point: the direction of $-\nabla f$. Gradient descent
 takes a step that way, recomputes the gradient, and repeats. This
@@ -261,8 +260,7 @@ then $\bigl\|\int_0^1 \mathbf{w}(t)\,dt\bigr\| \le \int_0^1 \|\mathbf{w}(t)\|\,d
 
 ::: {.proof}
 Let $\mathbf{W} = \int_0^1\mathbf{w}(t)\,dt$. If $\mathbf{W} = \mathbf{0}$
-there is nothing to prove. Otherwise, by linearity of the integral and
-@thm-cauchy-schwarz,
+there is nothing to prove. Otherwise, by linearity of the integral and @thm-cauchy-schwarz,
 $$
 \|\mathbf{W}\|^2 = \mathbf{W}\cdot\int_0^1\mathbf{w}(t)\,dt
 = \int_0^1 \mathbf{W}\cdot\mathbf{w}(t)\,dt
@@ -368,8 +366,7 @@ f''(x) = f'(x)\bigl(1 - f'(x)\bigr) .
 $$
 Since $0 < f'(x) < 1$ and $p(1 - p) \le \tfrac14$ for every real $p$
 (because $\tfrac14 - p(1-p) = (p - \tfrac12)^2$), we have
-$0 < f''(x) \le \tfrac14$, with equality at $x = 0$. By
-@thm-smooth-hessian with $n = 1$, $f$ is $\tfrac14$-smooth.
+$0 < f''(x) \le \tfrac14$, with equality at $x = 0$. By @thm-smooth-hessian with $n = 1$, $f$ is $\tfrac14$-smooth.
 :::
 
 ```{python}
@@ -657,8 +654,7 @@ $$
 \frac{f\bigl(\mathbf{x} + t(\mathbf{y} - \mathbf{x})\bigr) - f(\mathbf{x})}{t} \le f(\mathbf{y}) - f(\mathbf{x}) .
 $$
 As $t \to 0^+$ the left side tends to
-$\nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})$ by
-@lem-line-derivative, which gives @eq-gd-tangent.
+$\nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})$ by @lem-line-derivative, which gives @eq-gd-tangent.
 
 Conversely, suppose @eq-gd-tangent holds. Fix $\mathbf{x}$, $\mathbf{y}$
 and $t \in [0, 1]$, and let $\mathbf{z} = t\mathbf{x} + (1-t)\mathbf{y}$.
@@ -689,8 +685,7 @@ Put $\mathbf{x} = \boldsymbol{\theta}^*$ in @eq-gd-tangent.
 
 Conversely, at any minimiser of a differentiable function the gradient
 is zero (@thm-critical-point). The next theorem gives a
-practical test for convexity, and a stronger property that
-@sec-gd-strong-convexity uses.
+practical test for convexity, and a stronger property that @sec-gd-strong-convexity uses.
 
 ::: {#thm-convex-hessian}
 ## Curvature bounded below
@@ -716,8 +711,7 @@ f(\mathbf{y}) = f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot\mathbf{d}
 $$
 The Hessian is symmetric (@thm-mixed-partials) with all eigenvalues at
 least $\mu$, so by @cor-quadratic-bounds the last term is at least
-$\frac{\mu}{2}\|\mathbf{d}\|^2$. With $\mu = 0$ the inequality is
-@eq-gd-tangent, so $f$ is convex by @thm-convex-first-order.
+$\frac{\mu}{2}\|\mathbf{d}\|^2$. With $\mu = 0$ the inequality is @eq-gd-tangent, so $f$ is convex by @thm-convex-first-order.
 :::
 
 So the quadratic of @exm-smooth-quadratic is convex when no eigenvalue
@@ -771,8 +765,7 @@ $$
 \le \frac{1}{2\eta}\Bigl(\|\boldsymbol{\theta}_0 - \boldsymbol{\theta}^*\|^2 - \|\boldsymbol{\theta}_k - \boldsymbol{\theta}^*\|^2\Bigr)
 \le \frac{\|\boldsymbol{\theta}_0 - \boldsymbol{\theta}^*\|^2}{2\eta} .
 $$
-The values $f(\boldsymbol{\theta}_j)$ never increase
-(@thm-gd-nonconvex), so each term on the left is at least
+The values $f(\boldsymbol{\theta}_j)$ never increase (@thm-gd-nonconvex), so each term on the left is at least
 $f(\boldsymbol{\theta}_k) - f^*$, and the left side is at least
 $k\bigl(f(\boldsymbol{\theta}_k) - f^*\bigr)$.
 :::
@@ -884,8 +877,7 @@ $$
 
 Compared with @eq-gd-tangent, the graph must clear each tangent plane
 by a bowl of curvature $\mu$. A strongly convex function is therefore
-convex, by @thm-convex-first-order. By
-@thm-convex-hessian, a twice continuously differentiable function is
+convex, by @thm-convex-first-order. By @thm-convex-hessian, a twice continuously differentiable function is
 $\mu$-strongly convex when every eigenvalue of its Hessian is at least
 $\mu$ at every point. The quadratic
 $\frac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta}$
@@ -906,8 +898,7 @@ In particular, $\boldsymbol{\theta}^*$ is the only minimiser.
 ::: {.proof}
 For the left inequality, put $\boldsymbol{\theta}^*$ in place of
 $\mathbf{x}$ and $\mathbf{x}$ in place of $\mathbf{y}$ in the
-definition, and use $\nabla f(\boldsymbol{\theta}^*) = \mathbf{0}$
-(@thm-critical-point). For
+definition, and use $\nabla f(\boldsymbol{\theta}^*) = \mathbf{0}$ (@thm-critical-point). For
 the right inequality, fix $\mathbf{x}$, write
 $\mathbf{g} = \nabla f(\mathbf{x})$, and complete the square:
 $$
@@ -986,9 +977,7 @@ largest constant for which these hold. The *condition number* of $f$
 is $\kappa = L/\mu$.
 :::
 
-Both constants exist because the inequalities in @def-l-smooth and
-@def-strongly-convex are not strict, and $\kappa \ge 1$ by
-@exr-ch5-mu-le-l. A condition number close to $1$ means that $f$
+Both constants exist because the inequalities in @def-l-smooth and @def-strongly-convex are not strict, and $\kappa \ge 1$ by @exr-ch5-mu-le-l. A condition number close to $1$ means that $f$
 curves by about the same amount in every direction, and its level
 curves are close to circles. A large condition number means a long,
 narrow valley. @thm-gd-strongly-convex holds for any valid pair of
@@ -1315,8 +1304,7 @@ it is $(0.98^{100}, 0.94^{100}) \approx (0.1326, 0.00205)$; with
 $\eta = 0.001$ it is $(0.998^{1000}, 0.994^{1000}) \approx (0.1351, 0.00243)$.
 The points settle down, towards $(e^{-2}, e^{-6}) \approx (0.1353, 0.00248)$.
 Think of $\eta$ as a small interval of time, and of
-$\boldsymbol{\theta}_k$ as the position at time $k\eta$. Rearranged,
-@eq-gd reads
+$\boldsymbol{\theta}_k$ as the position at time $k\eta$. Rearranged, @eq-gd reads
 $$
 \frac{\boldsymbol{\theta}_{k+1} - \boldsymbol{\theta}_k}{\eta} = -\nabla f(\boldsymbol{\theta}_k) :
 $$
@@ -1368,8 +1356,7 @@ is $-\|\nabla f(\boldsymbol{\theta}(t))\|^2$ by @eq-gd-flow. A
 function whose derivative is never positive never increases, and one
 with a negative derivative strictly decreases.
 
-For the second part, let $u(t) = f(\boldsymbol{\theta}(t)) - f^*$. By
-@lem-gradient-domination, $u'(t) = -\|\nabla f\|^2 \le -2\mu u(t)$.
+For the second part, let $u(t) = f(\boldsymbol{\theta}(t)) - f^*$. By @lem-gradient-domination, $u'(t) = -\|\nabla f\|^2 \le -2\mu u(t)$.
 Multiply by the integrating factor $e^{2\mu t}$:
 $$
 \frac{d}{dt}\bigl(e^{2\mu t}u(t)\bigr) = e^{2\mu t}\bigl(u'(t) + 2\mu u(t)\bigr) \le 0 ,
@@ -1444,14 +1431,11 @@ maxima_zero("diff(exp(-2*t)^2 + 3*exp(-6*t)^2, t) + (2*exp(-2*t))^2 + (6*exp(-6*
 optimisation in detail. It proves that no method that uses only
 gradients can beat a rate of order $1/k^2$ on all convex $L$-smooth
 functions, and constructs accelerated methods that achieve it, so the
-$1/k$ rate of @thm-gd-convex is not the best possible.
-@boyd2004convex [ch. 3] covers convex functions, including the
-first-order and second-order conditions, and
-@boyd2004convex [sec. 9.3] analyses gradient descent with line
+$1/k$ rate of @thm-gd-convex is not the best possible. @boyd2004convex [ch. 3] covers convex functions, including the
+first-order and second-order conditions, and @boyd2004convex [sec. 9.3] analyses gradient descent with line
 searches, with worked examples showing the effect of the condition
 number. @nocedal2006numerical [ch. 3] treats line searches, which
-choose a step at each iteration instead of fixing $\eta$
-(@exr-ch5-line-search is the simplest case), and the convergence rate of
+choose a step at each iteration instead of fixing $\eta$ (@exr-ch5-line-search is the simplest case), and the convergence rate of
 steepest descent on quadratics. @deisenroth2020mathematics [ch. 7]
 introduces these methods from the point of view of machine learning.
 

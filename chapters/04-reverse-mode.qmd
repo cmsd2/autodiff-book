@@ -1,8 +1,7 @@
 # Reverse mode and backpropagation {#sec-reverse-mode}
 
 Training a model means computing the gradient of one number, the loss,
-with respect to every parameter, thousands of times over. Forward mode
-(@sec-forward-mode) gets one directional derivative per pass, so a
+with respect to every parameter, thousands of times over. Forward mode (@sec-forward-mode) gets one directional derivative per pass, so a
 gradient with respect to $n$ parameters costs $n$ passes. This chapter
 runs the chain rule the other way. After one ordinary evaluation of
 the function, a single sweep backwards through the evaluation trace
@@ -28,8 +27,7 @@ from checks import check, close, maxima_zero, num_grad, sym_equal
 
 ## Adjoints {#sec-rev-adjoints}
 
-Until @sec-rev-vjp, an evaluation trace $v_1, \dots, v_N$
-(@def-evaluation-trace) with inputs $v_1, \dots, v_n$ computes a
+Until @sec-rev-vjp, an evaluation trace $v_1, \dots, v_N$ (@def-evaluation-trace) with inputs $v_1, \dots, v_n$ computes a
 function $f\colon D \to \mathbb{R}$ with a single output, and the
 output is the last variable, $L = v_N$. We fix $\mathbf{a}$ in $D$ and
 write $v_k$ also for the value of variable $k$ when
@@ -190,8 +188,7 @@ check(over[1] == 3, "overwriting gives 3")
 
 Let an evaluation trace $v_1, \dots, v_N$ with inputs
 $v_1, \dots, v_n$ compute $f\colon D \to \mathbb{R}$ with output
-$v_N$, and let $\mathbf{a} \in D$. Then every function $L_k$ of
-@def-adjoint is differentiable at $(v_1, \dots, v_k)$, so every
+$v_N$, and let $\mathbf{a} \in D$. Then every function $L_k$ of @def-adjoint is differentiable at $(v_1, \dots, v_k)$, so every
 adjoint exists, and:
 
 (a) each adjoint $\bar v_k$ is the sum, over all paths from $k$ to
@@ -224,8 +221,7 @@ defined is open, and each elementary operation is differentiable at
 its arguments. By @thm-chain-rule-paths, $L_m$ is differentiable at
 $(v_1, \dots, v_m)$, and $\partial L_m/\partial w_k$ is the sum over
 paths from $k$ to $N$ of the products of the local partial
-derivatives. This partial derivative is $\bar v_k$ in both cases of
-@def-adjoint.
+derivatives. This partial derivative is $\bar v_k$ in both cases of @def-adjoint.
 
 (b) The only path from $N$ to $N$ is the empty path, with product $1$,
 so $\bar v_N = 1$. For $i < N$, every path from $i$ to $N$ starts with
@@ -245,8 +241,7 @@ starting value is $1 = \bar v_N$. For $k < N$ the starting value is
 $0$, and every $k'$ with $k \in P(k')$ is larger than $k$, so by the
 induction hypothesis the accumulator of $v_{k'}$ held $\bar v_{k'}$
 when line $k'$ was processed. So the accumulator of $v_k$ holds
-$\sum_{k' : k \in P(k')} \bar v_{k'}\,d_{k'k} = \bar v_k$, by
-@eq-rev-adjoint. For an input $k \le n$ this is the value when the
+$\sum_{k' : k \in P(k')} \bar v_{k'}\,d_{k'k} = \bar v_k$, by @eq-rev-adjoint. For an input $k \le n$ this is the value when the
 sweep finishes, which is $\partial f/\partial x_k(\mathbf{a})$.
 :::
 
@@ -260,8 +255,7 @@ adjoint $0$, which is what the sweep's starting accumulators say.)
 In @exm-ab-plus-a there are two paths from $a$ to $L$: $1 \to 3 \to 4$
 with product $d_{31}d_{43} = 3\cdot1$, and $1 \to 4$ with product
 $d_{41} = 1$, which add to $\bar v_1 = 4$. The number of paths can grow
-exponentially with the size of the graph (@exr-ch2-diamonds,
-@exr-ch4-paths), while the sweep handles each arrow once. It computes
+exponentially with the size of the graph (@exr-ch2-diamonds, @exr-ch4-paths), while the sweep handles each arrow once. It computes
 the path sums of part (a) by sharing work: the sum over all paths
 from $v_k$ to the output is computed once, as $\bar v_k$, and reused by
 every argument of line $k$.
@@ -521,8 +515,7 @@ $(1 + 1 + \alpha + 2r)\operatorname{cost}(f)$.
 With $\alpha = 3$ and $r = 2$ the bound is $9\operatorname{cost}(f)$,
 comfortably above the factor $4.5$ of the example. Forward mode needs
 $n$ passes for the same gradient, each costing a constant multiple of
-$\operatorname{cost}(f)$. The constant $9$ comes from a coarse count.
-@griewank2008evaluating analyse the cost of reverse mode in detail,
+$\operatorname{cost}(f)$. The constant $9$ comes from a coarse count. @griewank2008evaluating analyse the cost of reverse mode in detail,
 and @baydin2018automatic [sec. 3.2], citing that analysis, give the
 constant as less than $6$ and typically between $2$ and $3$.
 
@@ -548,8 +541,7 @@ for _ in range(200):
 
 ## Vector–Jacobian products and the shape of the Jacobian {#sec-rev-vjp}
 
-Reverse mode works for functions with several outputs too. In
-@exm-ab-plus-a, treat both $y_1 = v_3 = ab$ and $y_2 = v_4 = ab + a$
+Reverse mode works for functions with several outputs too. In @exm-ab-plus-a, treat both $y_1 = v_3 = ab$ and $y_2 = v_4 = ab + a$
 as outputs, so $f(a, b) = (ab,\; ab + a)$ with
 $$
 J_f(2, 3) = \begin{pmatrix} 3 & 2 \\ 4 & 2 \end{pmatrix},
@@ -591,8 +583,7 @@ $\tilde w_i + \sum_{k : i \in P(k)} d_{ki}\bar v_k$, and
 $\bar{\mathbf{v}} = \tilde{\mathbf{w}} + C\bar{\mathbf{v}}$ with the
 matrix $C$ of @sec-rev-transposition. Run forward mode with seed
 $\mathbf{e}_j$, giving tangents $\mathbf{t}$ with $\mathbf{t} =
-\mathbf{e}_j + C^\top\mathbf{t}$. By @thm-forward-reverse and
-@thm-forward-mode,
+\mathbf{e}_j + C^\top\mathbf{t}$. By @thm-forward-reverse and @thm-forward-mode,
 $$
 \bar v_j = \tilde{\mathbf{w}}\cdot\mathbf{t}
 = \sum_{l=1}^m w_l\,\bigl(J_f(\mathbf{a})\mathbf{e}_j\bigr)_l
@@ -624,8 +615,7 @@ $m < n$. A loss function has $m = 1$ and $n$ in the thousands or
 more, which is why training uses reverse mode. A curve
 $\gamma\colon\mathbb{R}\to\mathbb{R}^3$ has $n = 1$, and one forward
 pass gives its velocity. For a product of Jacobians, choosing the
-order of the matrix multiplications is the same choice
-(@exr-ch4-matrix-chain).
+order of the matrix multiplications is the same choice (@exr-ch4-matrix-chain).
 
 ## Memory and checkpointing {#sec-rev-checkpointing}
 
@@ -670,8 +660,7 @@ extra forward pass. Applying the idea recursively inside each segment
 reduces memory further (@exr-ch4-checkpoint). @griewank1992achieving showed that checkpointing applied recursively
 makes both the memory and the
 extra computation grow only logarithmically with the length of the
-computation, relative to a single evaluation, and
-@griewank2000algorithm give schedules that are optimal for this
+computation, relative to a single evaluation, and @griewank2000algorithm give schedules that are optimal for this
 trade-off.
 
 ```{python}
@@ -794,8 +783,7 @@ agrees with $0$ or with $t$ on an interval around its argument, so it
 is differentiable there and @thm-reverse-mode applies.
 
 The sweep itself is the depth-first search of @def-rev-dfs followed by
-step 3 of @def-reverse-sweep. The most direct translation of
-@def-rev-dfs is a function `visit` that calls itself once for each
+step 3 of @def-reverse-sweep. The most direct translation of @def-rev-dfs is a function `visit` that calls itself once for each
 parent. But a call that has started and not yet finished occupies
 space until it returns, and Python allows only about a thousand such
 calls at once, so a chain of a thousand operations would exceed the
@@ -976,8 +964,7 @@ against SymPy and against central differences. The engine is
 slow, since every scalar operation creates a Python object, but it is
 complete: @sec-small-gpt trains a transformer with nothing more. Real
 systems apply the same sweep to arrays, with one node per matrix
-operation instead of one per number, which is the subject of
-@thm-backprop-matrix.
+operation instead of one per number, which is the subject of @thm-backprop-matrix.
 
 ## History {#sec-rev-history}
 
@@ -1000,9 +987,7 @@ differentiation community.
 cost and the checkpointing methods that reduce its memory use. @baydin2018automatic
 survey automatic differentiation for machine learning, with worked
 forward and reverse sweeps on a small example and a review of
-implementations. Topological sorting goes back to
-@kahn1962topological, and the method of @thm-rev-dfs uses the depth-first search studied by
-@tarjan1972depth.
+implementations. Topological sorting goes back to @kahn1962topological, and the method of @thm-rev-dfs uses the depth-first search studied by @tarjan1972depth.
 
 ## Exercises {#sec-rev-exercises}
 
@@ -1039,8 +1024,7 @@ $\mathbf{w}$.
 ::: {#exr-ch4-matrix-chain}
 Let $f = f_3 \circ f_2 \circ f_1$ with $f_1\colon\mathbb{R}^n \to
 \mathbb{R}^p$, $f_2\colon\mathbb{R}^p\to\mathbb{R}^p$ and
-$f_3\colon\mathbb{R}^p\to\mathbb{R}$, so that $J_f = J_3J_2J_1$ by
-@thm-chain-rule. Multiplying an $a\times b$ matrix by a $b\times c$
+$f_3\colon\mathbb{R}^p\to\mathbb{R}$, so that $J_f = J_3J_2J_1$ by @thm-chain-rule. Multiplying an $a\times b$ matrix by a $b\times c$
 matrix takes $abc$ multiplications. Count the multiplications needed
 to form $J_f$ as $J_3(J_2J_1)$ and as $(J_3J_2)J_1$, and evaluate both
 for $n = p = 1000$. Which order corresponds to forward mode, and which

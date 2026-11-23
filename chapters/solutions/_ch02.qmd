@@ -37,8 +37,7 @@ check(comp2.jacobian([X2, Y2]).subs({X2: 1, Y2: 2}) == want2, "direct Jacobian")
 
 **@exr-ch2-homogeneous.** Fix $\mathbf{x}$ and let
 $\varphi(t) = f(t\mathbf{x})$ for $t > 0$. The curve
-$t \mapsto t\mathbf{x}$ has velocity $\mathbf{x}$, so by
-@cor-chain-curve, $\varphi'(1) = \nabla f(\mathbf{x})\cdot\mathbf{x}$.
+$t \mapsto t\mathbf{x}$ has velocity $\mathbf{x}$, so by @cor-chain-curve, $\varphi'(1) = \nabla f(\mathbf{x})\cdot\mathbf{x}$.
 By homogeneity $\varphi(t) = t^kf(\mathbf{x})$, whose derivative at
 $t = 1$ is $kf(\mathbf{x})$. The two expressions for $\varphi'(1)$ are
 equal.
@@ -60,11 +59,9 @@ maxima_zero("x*diff(x^2*y - 4*y^3, x) + y*diff(x^2*y - 4*y^3, y) - 3*(x^2*y - 4*
             "Euler's theorem in Maxima")
 ```
 
-**@exr-ch2-dot.** (a) Write $h = \sum_{i=1}^m f_ig_i$. By
-@lem-components each $f_i$ and $g_i$ is differentiable at
+**@exr-ch2-dot.** (a) Write $h = \sum_{i=1}^m f_ig_i$. By @lem-components each $f_i$ and $g_i$ is differentiable at
 $\mathbf{a}$, with $\nabla f_i(\mathbf{a})^\top$ equal to row $i$ of
-$J_{\mathbf{f}}(\mathbf{a})$, and similarly for $\mathbf{g}$. By
-@thm-product-rule each $f_ig_i$ is differentiable. A sum of functions
+$J_{\mathbf{f}}(\mathbf{a})$, and similarly for $\mathbf{g}$. By @thm-product-rule each $f_ig_i$ is differentiable. A sum of functions
 differentiable at $\mathbf{a}$ is differentiable there, with derivative
 the sum of the derivatives, because the remainders add and the
 triangle inequality bounds the norm of their sum. So
@@ -257,8 +254,7 @@ $t \ne 0$, $g(t, 0) = t^2 > 0$ and $g(0, t) = -t^4 < 0$, so every disc
 around the origin contains points where $g$ is above and below
 $g(0, 0) = 0$, and the origin is a saddle point of $g$. The eigenvalues
 of the common Hessian are $2$ and $0$. The eigenvalue $0$ is neither
-positive nor negative, which rules out parts (a) and (b) of
-@thm-second-derivative-test, and no eigenvalue is negative, which rules
+positive nor negative, which rules out parts (a) and (b) of @thm-second-derivative-test, and no eigenvalue is negative, which rules
 out part (c). The quadratic term
 $\tfrac12\mathbf{h}^\top\nabla^2 f(\mathbf{0})\mathbf{h} = h_1^2$
 vanishes along the $y$-axis, and there the fourth-order terms decide.

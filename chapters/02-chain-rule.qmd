@@ -33,8 +33,7 @@ rng = np.random.default_rng(2)
 
 When a function is computed in two stages, an increment of the input
 first changes the intermediate values, and those changes then change
-the output. Each stage has a first-order approximation of the kind
-@sec-several-variables describes, and the question is how the two
+the output. Each stage has a first-order approximation of the kind @sec-several-variables describes, and the question is how the two
 approximations combine. Take the two stages
 $$
 F(x, y) = (x^2y,\; x + 3y), \qquad g(u, v) = uv ,
@@ -76,8 +75,7 @@ and then by $7$ (the rate of change of $g$ per unit increment of $u$),
 contributing $28$. Through $v$, it is multiplied by $1$ and then $2$,
 contributing $2$. The two contributions add, and in the same way
 $13 = 7\cdot1 + 2\cdot3$ adds the two routes from $y$. Summing over the
-middle index of a matrix product is exactly this adding up of routes.
-@thm-chain-rule below proves that the Jacobian of a composition is
+middle index of a matrix product is exactly this adding up of routes. @thm-chain-rule below proves that the Jacobian of a composition is
 always the product of the Jacobians of its stages.
 
 ```{python}
@@ -121,8 +119,7 @@ and lets $h \to 0$. It fails when $f(a+h) = f(a)$ for values of
 $h \ne 0$ arbitrarily close to $0$, as happens for
 $f(x) = x^2\sin(1/x)$ (with $f(0) = 0$) at $a = 0$, because the first
 fraction then divides by zero. The proof below avoids that division
-by working with the remainder form of the derivative from
-@def-differentiable,
+by working with the remainder form of the derivative from @def-differentiable,
 $f(\mathbf{a}+\mathbf{h}) = f(\mathbf{a}) + Df(\mathbf{a})\mathbf{h} + \mathbf{r}(\mathbf{h})$
 with $\|\mathbf{r}(\mathbf{h})\|/\|\mathbf{h}\| \to 0$, which divides
 only by the increment $\mathbf{h}$ of the input.
@@ -134,8 +131,7 @@ kk_ = sp.symbols("k", integer=True, positive=True)
 check(sp.simplify((1 / (kk_ * sp.pi))**2 * sp.sin(kk_ * sp.pi)) == 0, "f(1/(k pi)) = 0")
 ```
 
-We need one fact about functions with several outputs. The proof of
-@thm-continuous-partials used it in passing; here it is as a lemma.
+We need one fact about functions with several outputs. The proof of @thm-continuous-partials used it in passing; here it is as a lemma.
 It lets us assemble a function with several outputs from real-valued
 ones, as the product rule in @sec-chain-product-rule does with the
 pair $(f, g)$, and read off its Jacobian one row at a time.
@@ -158,8 +154,7 @@ component $i$ is $f_i(\mathbf{a}+\mathbf{h}) - f_i(\mathbf{a}) -
 L_i\mathbf{h}$. Every vector satisfies $|v_i| \le \|\mathbf{v}\|$ and
 $\|\mathbf{v}\| \le |v_1| + \dots + |v_m|$. So
 $\|\mathbf{v}\|/\|\mathbf{h}\| \to 0$ if and only if
-$|v_i|/\|\mathbf{h}\| \to 0$ for every $i$. That is, $L$ satisfies
-@eq-derivative for $f$ if and only if each row $L_i$ satisfies it for
+$|v_i|/\|\mathbf{h}\| \to 0$ for every $i$. That is, $L$ satisfies @eq-derivative for $f$ if and only if each row $L_i$ satisfies it for
 $f_i$.
 :::
 
@@ -292,8 +287,7 @@ $\partial f/\partial x_j$.
 
 ## Worked examples {#sec-chain-examples}
 
-The first example composes the three kinds of map from
-@sec-three-derivatives. It is a network with one layer, differentiated
+The first example composes the three kinds of map from @sec-three-derivatives. It is a network with one layer, differentiated
 with respect to its input.
 
 ::: {#exm-one-layer}
@@ -315,8 +309,7 @@ $$
 $$
 Their Jacobians are $W$ (@exm-affine), the diagonal matrix
 $\operatorname{diag}(\sigma'(\mathbf{z}))$ with entries
-$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise), the identity
-(@exm-affine again) and the row $2\mathbf{e}^\top$ (@exm-quadratic with
+$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise), the identity (@exm-affine again) and the row $2\mathbf{e}^\top$ (@exm-quadratic with
 $A = I$). Applying @thm-chain-rule three times,
 $$
 J_L(\mathbf{x}) = 2\mathbf{e}^\top\, I\,\operatorname{diag}(\sigma'(\mathbf{z}))\, W,
@@ -375,10 +368,8 @@ maxima_zero("block([L: (tanh(x1-x2) - 1)^2 + (tanh(x1+x2-1) - 1)^2], "
 The product in @eq-one-layer can be evaluated in two orders. From the
 right, the first step multiplies two matrices. From the left, every
 step multiplies a row vector by a matrix, which costs far less when
-the matrices are large. That observation is the seed of reverse mode
-(@sec-reverse-mode). In a network the quantities being trained are the
-entries of $W$ and $\mathbf{b}$ rather than $\mathbf{x}$, and
-@sec-networks differentiates with respect to them.
+the matrices are large. That observation is the seed of reverse mode (@sec-reverse-mode). In a network the quantities being trained are the
+entries of $W$ and $\mathbf{b}$ rather than $\mathbf{x}$, and @sec-networks differentiates with respect to them.
 
 ::: {#exm-chain-polar}
 ## Polar coordinates
@@ -417,8 +408,7 @@ $$
 = \nabla f^\top R_\theta ,
 $$
 whose transpose is $R_\theta^\top\nabla f$. The matrix $R_\theta^\top$
-is the rotation through $-\theta$, which preserves lengths
-(@exr-ch1-rotation), so
+is the rotation through $-\theta$, which preserves lengths (@exr-ch1-rotation), so
 $$
 \|\nabla f\|^2 = \Bigl(\frac{\partial g}{\partial r}\Bigr)^2
 + \frac{1}{r^2}\Bigl(\frac{\partial g}{\partial \theta}\Bigr)^2 .
@@ -503,8 +493,7 @@ check(sp.Rational(201, 100)**3 - 8 == sp.Rational(120601, 1000000), "true increm
 
 With more variables the routes become longer, and they branch and
 rejoin wherever a variable feeds several later ones. The definition
-below names the parts of such a computation, and
-@thm-chain-rule-paths says that the derivative of any variable with
+below names the parts of such a computation, and @thm-chain-rule-paths says that the derivative of any variable with
 respect to any input is the sum, over all routes, of the products of
 the local partial derivatives along them. A program that evaluates a
 function produces exactly this kind of structure, so the theorem is
@@ -552,8 +541,7 @@ $F_k(\mathbf{x}) = x_k$.
 ::: {#thm-chain-rule-paths}
 ## The chain rule as a sum over paths
 
-Take a system of intermediate variables as in
-@def-intermediate-variables, with inputs ranging over an open set $U$,
+Take a system of intermediate variables as in @def-intermediate-variables, with inputs ranging over an open set $U$,
 and a point $\mathbf{a} \in U$. Suppose that each $\varphi_k$ is
 differentiable at the values its parents take when the inputs equal
 $\mathbf{a}$. For an arrow $i \to k$, write
@@ -589,8 +577,7 @@ $i < k$, so it is differentiable at $\mathbf{a}$ by the induction
 hypothesis, and by @lem-components so is $G_k$, with the row for $i$
 of its Jacobian holding the partial derivatives of $F_i$. By hypothesis
 $\varphi_k$ is differentiable at $G_k(\mathbf{a})$, so @thm-chain-rule
-shows that $F_k$ is differentiable at $\mathbf{a}$, and
-@eq-chain-entries gives
+shows that $F_k$ is differentiable at $\mathbf{a}$, and @eq-chain-entries gives
 $$
 \frac{\partial F_k}{\partial x_j}(\mathbf{a})
 = \sum_{i\in P(k)} d_{ki}\,\frac{\partial F_i}{\partial x_j}(\mathbf{a}) .
@@ -632,8 +619,7 @@ d_{53} = v_4,\quad d_{54} = v_3 .
 $$
 The variable $v_3$ reaches $v_5$ in two ways, directly and through
 $v_4$, so there are two paths from $1$ to $5$: $1\to3\to5$, with
-product $v_2v_4$, and $1\to3\to4\to5$, with product $v_2v_4v_3$. By
-@thm-chain-rule-paths,
+product $v_2v_4$, and $1\to3\to4\to5$, with product $v_2v_4v_3$. By @thm-chain-rule-paths,
 $$
 \frac{\partial f}{\partial x} = v_2v_4 + v_2v_4v_3 = y\,e^{xy}(1 + xy),
 $$
@@ -693,8 +679,7 @@ for trial in range(5):
 When the system is arranged in layers, with every variable of one
 layer a function of all the variables of the layer before, a path
 picks one variable from each layer, and @eq-paths becomes the expanded
-product of the Jacobians. The opening example of
-@sec-chain-rule-theorem has two maps, $F$ and then $g$, with the
+product of the Jacobians. The opening example of @sec-chain-rule-theorem has two maps, $F$ and then $g$, with the
 layer $(u, v)$ between them, and its two routes from $x$ are the two
 choices of a variable in that layer.
 
@@ -755,8 +740,7 @@ for _ in range(20):
 ```
 
 The number of paths can be enormous. With $D$ maps and intermediate
-layers of width $w$ there are $w^{D-1}$ paths from each input to each output, and
-@exr-ch2-diamonds builds a system with only $3k+1$ variables and $2^k$
+layers of width $w$ there are $w^{D-1}$ paths from each input to each output, and @exr-ch2-diamonds builds a system with only $3k+1$ variables and $2^k$
 paths. Computing the derivative takes far less work than listing the
 paths: the product of Jacobians can be multiplied out one matrix at a
 time, and the distributive law collects the paths into shared partial
@@ -798,8 +782,7 @@ $$
 ::: {.proof}
 Let $F = (f, g)\colon U \to \mathbb{R}^2$. By @lem-components, $F$ is
 differentiable at $\mathbf{a}$ with rows $\nabla f(\mathbf{a})^\top$
-and $\nabla g(\mathbf{a})^\top$. Then $fg = \mu\circ F$, and by
-@thm-chain-rule and @lem-multiplication,
+and $\nabla g(\mathbf{a})^\top$. Then $fg = \mu\circ F$, and by @thm-chain-rule and @lem-multiplication,
 $$
 J_{fg}(\mathbf{a}) = \bigl(g(\mathbf{a}) \;\; f(\mathbf{a})\bigr)
 \begin{pmatrix}\nabla f(\mathbf{a})^\top\\ \nabla g(\mathbf{a})^\top\end{pmatrix}
@@ -917,13 +900,11 @@ $\nabla f(\mathbf{a})$ is the velocity of some curve in the level set
 through $\mathbf{a}$. That needs the implicit function theorem, which
 this book does not prove; see @zorich2015mathematical [sec. 8.5 and
 8.7.2]. With the converse, the vectors perpendicular to the gradient
-are exactly the directions along the level set, and by
-@thm-directional they are the directions in which $f$ has zero
+are exactly the directions along the level set, and by @thm-directional they are the directions in which $f$ has zero
 directional derivative.
 
 ::: {#exm-ellipse}
-Return to $f(x, y) = x^2 + 3y^2$ and the point $(1, 1)$ of
-@exm-steepest, where $f = 4$. The level curve $x^2 + 3y^2 = 4$ is an
+Return to $f(x, y) = x^2 + 3y^2$ and the point $(1, 1)$ of @exm-steepest, where $f = 4$. The level curve $x^2 + 3y^2 = 4$ is an
 ellipse, traced by
 $\boldsymbol{\gamma}(t) = (2\cos t,\; (2/\sqrt3)\sin t)$, and
 $\boldsymbol{\gamma}(\pi/3) = (1, 1)$. Its velocity is
@@ -958,8 +939,7 @@ maxima_zero("(4*cos(t))*(-2*sin(t)) + (4*sqrt(3)*sin(t))*(2/sqrt(3)*cos(t))", "e
 
 ## Second derivatives and the Hessian {#sec-chain-hessian}
 
-At a minimum of a differentiable function the gradient is zero
-(@thm-critical-point below), so there the linear approximation
+At a minimum of a differentiable function the gradient is zero (@thm-critical-point below), so there the linear approximation
 $f(\mathbf{a} + \mathbf{h}) \approx f(\mathbf{a}) + \nabla f(\mathbf{a})\cdot\mathbf{h}$
 reduces to $f(\mathbf{a})$ and says nothing about the shape of $f$
 nearby. For a function of one variable the second derivative takes
@@ -984,8 +964,7 @@ $(4, 1)$ at $(1, 2)$.
 These four rates, $4$, $2$, $2$ and $0$, are the second partial
 derivatives of $f$ at $(1, 2)$. Two of them came out equal: the rate at
 which $\partial f/\partial y$ changes with $x$ and the rate at which
-$\partial f/\partial x$ changes with $y$ are both $2$.
-@thm-mixed-partials shows that this is no accident.
+$\partial f/\partial x$ changes with $y$ are both $2$. @thm-mixed-partials shows that this is no accident.
 
 ```{python}
 #| include: false
@@ -1158,8 +1137,7 @@ $$
 \mathbf{h}^\top\nabla^2 f(\mathbf{a})\,\mathbf{h}
 = \sum_{i=1}^n\sum_{j=1}^n h_ih_j\,\frac{\partial^2 f}{\partial x_i\,\partial x_j}(\mathbf{a})
 $$
-is a quadratic form in the increment $\mathbf{h}$, as in
-@exm-quadratic: each product $h_ih_j$ of two input increments,
+is a quadratic form in the increment $\mathbf{h}$, as in @exm-quadratic: each product $h_ih_j$ of two input increments,
 weighted by the matching second partial derivative.
 
 The function $f(x, y) = x^2y$ shows the improvement. Expanding,
@@ -1168,8 +1146,7 @@ f(1 + h_1, 2 + h_2) - f(1, 2) = 4h_1 + h_2 + 2h_1^2 + 2h_1h_2 + h_1^2h_2 .
 $$
 The first two terms are $\nabla f(1, 2)\cdot\mathbf{h}$, with
 $\nabla f(1, 2) = (4, 1)$. With
-$\nabla^2 f(1, 2) = \begin{pmatrix} 4 & 2\\ 2 & 0\end{pmatrix}$ from
-@sec-chain-hessian, the quadratic term is
+$\nabla^2 f(1, 2) = \begin{pmatrix} 4 & 2\\ 2 & 0\end{pmatrix}$ from @sec-chain-hessian, the quadratic term is
 $\tfrac12(4h_1^2 + 2\cdot 2h_1h_2 + 0\cdot h_2^2) = 2h_1^2 + 2h_1h_2$,
 the next two terms. Only $h_1^2h_2$, a product of three increments, is
 left over. At $\mathbf{h} = (0.01, 0.01)$, $f(1.01, 2.01) = 2.050401$:
@@ -1199,8 +1176,7 @@ maxima_zero("expand((1+h1)^2*(2+h2) - 2) - (4*h1 + h2 + 2*h1^2 + 2*h1*h2 + h1^2*
 ```
 
 Adding the quadratic term gives a better approximation, and that term
-decides what kind of point a zero of the gradient is
-(@sec-chain-second-derivative-test). The proof reduces to one variable
+decides what kind of point a zero of the gradient is (@sec-chain-second-derivative-test). The proof reduces to one variable
 by restricting $f$ to a segment.
 
 ::: {#lem-taylor-one}
@@ -1283,14 +1259,12 @@ $\mathbf{a}$, so each entry of $E$, and therefore $\|E\|_F$, tends to
 $0$ as $\mathbf{h} \to \mathbf{0}$.
 :::
 
-The two forms of the remainder serve different purposes.
-@eq-taylor-lagrange is exact, but it evaluates the Hessian at an
+The two forms of the remainder serve different purposes. @eq-taylor-lagrange is exact, but it evaluates the Hessian at an
 unknown point $\mathbf{a} + \tau\mathbf{h}$ of the segment; this is the
 *Lagrange form*, and bounds on the Hessian along the segment turn it
 into bounds on $f$. @eq-taylor-peano evaluates the Hessian at
 $\mathbf{a}$ itself and says only that the remainder $R(\mathbf{h})$
-is small compared with $\|\mathbf{h}\|^2$, as the remainder in
-@def-differentiable is small compared with $\|\mathbf{h}\|$; this is
+is small compared with $\|\mathbf{h}\|^2$, as the remainder in @def-differentiable is small compared with $\|\mathbf{h}\|$; this is
 the *Peano form*, and it is what the second-derivative test uses.
 
 The open interval used for @eq-taylor-lagrange exists because the set of $t$ with
@@ -1382,8 +1356,7 @@ $\partial f/\partial x_j(\mathbf{a})$, is $0$.
 
 A critical point need not be either. The function $x^2 - y^2$ has a
 critical point at the origin, but it increases along the $x$-axis and
-decreases along the $y$-axis. To sort critical points, look at
-@eq-taylor-peano. At a critical point the gradient term vanishes, and
+decreases along the $y$-axis. To sort critical points, look at @eq-taylor-peano. At a critical point the gradient term vanishes, and
 $$
 f(\mathbf{a} + \mathbf{h}) - f(\mathbf{a}) = \tfrac12\,\mathbf{h}^\top H\mathbf{h} + R(\mathbf{h}),
 \qquad H = \nabla^2 f(\mathbf{a}),
@@ -1504,8 +1477,7 @@ $\lambda_k$ are the eigenvalues of $A$, each listed as many times as it
 is a root of the characteristic polynomial $\det(A - \lambda I)$.
 :::
 
-The book does not prove @thm-spectral for $n > 2$; see
-@axler2024linear [result 7.29] or @deisenroth2020mathematics
+The book does not prove @thm-spectral for $n > 2$; see @axler2024linear [result 7.29] or @deisenroth2020mathematics
 [Theorem 4.15].
 
 ::: {#cor-quadratic-bounds}
@@ -1612,8 +1584,7 @@ $\mathbf{a}$ is neither a local minimum nor a local maximum.
 :::
 
 ::: {.proof}
-Write $H = \nabla^2 f(\mathbf{a})$, which is symmetric by
-@thm-mixed-partials, and let $\mathbf{u}_1, \dots, \mathbf{u}_n$ be
+Write $H = \nabla^2 f(\mathbf{a})$, which is symmetric by @thm-mixed-partials, and let $\mathbf{u}_1, \dots, \mathbf{u}_n$ be
 orthonormal eigenvectors from @thm-spectral. Since
 $\nabla f(\mathbf{a}) = \mathbf{0}$, @eq-taylor-peano reads
 $$
@@ -1647,8 +1618,7 @@ $f(\mathbf{a} + t\mathbf{u}_n) - f(\mathbf{a}) <
 The test says nothing when some eigenvalue is $0$ and the others all
 have the same sign. The functions $x^4 + y^4$ and $x^4 - y^4$ both
 have zero Hessian at the origin, which is a minimum of the first and a
-saddle point of the second.
-@exr-ch2-inconclusive gives a pair of examples with a non-zero
+saddle point of the second. @exr-ch2-inconclusive gives a pair of examples with a non-zero
 Hessian.
 
 In two variables the eigenvalues need not be computed. The
@@ -1677,8 +1647,7 @@ maximum.
 
 ::: {.proof}
 If $AC - B^2 < 0$ the product of the eigenvalues is negative, so one is
-positive and the other negative, and part (c) of
-@thm-second-derivative-test applies. If $AC - B^2 > 0$ the eigenvalues
+positive and the other negative, and part (c) of @thm-second-derivative-test applies. If $AC - B^2 > 0$ the eigenvalues
 have the same sign, and so does their sum $A + C$. Also
 $AC > B^2 \ge 0$, so $A$ and $C$ have the same sign, which is therefore
 the sign of $A + C$ and of both eigenvalues.
@@ -1755,9 +1724,7 @@ maxima_zero("expand(charpoly(matrix([6,-3],[-3,6]), l) - (l-3)*(l-9))",
 Near a strict local minimum, the eigenvalues of the Hessian describe
 the shape of the valley: along $\mathbf{u}_k$ the function rises like
 $\tfrac12\lambda_kt^2$. When the largest eigenvalue is much bigger than
-the smallest, the valley is long and narrow, as for $x^2 + 3y^2$ in
-@exm-steepest, whose Hessian has eigenvalues $6$ and $2$.
-@sec-gradient-descent shows that the ratio $\lambda_1/\lambda_n$
+the smallest, the valley is long and narrow, as for $x^2 + 3y^2$ in @exm-steepest, whose Hessian has eigenvalues $6$ and $2$. @sec-gradient-descent shows that the ratio $\lambda_1/\lambda_n$
 governs how fast gradient descent converges.
 
 ## Notes and further reading {#sec-notes-chain}
@@ -1767,8 +1734,7 @@ of any dimension in sec. 8.3.2 and Taylor's formula in several
 variables in sec. 8.4.4, and studies extrema of functions of several
 variables in sec. 8.4.5. @zorich2016mathematical [sec. 10.5--10.6]
 gives the same results for maps between normed spaces, where the
-derivative of each order is a multilinear map.
-@deisenroth2020mathematics [ch. 5] covers the chain rule and Taylor
+derivative of each order is a multilinear map. @deisenroth2020mathematics [ch. 5] covers the chain rule and Taylor
 series from the point of view of machine learning. Its sec. 5.6 writes
 a computation as a sequence of intermediate variables, each a function
 of its parents, as @def-intermediate-variables does, and applies the
@@ -1828,8 +1794,7 @@ $f(0, 0) = 0$.
 $\partial f/\partial y(x, 0) = x$ for all $x$ and $y$.
 
 (b) Deduce that $\partial^2 f/\partial y\,\partial x(0, 0) = -1$ and
-$\partial^2 f/\partial x\,\partial y(0, 0) = 1$. Which hypothesis of
-@thm-mixed-partials fails?
+$\partial^2 f/\partial x\,\partial y(0, 0) = 1$. Which hypothesis of @thm-mixed-partials fails?
 :::
 
 ::: {#exr-ch2-ridge}

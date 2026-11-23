@@ -138,8 +138,7 @@ A layer is the affine map $\mathbf{x}\mapsto W\mathbf{x} + \mathbf{b}$,
 whose Jacobian is $W$ at every point (@exm-affine), followed by the
 componentwise map $\mathbf{z}\mapsto\sigma(\mathbf{z})$, whose
 Jacobian at $\mathbf{z}$ is the diagonal matrix with entries
-$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise). The chain rule
-(@thm-chain-rule) says that the Jacobian of a composition is the
+$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise). The chain rule (@thm-chain-rule) says that the Jacobian of a composition is the
 product of the Jacobians, $J_{g\circ f}(\mathbf{a}) = J_g(f(\mathbf{a}))\,J_f(\mathbf{a})$,
 when $f$ is differentiable at $\mathbf{a}$ and $g$ at $f(\mathbf{a})$.
 So if $\sigma$ is differentiable at every component of $\mathbf{z}$,
@@ -202,8 +201,7 @@ and the output we would like the network to give for it, called the
 *target*. A *loss function* $\ell\colon\mathbb{R}^{n_D}\to\mathbb{R}$
 measures how far the output is from the target, and *training* means
 searching for parameters that make the average loss over the training
-examples small, by gradient descent or one of its variants
-(@sec-stochastic). When the target is a vector of real numbers (a
+examples small, by gradient descent or one of its variants (@sec-stochastic). When the target is a vector of real numbers (a
 *regression* problem) the loss might be
 $\ell(\mathbf{z}) = \tfrac12\|\mathbf{z} - \mathbf{y}\|^2$. When the
 target is one of finitely many classes (a *classification* problem,
@@ -340,8 +338,7 @@ $\partial L/\partial(\mathbf{b}_l)_i$.
 :::
 
 In words, $(\boldsymbol{\delta}_l)_i$ measures how strongly the loss
-responds to the pre-activation of neuron $i$ in layer $l$. To get it,
-@eq-nn-backprop collects the values $\boldsymbol{\delta}_{l+1}$ of the
+responds to the pre-activation of neuron $i$ in layer $l$. To get it, @eq-nn-backprop collects the values $\boldsymbol{\delta}_{l+1}$ of the
 layer above through the transposed weights, so that neuron $i$
 receives $\sum_k(W_{l+1})_{ki}(\boldsymbol{\delta}_{l+1})_k$, one
 term for each neuron $k$ that reads it, and then multiplies by
@@ -377,11 +374,9 @@ components by the diagonal entries. This is @eq-nn-backprop.
 forward pass as a chain of maps that carry the parameters along. The
 map $(\boldsymbol{\theta}, \mathbf{a}_{l-1}) \mapsto
 (\boldsymbol{\theta}, \mathbf{z}_l)$ has components that are
-polynomials in its inputs, so it is differentiable everywhere by
-@thm-continuous-partials. The map
+polynomials in its inputs, so it is differentiable everywhere by @thm-continuous-partials. The map
 $(\boldsymbol{\theta}, \mathbf{z}_l) \mapsto (\boldsymbol{\theta}, \sigma(\mathbf{z}_l))$
-is differentiable at the current point by the argument of
-@exm-elementwise, because $\sigma$ is differentiable at each component
+is differentiable at the current point by the argument of @exm-elementwise, because $\sigma$ is differentiable at each component
 of $\mathbf{z}_l$. Finally $\ell$ is differentiable at
 $\mathbf{z}_D$. Starting from $(\boldsymbol{\theta}, \mathbf{x})$,
 the composition of these maps is $L$, so @thm-chain-rule shows that
@@ -405,8 +400,7 @@ and the same argument gives $(\boldsymbol{\delta}_l)_i$.
 
 The name *backpropagation* describes the order of work. The forward
 pass computes and stores every $\mathbf{z}_l$ and $\mathbf{a}_l$.
-The backward pass starts from $\boldsymbol{\delta}_D$, applies
-@eq-nn-backprop to get $\boldsymbol{\delta}_{D-1}, \dots,
+The backward pass starts from $\boldsymbol{\delta}_D$, applies @eq-nn-backprop to get $\boldsymbol{\delta}_{D-1}, \dots,
 \boldsymbol{\delta}_1$ in turn, and at each layer reads off the
 parameter gradients from @eq-nn-backprop-params. @def-adjoint calls
 the partial derivative $\bar v = \partial L/\partial v$ of the final
@@ -434,8 +428,7 @@ $$
 $$
 multiplications, at most twice the forward pass plus a term linear in
 the widths. So one forward and one backward pass together cost about
-three forward passes, however many parameters there are, as
-@thm-cheap-gradient predicts: there, a gradient costs at most a
+three forward passes, however many parameters there are, as @thm-cheap-gradient predicts: there, a gradient costs at most a
 constant multiple of the cost of evaluating the function. The price is memory: the backward pass
 reads every stored $\mathbf{a}_{l-1}$ and $\mathbf{z}_l$.
 
@@ -588,8 +581,7 @@ $\operatorname{relu}'(0)$.
 :::
 
 ::: {.proof}
-$\operatorname{relu}$ is differentiable at every non-zero number, so
-@thm-backprop-matrix applies and its formulas give the gradient. They
+$\operatorname{relu}$ is differentiable at every non-zero number, so @thm-backprop-matrix applies and its formulas give the gradient. They
 evaluate $\operatorname{relu}'$ only at components of the
 $\mathbf{z}_l$, none of which is $0$, so $g$ is never used.
 :::
@@ -632,15 +624,13 @@ check(engine_relu_grad(0.0, 0.0) == 0.0 and engine_relu_grad(1e-300, 0.0) == 1.0
 
 The example is small but the behaviour is general: an engine
 differentiates the program, not the function, and two programs for
-the same function can give different answers at a corner.
-@bolte2020mathematical [sec. 1] show the same with TensorFlow, and
+the same function can give different answers at a corner. @bolte2020mathematical [sec. 1] show the same with TensorFlow, and
 prove [Proposition 3] that for a wide class of programs, including
 ReLU networks, the engine's output equals the gradient at every
 interior point of each of finitely many regions whose closures cover
 the whole space. For an MLP and a fixed input, the sign patterns of
 the pre-activations give such regions directly: on the set of
-parameters where every pre-activation has a prescribed non-zero sign,
-@cor-relu-ad applies at every point. The boundaries of these regions
+parameters where every pre-activation has a prescribed non-zero sign, @cor-relu-ad applies at every point. The boundaries of these regions
 lie in the set where some pre-activation is $0$, which is exactly
 what @cor-relu-ad excludes. The book does not need the general
 theorem. @cor-relu-ad is a statement about the point at which we
@@ -658,8 +648,7 @@ Exact zeros do occur systematically in one situation. If every unit
 of a hidden layer is inactive, then $\mathbf{a}_{l-1} = \mathbf{0}$,
 and in a network without biases, such as the book's model, every
 component of $\mathbf{z}_l = W_l\mathbf{a}_{l-1}$ is exactly $0$. The
-same happens when an input vector is $\mathbf{0}$. Then
-@cor-relu-ad gives no guarantee, and the engine returns whatever its
+same happens when an input vector is $\mathbf{0}$. Then @cor-relu-ad gives no guarantee, and the engine returns whatever its
 choice of $g$ produces.
 
 ## Universal approximation in one variable {#sec-nn-universal}
@@ -698,8 +687,7 @@ $|x - y| < \delta$.
 A function with the property in the conclusion is *uniformly
 continuous* on $[a, b]$. Continuity at each point gives a $\delta$ for
 each point; the lemma says that one $\delta$ works for the whole
-interval. The book does not prove it; a proof is in
-@zorich2015mathematical [sec. 4.2.2, Theorem 4], and it uses the
+interval. The book does not prove it; a proof is in @zorich2015mathematical [sec. 4.2.2, Theorem 4], and it uses the
 completeness of the real numbers. It fails on intervals that are not
 closed: $1/x$ is continuous on $(0, 1]$, but for every $\delta < 1$
 the points $x = \delta$ and $y = \delta/2$ are closer than $\delta$
@@ -859,8 +847,7 @@ sequence exists, any $g_n$ with $1/n \le \varepsilon$ will do.
 Let $f(x) = x^2$ on $[0, 1]$ and $t_k = k/N$. The slope of the
 interpolant on $[t_{k-1}, t_k]$ is
 $(t_k^2 - t_{k-1}^2)/(t_k - t_{k-1}) = t_k + t_{k-1} = (2k-1)/N$, so
-the slope rises by $2/N$ at each interior breakpoint, and
-@eq-nn-relu-sum gives
+the slope rises by $2/N$ at each interior breakpoint, and @eq-nn-relu-sum gives
 $$
 g_N(x) = \frac{x}{N} + \frac{2}{N}\sum_{k=1}^{N-1}\operatorname{relu}\Bigl(x - \frac{k}{N}\Bigr)
 \qquad (0 \le x \le 1),
@@ -912,8 +899,7 @@ proof, and its reach is limited in four ways.
 
 - It gives no rate. The number of units depends on $f$ through the
   $\delta$ of @lem-nn-uniform-continuity, and a function that changes
-  quickly needs many more units than $x^2$ does
-  (@exr-ch7-units). Nothing in the theorem bounds $N$ in terms of
+  quickly needs many more units than $x^2$ does (@exr-ch7-units). Nothing in the theorem bounds $N$ in terms of
   $\varepsilon$ alone.
 - It says nothing about training. The weights in the proof come from
   values of $f$, which training does not have. Whether gradient
@@ -925,8 +911,7 @@ proof, and its reach is limited in four ways.
   continuous functions on a closed bounded subset of $\mathbb{R}^n$
   holds for ReLU and for every continuous activation function that is
   not a polynomial [@leshno1993multilayer], with earlier versions for
-  sigmoid-shaped activations by @cybenko1989approximation and
-  @hornik1989multilayer. Those proofs use functional analysis and do
+  sigmoid-shaped activations by @cybenko1989approximation and @hornik1989multilayer. Those proofs use functional analysis and do
   not construct the network the way @lem-relu-sum does.
 
 ## Initialisation and the size of activations {#sec-nn-init}
@@ -1081,8 +1066,7 @@ If the $w_{ij}$ are independent and each is symmetric, as normal
 random variables with mean $0$ are, then the variables $-w_{ij}$ are
 independent with the same distributions as the $w_{ij}$, so
 $-z_i = \sum_j(-w_{ij})x_j$ has the same distribution as
-$z_i = \sum_jw_{ij}x_j$, and each $z_i$ is symmetric.
-@thm-nn-init-variance and @lem-relu-second-moment then give, for one
+$z_i = \sum_jw_{ij}x_j$, and each $z_i$ is symmetric. @thm-nn-init-variance and @lem-relu-second-moment then give, for one
 ReLU layer without bias,
 $$
 \mathbb{E}\|\operatorname{relu}(W\mathbf{x})\|^2 = \frac{ms^2}{2}\|\mathbf{x}\|^2 .
@@ -1100,8 +1084,7 @@ exponentially unless the factors are close to $1$. @he2015delving
 tracks the expected square of one component instead of the squared
 norm, which gives the factor $n_{l-1}s_l^2/2$ and the rule
 $s_l^2 = 2/n_{l-1}$ for ReLU layers; for layers of equal width the two
-factors agree. The earlier rule of
-@glorot2010understanding [sec. 4.2] balances the forward pass against
+factors agree. The earlier rule of @glorot2010understanding [sec. 4.2] balances the forward pass against
 the backward pass of @eq-nn-backprop and takes
 $s_l^2 = 2/(n_{l-1} + n_l)$.
 
@@ -1207,15 +1190,12 @@ for s_l, factor in ((0.08, 0.0512), (np.sqrt(2 / 16), 1.0)):
 functions, universal approximation and backpropagation, and
 [ch. 8] discusses initialisation among other practical matters of
 training. @rumelhart1986learning popularised backpropagation as a
-way to train networks with hidden layers.
-@bolte2020mathematical give a mathematical account of what automatic
-differentiation computes for programs with corners, and
-@kakade2018provably show how to compute a correct generalised
+way to train networks with hidden layers. @bolte2020mathematical give a mathematical account of what automatic
+differentiation computes for programs with corners, and @kakade2018provably show how to compute a correct generalised
 derivative at a cost comparable to that of a gradient. The variance
 argument of @sec-nn-init is from @glorot2010understanding and, with the
 factor $\tfrac12$ for ReLU, @he2015delving. For universal
-approximation in several variables see @leshno1993multilayer,
-@cybenko1989approximation and @hornik1989multilayer.
+approximation in several variables see @leshno1993multilayer, @cybenko1989approximation and @hornik1989multilayer.
 
 ## Exercises {#sec-nn-exercises}
 
@@ -1238,8 +1218,7 @@ $\mathbf{b} = (0, 1)^\top$. Find $J_F(\mathbf{0})$.
 An MLP of depth 2 with widths $1, 2, 1$ and ReLU activation has
 $W_1 = (1, -2)^\top$, $\mathbf{b}_1 = (1, 1)^\top$, $W_2 = (3, 1)$
 and $b_2 = 0$. With loss $\ell(z) = \tfrac12(z - 2)^2$ and input
-$x = 1$, compute the loss and all seven partial derivatives with
-@thm-backprop-matrix.
+$x = 1$, compute the loss and all seven partial derivatives with @thm-backprop-matrix.
 :::
 
 ::: {#exr-ch7-programs}
@@ -1272,8 +1251,7 @@ all $x$ and $y$.
 :::
 
 ::: {#exr-ch7-units}
-(a) Find the least $N$ for which the network $g_N$ of
-@exm-relu-square approximates $x^2$ on $[0, 1]$ with error at most
+(a) Find the least $N$ for which the network $g_N$ of @exm-relu-square approximates $x^2$ on $[0, 1]$ with error at most
 $10^{-6}$.
 
 (b) Let $f(x) = \sqrt{x}$ on $[0, 1]$, $t_k = k/N$, and $\hat f$ the

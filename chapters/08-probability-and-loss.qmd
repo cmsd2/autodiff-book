@@ -163,8 +163,7 @@ The likelihood is the probability of the observed sequence when the
 observations are independent draws from $p_{\boldsymbol{\theta}}$. It
 is a function of the parameters, with the data held fixed. The
 logarithm is increasing, so $\mathcal{L}$ and $\ln\mathcal{L}$ have
-the same maximisers wherever $\mathcal{L} > 0$; in
-@exm-likelihood the log-likelihoods are $-5\ln3 \approx -5.493$ and
+the same maximisers wherever $\mathcal{L} > 0$; in @exm-likelihood the log-likelihoods are $-5\ln3 \approx -5.493$ and
 $\ln 0.00864 \approx -4.751$. Training minimises rather than
 maximises, and works with averages so that the scale does not depend
 on $N$. The loss used throughout the rest of the book is the *average
@@ -349,8 +348,7 @@ $D_{\mathrm{KL}}(p\,\|\,q) \ge 0$.
 If $p = q$, every logarithm in the definition is $\ln1 = 0$. If
 $D_{\mathrm{KL}}(p\,\|\,q) = 0$, both inequalities in @eq-prob-gibbs are
 equalities. The first one is a sum of term-by-term inequalities with
-positive weights $p(v)$, so each term is an equality, and by
-@lem-prob-log-bound $q(v)/p(v) = 1$ for every $v\in S$. The second gives
+positive weights $p(v)$, so each term is an equality, and by @lem-prob-log-bound $q(v)/p(v) = 1$ for every $v\in S$. The second gives
 $\sum_{v\in S}q(v) = 1$, so $q(v) = 0 = p(v)$ for $v \notin S$. Hence
 $q = p$.
 :::
@@ -413,8 +411,7 @@ Group the factors of the likelihood by outcome:
 $\mathcal{L}(q) = \prod_{v\in V}q(v)^{c_v}$. At $q = \hat p$ every
 factor with $c_v > 0$ is positive, so $\mathcal{L}(\hat p) > 0$. If
 $q(v) = 0$ for some $v$ with $c_v > 0$ then $\mathcal{L}(q) = 0 <
-\mathcal{L}(\hat p)$. Otherwise $\mathcal{L}(q) > 0$ and, by
-@eq-prob-ce-empirical and @def-kl,
+\mathcal{L}(\hat p)$. Otherwise $\mathcal{L}(q) > 0$ and, by @eq-prob-ce-empirical and @def-kl,
 $$
 \ln\mathcal{L}(q) = \sum_{v\in V}c_v\ln q(v) = -N\,H(\hat p, q)
 = -N\bigl(H(\hat p) + D_{\mathrm{KL}}(\hat p\,\|\,q)\bigr) .
@@ -502,8 +499,7 @@ computation.
 ::: {#exm-softmax}
 The computation at the start of this section says
 $\operatorname{softmax}(2, 1, 0) \approx (0.665, 0.245, 0.090)$. The
-logits $(1002, 1001, 1000)$ give the same distribution by
-@eq-prob-softmax-shift, although evaluating $e^{1002}$ directly gives
+logits $(1002, 1001, 1000)$ give the same distribution by @eq-prob-softmax-shift, although evaluating $e^{1002}$ directly gives
 infinity in double precision.
 :::
 
@@ -764,8 +760,7 @@ By @eq-prob-log-softmax,
 $-\sum_iy_i\ln p_i = \sum_iy_i\bigl(\operatorname{lse}(\mathbf{z}) - z_i\bigr)
 = \operatorname{lse}(\mathbf{z}) - \mathbf{y}\cdot\mathbf{z}$,
 since $\sum_iy_i = 1$. For $\mathbf{y} = \mathbf{e}_y$ this is
-$\operatorname{lse}(\mathbf{z}) - z_y$. By @thm-prob-lse-gradient and
-@exm-affine, $L$ is differentiable with gradient
+$\operatorname{lse}(\mathbf{z}) - z_y$. By @thm-prob-lse-gradient and @exm-affine, $L$ is differentiable with gradient
 $\operatorname{softmax}(\mathbf{z}) - \mathbf{y}$.
 :::
 
@@ -780,8 +775,7 @@ $-\eta(\mathbf{p} - \mathbf{e}_y)$: it raises the logit of the
 observed outcome by $\eta(1 - p_y)$ and lowers every other logit $z_i$
 by $\eta p_i$, so the outcomes that took the most probability away
 from $y$ lose the most. Every component lies strictly between $-1$
-and $1$, and the components sum to $0$, as (b) of
-@thm-softmax-jacobian requires. The gradient is never $\mathbf{0}$,
+and $1$, and the components sum to $0$, as (b) of @thm-softmax-jacobian requires. The gradient is never $\mathbf{0}$,
 since $p_y < 1$, and $L(\mathbf{z}) > 0$ for every $\mathbf{z}$; the
 loss tends to $0$ only as $z_y - z_i \to \infty$ for every $i \ne y$.
 In the notation of @thm-backprop-matrix, an MLP whose output
@@ -836,14 +830,12 @@ is above $\ln|V|$ does worse than one that predicts nothing at all.
 
 The book's model starts close to the uniform model. Its last layer
 applies a $27\times16$ matrix with entries drawn from
-$N(0, 0.08^2)$ to a vector of squared norm about $16$, so by
-@thm-nn-init-variance each logit has mean $0$ and variance about
+$N(0, 0.08^2)$ to a vector of squared norm about $16$, so by @thm-nn-init-variance each logit has mean $0$ and variance about
 $0.08^2\times16 \approx 0.10$, a standard deviation of about $0.32$.
 The second-order Taylor expansion (@thm-taylor-second) approximates a
 function near a point $\mathbf{a}$ by
 $f(\mathbf{a} + \mathbf{h}) \approx f(\mathbf{a}) + \nabla f(\mathbf{a})\cdot\mathbf{h} + \tfrac12\mathbf{h}^\top\nabla^2f(\mathbf{a})\,\mathbf{h}$.
-At a constant vector $c\mathbf{1}$ the softmax is uniform, so by
-@thm-prob-lse-gradient and @thm-softmax-jacobian log-sum-exp has
+At a constant vector $c\mathbf{1}$ the softmax is uniform, so by @thm-prob-lse-gradient and @thm-softmax-jacobian log-sum-exp has
 gradient $\frac1n\mathbf{1}$ and Hessian
 $\frac1nI - \frac1{n^2}\mathbf{1}\mathbf{1}^\top$ there. Taking
 $c = \bar z$, the average defined below, the expansion gives
@@ -945,15 +937,13 @@ for eps_ in (1e-2, 1e-3):
 ## Notes and further reading {#sec-prob-notes}
 
 @mackay2003information [ch. 2] introduces entropy, relative entropy
-and Gibbs' inequality, which it proves in sec. 2.6, and
-@cover2006elements [ch. 2] gives a fuller treatment of the same
+and Gibbs' inequality, which it proves in sec. 2.6, and @cover2006elements [ch. 2] gives a fuller treatment of the same
 quantities. @goodfellow2016deep [ch. 3] collects the probability and
 information theory used in deep learning, [ch. 5] discusses maximum
 likelihood, and [ch. 6] discusses softmax output units and the
 cross-entropy loss. @wasserman2004all [ch. 9] covers maximum
 likelihood estimation in general, and @deisenroth2020mathematics
-[ch. 9] derives least squares from a normal noise model as in
-@sec-prob-mse.
+[ch. 9] derives least squares from a normal noise model as in @sec-prob-mse.
 
 ## Exercises {#sec-prob-exercises}
 

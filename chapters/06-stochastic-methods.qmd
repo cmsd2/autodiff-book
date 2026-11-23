@@ -238,8 +238,7 @@ $$
 :::
 
 ::: {.proof}
-Write $\mathbf{m} = \mathbb{E}[\mathbf{X}]$. Expanding and using
-@thm-expectation-linear,
+Write $\mathbf{m} = \mathbb{E}[\mathbf{X}]$. Expanding and using @thm-expectation-linear,
 $\mathbb{E}\bigl[\|\mathbf{X}\|^2 - 2\mathbf{m}\cdot\mathbf{X} + \|\mathbf{m}\|^2\bigr]
 = \mathbb{E}\bigl[\|\mathbf{X}\|^2\bigr] - 2\|\mathbf{m}\|^2 + \|\mathbf{m}\|^2$.
 For the second formula,
@@ -261,8 +260,7 @@ $\sum_j\mathbf{Y}_j$. Expanding the square,
 $$
 \Bigl\|\sum_j\mathbf{Y}_j\Bigr\|^2 = \sum_j\|\mathbf{Y}_j\|^2 + \sum_{i\ne j}\mathbf{Y}_i\cdot\mathbf{Y}_j .
 $$
-For $i \ne j$, $\mathbf{Y}_i$ and $\mathbf{Y}_j$ are independent by
-@lem-independent-functions, so by @thm-independent-product
+For $i \ne j$, $\mathbf{Y}_i$ and $\mathbf{Y}_j$ are independent by @lem-independent-functions, so by @thm-independent-product
 $\mathbb{E}[\mathbf{Y}_i\cdot\mathbf{Y}_j] = \mathbf{0}\cdot\mathbf{0} = 0$.
 Taking expectations leaves $\sum_j\mathbb{E}\bigl[\|\mathbf{Y}_j\|^2\bigr]$.
 :::
@@ -273,8 +271,7 @@ $\mathbb{E}[X] = \frac{1 + \dots + 6}{6} = \frac72$ and
 $\mathbb{E}[X^2] = \frac{1 + 4 + \dots + 36}{6} = \frac{91}{6}$, so
 $\operatorname{Var}[X] = \frac{91}{6} - \frac{49}{4} = \frac{35}{12}$
 by @lem-variance-formula. The mean of $B$ independent throws has
-variance $\frac{35}{12B}$, by @thm-variance-sum and
-@lem-variance-formula with $c = 1/B$: averaging shrinks the spread.
+variance $\frac{35}{12B}$, by @thm-variance-sum and @lem-variance-formula with $c = 1/B$: averaging shrinks the spread.
 :::
 
 ```{python}
@@ -451,8 +448,7 @@ $\mathbf{g}(\boldsymbol{\theta}, \xi)$ is an unbiased estimate of
 $\nabla f(\boldsymbol{\theta})$: $\xi$ records the random choice, such
 as which example was picked, and $\mathbf{g}$ is the gradient that
 choice produces. Minibatches fit this definition: $\Xi$ is the set of lists of $B$
-examples, all equally likely, and $\mathbf{g}$ is the batch average of
-@thm-minibatch. The iterate $\boldsymbol{\theta}_k$ is a random vector
+examples, all equally likely, and $\mathbf{g}$ is the batch average of @thm-minibatch. The iterate $\boldsymbol{\theta}_k$ is a random vector
 that depends only on the first $k$ draws $\xi_0, \dots, \xi_{k-1}$.
 The proof below averages over one draw at a time, using the following
 lemma.
@@ -460,8 +456,7 @@ lemma.
 ::: {#lem-average-last}
 Let $\Xi$ be a finite set with probabilities $p(\xi) > 0$ adding up to
 $1$, let $K \ge 1$, and give each list $(\xi_0, \dots, \xi_{K-1})$ of
-elements of $\Xi$ the probability $p(\xi_0)\cdots p(\xi_{K-1})$, as in
-@def-sgd. For $0 \le k < K$, let $F$ be a real function of the first
+elements of $\Xi$ the probability $p(\xi_0)\cdots p(\xi_{K-1})$, as in @def-sgd. For $0 \le k < K$, let $F$ be a real function of the first
 $k + 1$ entries $\xi_0, \dots, \xi_k$, and let
 $$
 \bar F(\xi_0, \dots, \xi_{k-1}) = \sum_{\xi\in\Xi}p(\xi)\,F(\xi_0, \dots, \xi_{k-1}, \xi)
@@ -503,8 +498,7 @@ $$
 ::: {.proof}
 Fix $k$ and the first $k$ draws, so that $\boldsymbol{\theta}_k$ is a
 fixed vector. Write $\mathbf{d} = \nabla f(\boldsymbol{\theta}_k)$ and
-$\mathbf{G}(\xi) = \mathbf{g}(\boldsymbol{\theta}_k, \xi)$. By
-@lem-descent with $\mathbf{y} = \boldsymbol{\theta}_k - \eta\mathbf{G}(\xi)$,
+$\mathbf{G}(\xi) = \mathbf{g}(\boldsymbol{\theta}_k, \xi)$. By @lem-descent with $\mathbf{y} = \boldsymbol{\theta}_k - \eta\mathbf{G}(\xi)$,
 $$
 f\bigl(\boldsymbol{\theta}_k - \eta\mathbf{G}(\xi)\bigr)
 \le f(\boldsymbol{\theta}_k) - \eta\,\mathbf{d}\cdot\mathbf{G}(\xi) + \frac{L\eta^2}{2}\|\mathbf{G}(\xi)\|^2 .
@@ -519,8 +513,7 @@ f(\boldsymbol{\theta}_k) - \eta\Bigl(1 - \frac{L\eta}{2}\Bigr)\|\mathbf{d}\|^2 +
 \le f(\boldsymbol{\theta}_k) - \frac{\eta}{2}\|\nabla f(\boldsymbol{\theta}_k)\|^2 + \frac{L\eta^2\sigma^2}{2},
 $$
 using $\eta \le 1/L$. This holds for every choice of the first $k$
-draws. Take expectations: by @lem-average-last and
-@thm-expectation-linear,
+draws. Take expectations: by @lem-average-last and @thm-expectation-linear,
 $$
 \mathbb{E}\bigl[f(\boldsymbol{\theta}_{k+1})\bigr]
 \le \mathbb{E}\bigl[f(\boldsymbol{\theta}_k)\bigr] - \frac{\eta}{2}\mathbb{E}\bigl[\|\nabla f(\boldsymbol{\theta}_k)\|^2\bigr] + \frac{L\eta^2\sigma^2}{2} .
@@ -552,13 +545,11 @@ example gradients instead of $N$.
 ::: {#exm-sgd-1d}
 Run SGD with batch size $1$ on @exm-minibatch: $L = 1$,
 $\sigma^2 = \frac{14}{3}$, $\theta_0 = 0$ and $\eta = 0.1$, so
-$f(\theta_0) - f^* = \frac92$. For $K = 100$ steps the bound of
-@thm-sgd-convergence is
+$f(\theta_0) - f^* = \frac92$. For $K = 100$ steps the bound of @thm-sgd-convergence is
 $$
 \frac{2\cdot\frac92}{0.1\cdot100} + 0.1\cdot\frac{14}{3} = 0.9 + 0.467 \approx 1.37 .
 $$
-Here $\|\nabla f(\theta_k)\|^2 = (\theta_k - 3)^2$, and
-@exr-ch6-sgd-floor computes its expectation exactly: the average over
+Here $\|\nabla f(\theta_k)\|^2 = (\theta_k - 3)^2$, and @exr-ch6-sgd-floor computes its expectation exactly: the average over
 the first $100$ steps is $0.706$, and as $k \to \infty$ the expectation
 tends to $\eta\sigma^2/(2 - \eta) \approx 0.246$, which is about half
 of the term $\eta L\sigma^2 \approx 0.467$ in the bound.
@@ -730,8 +721,7 @@ $\boldsymbol{\theta}^*$ from @eq-stoch-momentum gives
 $\mathbf{e}_{k+1} = \mathbf{e}_k - \eta A\mathbf{e}_k + \beta(\mathbf{e}_k - \mathbf{e}_{k-1})$.
 Taking the dot product with $\mathbf{u}_i$, and using
 $\mathbf{u}_i\cdot A\mathbf{e}_k = (A\mathbf{u}_i)\cdot\mathbf{e}_k = \lambda_ic_{k,i}$
-(as $A$ is symmetric), each $c_{k,i}$ satisfies
-@eq-stoch-momentum-recurrence with $\lambda = \lambda_i$. Now
+(as $A$ is symmetric), each $c_{k,i}$ satisfies @eq-stoch-momentum-recurrence with $\lambda = \lambda_i$. Now
 $1 - \sqrt\beta = 2/(\sqrt\kappa + 1)$ and
 $1 + \sqrt\beta = 2\sqrt\kappa/(\sqrt\kappa + 1)$, so
 $$
@@ -952,8 +942,7 @@ Let $k \ge 1$.
 
 ::: {.proof}
 (1) $(1 - \beta)\sum_{j=1}^{k}\beta^{k-j} = (1 - \beta)(1 + \beta + \dots + \beta^{k-1}) = 1 - \beta^k$,
-the sum of a geometric series. (2) follows from (1) and
-@thm-ema-closed. (3) Dividing the weights by their sum makes them add
+the sum of a geometric series. (2) follows from (1) and @thm-ema-closed. (3) Dividing the weights by their sum makes them add
 up to $1$. By @thm-expectation-linear,
 $\mathbb{E}[\hat m_k] = \frac{1 - \beta}{1 - \beta^k}\sum_j\beta^{k-j}\,\mathbb{E}[g_j] = g$
 by (1).
@@ -1084,12 +1073,10 @@ $(1 - \beta_1^k)/\sqrt{1 - \beta_2^k}$, which for the model's values
 is $0.15/0.1 = 1.5$ at the first step and drifts towards $1$ later.
 In each coordinate the ratio $\hat m_{k,i}/\sqrt{\hat v_{k,i}}$ is a
 mean of recent gradients divided by their root mean square. It has no
-units: multiplying every gradient by $c > 0$ leaves it unchanged
-(@exr-ch6-adam-scale). If a coordinate's gradient is steady, the ratio
+units: multiplying every gradient by $c > 0$ leaves it unchanged (@exr-ch6-adam-scale). If a coordinate's gradient is steady, the ratio
 is close to $\pm1$ and the step is close to $\eta_k$ in size whatever
 the gradient's scale. If the gradient keeps changing sign, the mean is
-small compared with the root mean square and the step is small.
-@thm-cauchy-schwarz bounds the ratio in every case.
+small compared with the root mean square and the step is small. @thm-cauchy-schwarz bounds the ratio in every case.
 
 ::: {#thm-adam-step}
 ## Size of an Adam step
@@ -1107,8 +1094,7 @@ $$
 Fix $i$ and drop it from the notation. If $g_1 = \dots = g_k = 0$ the
 step is $0$. Otherwise $v_k > 0$. Put $\gamma = \beta_1^2/\beta_2 < 1$.
 By @thm-ema-closed, and writing
-$\beta_1^{k-j}g_j = \gamma^{(k-j)/2}\cdot\beta_2^{(k-j)/2}g_j$,
-@thm-cauchy-schwarz in $\mathbb{R}^k$ gives
+$\beta_1^{k-j}g_j = \gamma^{(k-j)/2}\cdot\beta_2^{(k-j)/2}g_j$, @thm-cauchy-schwarz in $\mathbb{R}^k$ gives
 $$
 |m_k| = (1 - \beta_1)\Bigl|\sum_{j=1}^k\beta_1^{k-j}g_j\Bigr|
 \le (1 - \beta_1)\Bigl(\sum_{j=1}^k\gamma^{k-j}\Bigr)^{1/2}\Bigl(\sum_{j=1}^k\beta_2^{k-j}g_j^2\Bigr)^{1/2}
@@ -1315,12 +1301,9 @@ check(lhs <= 2 * 4.5 + 14 / 3 * sum(e * e for e in eta_sched), "thm-sgd-schedule
 learning. Their sec. 4 proves convergence results of the kind given
 here under weaker assumptions; @thm-sgd-convergence is a special case
 of their thm. 4.8, and they also treat strongly convex functions and
-decreasing learning rates. Stochastic approximation began with
-@robbins1951stochastic. The heavy-ball method is due to
-@polyak1964some; @goh2017momentum explains its behaviour on quadratics
+decreasing learning rates. Stochastic approximation began with @robbins1951stochastic. The heavy-ball method is due to @polyak1964some; @goh2017momentum explains its behaviour on quadratics
 with interactive diagrams, and @lessard2016analysis show why its
-guarantees do not extend beyond quadratics.
-@nesterov2018lectures [ch. 2] describes accelerated methods that do
+guarantees do not extend beyond quadratics. @nesterov2018lectures [ch. 2] describes accelerated methods that do
 achieve the $\sqrt\kappa$ rate on every smooth strongly convex
 function.
 

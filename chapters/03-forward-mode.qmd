@@ -85,8 +85,7 @@ multiplying by a constant; powers $t \mapsto t^c$ with a constant
 exponent; and $\exp$, $\log$, $\sin$ and $\cos$. Each is a function of
 one or two variables with continuous partial derivatives on an open
 domain (division needs a non-zero denominator, and $\log t$ and
-non-integer powers $t^c$ need $t > 0$). So by
-@thm-continuous-partials each is differentiable at every point of its
+non-integer powers $t^c$ need $t > 0$). So by @thm-continuous-partials each is differentiable at every point of its
 domain, with partial derivatives we can write down. The function
 $\max(t, 0)$, which has a corner at $0$, waits until @sec-networks.
 
@@ -114,8 +113,7 @@ function $f\colon D \to \mathbb{R}^m$ that sends $\mathbf{a}$ to the
 values of the outputs.
 :::
 
-The condition $P(k) \subseteq \{1, \dots, k-1\}$ of
-@def-intermediate-variables says that a line uses only variables
+The condition $P(k) \subseteq \{1, \dots, k-1\}$ of @def-intermediate-variables says that a line uses only variables
 already computed. Constants live inside the operations: $4t$ and
 $1 - t$ are operations of one variable. In @tbl-fwd-trace, $n = 2$,
 $N = 7$, the output is $v_7$, and the parent sets are $P(3) = \{1\}$,
@@ -123,8 +121,7 @@ $P(4) = \{2, 3\}$, $P(5) = \{1, 2\}$, $P(6) = \{5\}$ and
 $P(7) = \{4, 6\}$. Each line names one operation and at most two
 earlier variables, so a trace is a program in *three-address form*:
 every instruction has at most two operands and one result. A trace is
-also called a *Wengert list*, after the program of
-@wengert1964simple that evaluated derivatives this way.
+also called a *Wengert list*, after the program of @wengert1964simple that evaluated derivatives this way.
 
 As in @def-intermediate-variables, draw an arrow $i \to k$ whenever
 $v_i$ is an argument of line $k$. @fig-fwd-trace-graph shows the
@@ -160,8 +157,7 @@ check(sorted(edges) == sorted((i, k) for k, ps in P.items() for i in ps), "figur
 ```
 
 The figure keeps what the computation needs, namely which values feed
-which operations, and drops the numbering. The numbering of
-@tbl-fwd-trace is one choice among several: $v_5$ could be computed
+which operations, and drops the numbering. The numbering of @tbl-fwd-trace is one choice among several: $v_5$ could be computed
 before $v_3$, since it uses only the inputs, and the value of $f$
 would not change. A program that records a computation as it runs,
 such as the engine of @sec-rev-engine, does not number its variables
@@ -178,8 +174,7 @@ A *directed graph* is a finite set of *nodes* together with a set of
 arrow $i \to k$. Then $i$ is a *parent* of $k$, and $k$ a *child* of
 $i$. A *path* from $j$ to $k$ is a sequence of edges
 $j = i_0 \to i_1 \to \dots \to i_r = k$ with $r \ge 0$, where $r = 0$
-gives the *empty path* from $k$ to itself, as in
-@def-intermediate-variables. A *cycle* is a path with $r \ge 1$ from a
+gives the *empty path* from $k$ to itself, as in @def-intermediate-variables. A *cycle* is a path with $r \ge 1$ from a
 node to itself. A graph with no cycle is *acyclic*. A directed graph
 that is acyclic is called a *directed acyclic graph*, or *DAG*.
 
@@ -265,8 +260,7 @@ By induction on the number of nodes $N$. A graph with one node has no
 edges, and numbering the node $1$ is a topological order.
 
 Let $N \ge 2$ and suppose the result for graphs with $N - 1$ nodes.
-Let $S$ be the set of nodes without parents, which is not empty by
-@lem-dag-source, and choose $s$ in $S$. Remove $s$ and its edges. The
+Let $S$ be the set of nodes without parents, which is not empty by @lem-dag-source, and choose $s$ in $S$. Remove $s$ and its edges. The
 remaining graph has $N-1$ nodes and no cycle, since a cycle in it
 would be a cycle in the whole graph. By the induction hypothesis it
 has a topological order in which its nodes without parents come
@@ -291,8 +285,7 @@ A topological order that numbers the inputs first turns a
 computational graph into an evaluation trace: line $k$ applies
 $\varphi_k$ to the values at the parents of node $k$, and those
 parents have smaller numbers. The graph of @fig-fwd-trace-graph has
-$12$ topological orders that number the inputs first
-(@exr-ch3-orders counts them). The value at each node does not depend
+$12$ topological orders that number the inputs first (@exr-ch3-orders counts them). The value at each node does not depend
 on which one we use.
 
 ::: {#cor-trace-evaluation}
@@ -363,10 +356,8 @@ of the rate of the argument times the local partial derivative of the
 operation. That recipe is forward mode.
 
 For each $k$ and each $\mathbf{x}$ in the set $D$ where the trace is
-defined, write $F_k(\mathbf{x})$ for the value of $v_k$, as in
-@def-intermediate-variables. So $F_j(\mathbf{x}) = x_j$ for $j \le n$,
-and the outputs are the components of $f$. As in
-@thm-chain-rule-paths, write $d_{ki} = \partial\varphi_k/\partial v_i$
+defined, write $F_k(\mathbf{x})$ for the value of $v_k$, as in @def-intermediate-variables. So $F_j(\mathbf{x}) = x_j$ for $j \le n$,
+and the outputs are the components of $f$. As in @thm-chain-rule-paths, write $d_{ki} = \partial\varphi_k/\partial v_i$
 for the *local partial derivative* of line $k$ with respect to its
 argument $v_i$, evaluated at the values of the arguments of line $k$.
 
@@ -558,8 +549,7 @@ one multiplication and one addition for each argument. So a forward
 pass costs a constant multiple of evaluating $f$, and @sec-reverse-mode
 makes the constant precise. A gradient of $f\colon\mathbb{R}^n \to
 \mathbb{R}$ needs $n$ passes, one for each $\mathbf{e}_j$, and costs
-about $n$ times as much as $f$. For the language model of
-@sec-small-gpt, $n = 4192$.
+about $n$ times as much as $f$. For the language model of @sec-small-gpt, $n = 4192$.
 
 ## Dual numbers {#sec-fwd-dual}
 
@@ -742,8 +732,7 @@ $k \le n$ this is the choice of inputs. For $k > n$, the extended
 operation applied to the dual arguments $v_i + \dot v_i\varepsilon$,
 $i \in P(k)$, has real part $\varphi_k((v_i)_{i\in P(k)}) = v_k$ and
 $\varepsilon$-part $\sum_{i\in P(k)} d_{ki}\,\dot v_i$, which is
-$\dot v_k$ by @eq-fwd-tangent. The claim about the outputs is now
-@thm-forward-mode.
+$\dot v_k$ by @eq-fwd-tangent. The claim about the outputs is now @thm-forward-mode.
 :::
 
 So a program that knows nothing about derivatives computes them when
@@ -753,8 +742,7 @@ elementary operation knows its own derivative. The file
 the product rule in the $\varepsilon$-part of a product.
 
 ::: {#exm-dual-composite}
-Take $f(t) = e^{\sin t}$ at $t = 0$, which is not a polynomial. By
-@eq-dual-extension, $\sin(0 + \varepsilon) = \sin 0 + \cos(0)\,
+Take $f(t) = e^{\sin t}$ at $t = 0$, which is not a polynomial. By @eq-dual-extension, $\sin(0 + \varepsilon) = \sin 0 + \cos(0)\,
 \varepsilon = \varepsilon$, and then $\exp(\varepsilon) = e^0 + e^0
 \varepsilon = 1 + \varepsilon$. By @thm-dual-numbers (b), $f(0) = 1$
 and $f'(0) = 1$, which agrees with $f'(t) = \cos(t)\,e^{\sin t}$.
@@ -779,8 +767,7 @@ sym_equal(sp.diff(fs, t), sp.cos(t) * sp.exp(sp.sin(t)), "derivative of e^sin t"
 
 ## Forward mode in code {#sec-fwd-code}
 
-A dual number is a pair of floating-point numbers, and the rules of
-@def-dual-numbers and @eq-dual-extension take a few lines each. The
+A dual number is a pair of floating-point numbers, and the rules of @def-dual-numbers and @eq-dual-extension take a few lines each. The
 class below holds the real part in `a` and the $\varepsilon$-part in
 `b`, and it tells Python what `+`, `-`, `*` and `/` mean for such
 pairs (programmers call this *operator overloading*). An ordinary
@@ -849,8 +836,7 @@ sin = extend(math.sin, math.cos)
 cos = extend(math.cos, lambda a: -math.sin(a))
 ```
 
-The methods `__add__` and `__mul__` are the two formulas of
-@def-dual-numbers. Subtraction adds the negative, and division
+The methods `__add__` and `__mul__` are the two formulas of @def-dual-numbers. Subtraction adds the negative, and division
 multiplies by the inverse $1/c - (d/c^2)\varepsilon$ found above, so
 it needs a non-zero real part in the divisor. The methods whose names
 begin with `__r` handle a real number on the left, as in `1 - x`, by
@@ -1032,9 +1018,7 @@ agree in most of their digits, so their difference keeps only a few
 correct ones. The *rounding error* in the quotient grows like
 $10^{-16}/h$. The two errors balance near $h = 10^{-8}$ for the
 forward difference, where the total error is about $10^{-8}$, so at
-best about half the digits of the derivative are correct.
-@tbl-fwd-fd shows both effects, and @thm-fd-error in
-@sec-floating-point proves the estimates.
+best about half the digits of the derivative are correct. @tbl-fwd-fd shows both effects, and @thm-fd-error in @sec-floating-point proves the estimates.
 
 ```{python}
 #| label: tbl-fwd-fd
@@ -1086,8 +1070,7 @@ automatic differentiation produces.
 ## Notes and further reading {#sec-fwd-notes}
 
 @wengert1964simple described a program that splits a function into
-elementary steps and differentiates each step, which is forward mode.
-@griewank2008evaluating is the standard reference on automatic
+elementary steps and differentiates each step, which is forward mode. @griewank2008evaluating is the standard reference on automatic
 differentiation; its early chapters treat evaluation traces and
 forward mode, with their cost, in far more detail than here. The
 survey of @baydin2018automatic compares automatic differentiation with
@@ -1095,8 +1078,7 @@ symbolic and numerical differentiation for readers from machine
 learning, and uses the
 logistic map of @exm-fwd-swell as its example of expression swell. Dual
 numbers go back to @clifford1871preliminary. The source-removal
-algorithm in the proof of @thm-topological-order is the one of
-@kahn1962topological.
+algorithm in the proof of @thm-topological-order is the one of @kahn1962topological.
 
 ## Exercises {#sec-fwd-exercises}
 
@@ -1130,8 +1112,7 @@ agrees with @eq-dual-extension.
 :::
 
 ::: {#exr-ch3-sqrt}
-Extend $g(t) = \sqrt t$ to dual numbers with $a > 0$ by
-@eq-dual-extension. Show that $\bigl(\sqrt{a + b\varepsilon}\bigr)^2
+Extend $g(t) = \sqrt t$ to dual numbers with $a > 0$ by @eq-dual-extension. Show that $\bigl(\sqrt{a + b\varepsilon}\bigr)^2
 = a + b\varepsilon$, and compute $\sqrt{4 + \varepsilon}$.
 :::
 

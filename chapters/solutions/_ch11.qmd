@@ -51,8 +51,7 @@ check(sp.simplify(Jex * sp.Matrix([4, -3]) - sp.Matrix([4, -3]) / sp.sqrt(13)) =
 close(rms11([3, 4], 0.5), [0.8321, 1.1094], "rms(3, 4)", tol=1e-4)
 ```
 
-**@exr-ch11-rmsnorm-gradient.** $J$ is symmetric and, by
-@thm-rmsnorm-jacobian, $J\mathbf{x} = \varepsilon s^3\mathbf{x}$, so
+**@exr-ch11-rmsnorm-gradient.** $J$ is symmetric and, by @thm-rmsnorm-jacobian, $J\mathbf{x} = \varepsilon s^3\mathbf{x}$, so
 $$
 \mathbf{x}\cdot\bar{\mathbf{x}} = \mathbf{x}\cdot J\bar{\mathbf{y}}
 = (J\mathbf{x})\cdot\bar{\mathbf{y}} = \varepsilon s^3\,(\mathbf{x}\cdot\bar{\mathbf{y}}) .
@@ -86,8 +85,7 @@ $$
 = \frac{(C\mathbf{x})_i}{\sqrt{\mu(C\mathbf{x}) + \varepsilon}}
 = \operatorname{rms}(C\mathbf{x})_i .
 $$
-The map $C$ is linear, so its Jacobian is $C$ (@exm-affine), and by
-@thm-chain-rule the Jacobian of layer normalisation is
+The map $C$ is linear, so its Jacobian is $C$ (@exm-affine), and by @thm-chain-rule the Jacobian of layer normalisation is
 $J_{\operatorname{rms}}(C\mathbf{x})\,C$. Since
 $C\mathbf{1} = \mathbf{1} - \frac1n\mathbf{1}\cdot n = \mathbf{0}$,
 the Jacobian sends $\mathbf{1}$ to $\mathbf{0}$: adding the same

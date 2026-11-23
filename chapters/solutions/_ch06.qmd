@@ -133,12 +133,10 @@ $\mathbf{w}_{k+1} = \boldsymbol{\theta}_{k+1} - \boldsymbol{\theta}_k$
 by definition.
 
 (b) The recurrence $\mathbf{w}_{k} = \beta\mathbf{w}_{k-1} - \eta\nabla f(\boldsymbol{\theta}_{k-1})$
-has the same form as @def-ema, and the induction in the proof of
-@thm-ema-closed gives
+has the same form as @def-ema, and the induction in the proof of @thm-ema-closed gives
 $\mathbf{w}_k = -\eta\sum_{j=0}^{k-1}\beta^{k-1-j}\nabla f(\boldsymbol{\theta}_j)$.
 Let $m_k$ be the exponential moving average of the gradients
-$\mathbf{g}_j = \nabla f(\boldsymbol{\theta}_{j-1})$. By
-@thm-ema-closed,
+$\mathbf{g}_j = \nabla f(\boldsymbol{\theta}_{j-1})$. By @thm-ema-closed,
 $m_k = (1 - \beta)\sum_{j=0}^{k-1}\beta^{k-1-j}\nabla f(\boldsymbol{\theta}_j)$,
 so $\mathbf{w}_k = -\frac{\eta}{1 - \beta}\,m_k$: the heavy-ball step
 is a moving average of past gradients, scaled by $\eta/(1 - \beta)$.

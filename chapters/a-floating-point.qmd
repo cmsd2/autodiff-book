@@ -1,8 +1,7 @@
 # Floating-point arithmetic {#sec-floating-point}
 
 Every number in this book's computations, from a gradient checked by
-finite differences to the 4192 parameters of the model in
-@sec-small-gpt, lives in the computer as a floating-point number: a binary
+finite differences to the 4192 parameters of the model in @sec-small-gpt, lives in the computer as a floating-point number: a binary
 fraction with a fixed number of significant bits, scaled by a power of
 2. Arithmetic on such numbers rounds after every operation. This
 appendix states the rounding model that arithmetic following the IEEE
@@ -134,8 +133,7 @@ for _ in range(2000):
 ```
 
 Most real numbers are not binary64 numbers. Even $0.1$ is not, because
-$1/10$ is not a fraction with a power of 2 as denominator
-(@exr-a-tenth). The computer stores a real number $x$ in range as
+$1/10$ is not a fraction with a power of 2 as denominator (@exr-a-tenth). The computer stores a real number $x$ in range as
 $\operatorname{fl}(x)$, the binary64 number nearest to $x$ (with ties
 going to the one whose integer $f$ is even); this is *rounding to
 nearest*. The stored value of $0.1$ is
@@ -170,8 +168,7 @@ $\delta = (\operatorname{fl}(x) - x)/x$.
 
 IEEE 754 requires the basic operations $+$, $-$, $\times$, $\div$ and
 $\sqrt{\phantom{x}}$ to be *correctly rounded*: the computed result is
-$\operatorname{fl}$ of the exact result [@ieee754-2019]. By
-@thm-fp-rounding, for binary64 numbers $x$ and $y$ and any of these
+$\operatorname{fl}$ of the exact result [@ieee754-2019]. By @thm-fp-rounding, for binary64 numbers $x$ and $y$ and any of these
 operations $\circ$,
 $$
 \operatorname{fl}(x\circ y) = (x\circ y)(1 + \delta), \qquad |\delta| \le u,
@@ -254,8 +251,7 @@ check(abs(1 - math.cos(xv) - 2 * math.sin(xv / 2) ** 2) / (2 * math.sin(xv / 2) 
 In the example, the computed $\cos x$ is the true value times
 $1 + \delta$ with $|\delta|$ of the order of $u$, and the subtraction
 itself is exact. The general situation is two numbers known only through
-approximations with relative errors at most $u$, as
-@thm-fp-rounding provides.
+approximations with relative errors at most $u$, as @thm-fp-rounding provides.
 
 ::: {#lem-fp-cancellation}
 ## Cancellation
@@ -413,8 +409,7 @@ and gives about 11. Taking $h$ smaller than the best step makes the
 estimate worse, not better. This is why the hidden checks in this
 book use central differences with steps near $10^{-6}$ when they
 compare a gradient with finite differences, and why exact derivatives
-computed by automatic differentiation (@sec-forward-mode,
-@sec-reverse-mode) are preferable to finite differences whenever they
+computed by automatic differentiation (@sec-forward-mode, @sec-reverse-mode) are preferable to finite differences whenever they
 are available.
 
 The hypotheses of @thm-fd-error hold exactly for $f(y) = 1/y$ at
@@ -524,14 +519,12 @@ sym_equal(sp.expand((ser.subs(t_, hh) - ser.subs(t_, -hh)) / (2 * hh) - 1), hh**
 ## Softmax and log-sum-exp {#sec-fp-stable-softmax}
 
 The softmax of $\mathbf{z}\in\mathbb{R}^n$ is the vector with
-components $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$
-(@def-softmax), so computing it exponentiates every input. In
+components $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$ (@def-softmax), so computing it exponentiates every input. In
 binary64, $e^z$ overflows for $z$ above about $709.78$. The 16-bit format binary16
 [@ieee754-2019] has the same structure as binary64 with 10 fraction
 bits and 5 exponent bits; its largest finite number is
 $(2 - 2^{-10})2^{15} = 65504$, and $e^z$ overflows there for $z$ above
-about $11.09$. The inputs to a softmax in a language model, its logits
-(@sec-small-gpt), reach that size in practice. The remedy rests on an observation that a small case makes
+about $11.09$. The inputs to a softmax in a language model, its logits (@sec-small-gpt), reach that size in practice. The remedy rests on an observation that a small case makes
 clear: $\operatorname{softmax}(1, 2, 3) \approx (0.090, 0.245, 0.665)$,
 and $\operatorname{softmax}(101, 102, 103)$ and
 $\operatorname{softmax}(-2, -1, 0)$ are the same vector, because
@@ -565,8 +558,7 @@ logarithms.
 The function $\operatorname{lse}(\mathbf{z}) = \ln\sum_j e^{z_j}$ is
 the *log-sum-exp* function. It appears in the cross-entropy loss,
 because
-$-\ln\operatorname{softmax}(\mathbf{z})_y = \operatorname{lse}(\mathbf{z}) - z_y$
-(@sec-probability-loss). In words, @eq-fp-lse-shift says that
+$-\ln\operatorname{softmax}(\mathbf{z})_y = \operatorname{lse}(\mathbf{z}) - z_y$ (@sec-probability-loss). In words, @eq-fp-lse-shift says that
 log-sum-exp may be computed after subtracting any number $m$ from
 every input, provided $m$ is added back at the end.
 
@@ -592,8 +584,7 @@ $n$.
 ::: {.proof}
 $z_j - m \le 0$, with equality where the maximum is attained, so
 $0 < e^{z_j - m} \le 1$ with equality there, and summing $n$ such
-terms gives $1 \le S \le n$. The three formulas are
-@thm-softmax-shift with $c = -m$ and @eq-fp-lse-shift.
+terms gives $1 \le S \le n$. The three formulas are @thm-softmax-shift with $c = -m$ and @eq-fp-lse-shift.
 :::
 
 In floating point, a term $e^{z_j - m}$ may underflow to $0$ when
@@ -676,8 +667,7 @@ operations to be correctly rounded. @goldberg1991what is a widely read
 introduction
 to the consequences for programmers, with proofs. @higham2002accuracy
 develops rounding-error analysis in depth; its chapter 2 covers the
-standard model and its chapter 1 discusses cancellation.
-@stoer2002introduction [ch. 1] treats floating-point numbers and
+standard model and its chapter 1 discusses cancellation. @stoer2002introduction [ch. 1] treats floating-point numbers and
 error propagation in a first course on numerical analysis.
 
 ## Exercises {#sec-exercises-floating-point}
@@ -690,8 +680,7 @@ exactly $1000$?
 
 ::: {#exr-a-tenth}
 Show that $0.1$ is not a binary64 number. Then explain why the computed
-sum $0.1 + 0.2$ is not equal to the computed $0.3$, using
-@thm-fp-rounding.
+sum $0.1 + 0.2$ is not equal to the computed $0.3$, using @thm-fp-rounding.
 :::
 
 ::: {#exr-a-sqrt}

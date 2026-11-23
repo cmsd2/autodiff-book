@@ -31,8 +31,7 @@ close(s7_back / 2048, 2.03, "ratio 2.03", tol=1e-3)
 ```
 
 **@exr-ch7-layer.** At $\mathbf{x} = \mathbf{0}$ the pre-activation is
-$\mathbf{z} = \mathbf{b} = (0, 1)$, and $\tanh' = 1 - \tanh^2$. By
-@eq-nn-layer-jacobian,
+$\mathbf{z} = \mathbf{b} = (0, 1)$, and $\tanh' = 1 - \tanh^2$. By @eq-nn-layer-jacobian,
 $$
 J_F(\mathbf{0}) = \begin{pmatrix} 1 & 0\\ 0 & 1 - \tanh^21 \end{pmatrix}
 \begin{pmatrix} 1 & 2\\ 0 & -1 \end{pmatrix}
@@ -110,8 +109,7 @@ $$
 h(x) = \operatorname{relu}(x) - 2\operatorname{relu}(x - 1) + \operatorname{relu}(x - 2).
 $$
 For $x \le 0$ all terms are $0$. For $x \ge 2$ the sum is
-$x - 2(x - 1) + (x - 2) = 0$. Between, the argument of
-@lem-relu-sum shows $h$ is affine on $[0, 1]$ and $[1, 2]$ with the
+$x - 2(x - 1) + (x - 2) = 0$. Between, the argument of @lem-relu-sum shows $h$ is affine on $[0, 1]$ and $[1, 2]$ with the
 right values at $0$, $1$, $2$.
 
 ```{python}

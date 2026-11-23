@@ -2,8 +2,7 @@
 
 This chapter puts the parts of the book together into one model: a
 language model with 4192 parameters that learns to generate names one
-letter at a time. It is a *transformer*, a network in which attention
-(@sec-attention) lets each position of a sequence draw on earlier
+letter at a time. It is a *transformer*, a network in which attention (@sec-attention) lets each position of a sequence draw on earlier
 positions, and an MLP then processes each position on its own. It has the shape of Andrej
 Karpathy's microgpt [@karpathy2026microgpt], a single file of Python
 that defines the model and trains it with Adam, computing each
@@ -195,8 +194,7 @@ $$
 By the product rule,
 $\partial(x_is)/\partial x_j = \delta_{ij}s - s^3x_ix_j/n$, where
 $\delta_{ij}$ is $1$ if $i = j$ and $0$ otherwise. These partial
-derivatives are continuous, so by @thm-continuous-partials and
-@thm-jacobian $\operatorname{rms}$ is differentiable with the
+derivatives are continuous, so by @thm-continuous-partials and @thm-jacobian $\operatorname{rms}$ is differentiable with the
 Jacobian in @eq-gpt-rmsnorm-jacobian. The second form follows from
 $s^2 = n/(\|\mathbf{x}\|^2 + n\varepsilon)$.
 
@@ -213,8 +211,7 @@ because $1/s^2 = \mu + \varepsilon$.
 
 In reverse mode every intermediate vector $\mathbf{v}$ carries an
 *adjoint* $\bar{\mathbf{v}}$ (@def-adjoint), the gradient of the loss
-$L$ with respect to $\mathbf{v}$, and reverse mode
-(@thm-reverse-mode) obtains the adjoint of a function's input by
+$L$ with respect to $\mathbf{v}$, and reverse mode (@thm-reverse-mode) obtains the adjoint of a function's input by
 multiplying the adjoint of its output by the transposed Jacobian.
 Write $\mathbf{y} = \operatorname{rms}(\mathbf{x})$. Since $J$ is
 symmetric, $\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}} = J\bar{\mathbf{y}}$, that is,
@@ -417,11 +414,9 @@ $g_i$ and shift it by $b_i$. In a network $\mathbf{g}$ and
 $\mathbf{b}$ are parameters, learned with the rest. With $\mathbf{g} = \mathbf{1}$ and
 $\mathbf{b} = \mathbf{0}$ it is RMS normalisation applied to the
 centred vector $\mathbf{x} - m(\mathbf{x})\mathbf{1}$, because the
-variance of $\mathbf{x}$ is the mean square of the centred vector
-(@exr-ch11-layernorm). So layer normalisation is unchanged when the
+variance of $\mathbf{x}$ is the mean square of the centred vector (@exr-ch11-layernorm). So layer normalisation is unchanged when the
 same constant is added to every component of $\mathbf{x}$, and RMS
-normalisation is not; on vectors with mean zero the two agree.
-@zhang2019root propose RMS normalisation on the hypothesis that the
+normalisation is not; on vectors with mean zero the two agree. @zhang2019root propose RMS normalisation on the hypothesis that the
 rescaling, not the centring, is what helps training, and they report
 comparable accuracy at lower cost. microgpt drops the gain as well,
 so its normalisations have no parameters.
@@ -574,15 +569,13 @@ $\|\bar{\mathbf{x}}_0 - \bar{\mathbf{x}}_K\| \le
 :::
 
 ::: {.proof}
-(a) The first equality is @thm-chain-rule applied $K - 1$ times with
-@thm-residual-jacobian. Expanding the product by distributivity
+(a) The first equality is @thm-chain-rule applied $K - 1$ times with @thm-residual-jacobian. Expanding the product by distributivity
 chooses, in each factor, either $I$ or $J_k$, and the choices
 correspond to subsets $S$ (the set of $k$ where the expansion takes $J_k$).
 
 (b) By (a), $J_G - I$ is the sum of $J_S$ over non-empty $S$. The
 Frobenius norm is the Euclidean norm of the matrix written as one
-long vector, so it satisfies the triangle inequality, and with
-@lem-frobenius-product,
+long vector, so it satisfies the triangle inequality, and with @lem-frobenius-product,
 $$
 \|J_G - I\|_F \le \sum_{S \ne \emptyset}\prod_{k\in S}\delta_k
 = \prod_{k=1}^K(1 + \delta_k) - 1 ,
@@ -590,8 +583,7 @@ $$
 where the equality is the same expansion of a product, now of
 numbers. Finally $1 + \delta \le e^\delta$ for every real $\delta$.
 
-(c) $\bar{\mathbf{x}}_0 = J_G^\top\bar{\mathbf{x}}_K$ by
-@thm-chain-rule, so
+(c) $\bar{\mathbf{x}}_0 = J_G^\top\bar{\mathbf{x}}_K$ by @thm-chain-rule, so
 $\bar{\mathbf{x}}_0 - \bar{\mathbf{x}}_K = (J_G - I)^\top\bar{\mathbf{x}}_K$,
 and @lem-linear-bound with @lem-frobenius-product and (b) gives the
 bound.
@@ -678,8 +670,7 @@ the start and the end of a name. The name "emma" becomes the sequence
 $\mathtt{B}, \mathrm{e}, \mathrm{m}, \mathrm{m}, \mathrm{a}, \mathtt{B}$,
 that is, $26, 4, 12, 12, 0, 26$. At each position the model produces
 a vector of 27 *logits*, one real number per token, and the softmax
-of that vector, $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$
-(@def-softmax), is the model's probability distribution for the next
+of that vector, $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$ (@def-softmax), is the model's probability distribution for the next
 token. A larger logit means a more probable token, and only
 differences between logits matter (@thm-softmax-shift).
 
@@ -784,8 +775,7 @@ lets position $t$ see other positions.
 The divisor 2 in the attention scores is $\sqrt{d_h}$. When the
 components of a query and a key are independent with mean 0 and
 variance 1, their dot product of $d_h$ terms has variance $d_h$, and
-dividing by $\sqrt{d_h}$ brings the variance of the score back to 1
-(@thm-attention-scale). The attention line is causal multi-head
+dividing by $\sqrt{d_h}$ brings the variance of the score back to 1 (@thm-attention-scale). The attention line is causal multi-head
 attention (@def-multi-head, @def-causal-mask): head $j$ uses rows
 $4j - 3$ to $4j$ of $W_Q$, $W_K$ and $W_V$ as its own query, key and
 value matrices, the weights $\alpha^{(j)}_{t\tau}$ for $\tau > t$ are
@@ -813,16 +803,14 @@ of $E$.
 The two blocks are residual blocks in the sense of @sec-gpt-residual.
 For the attention block the map $F$ acts on the whole sequence
 $(\mathbf{r}^{(0)}_1, \dots, \mathbf{r}^{(0)}_T)\in\mathbb{R}^{16T}$,
-because position $t$ attends to earlier positions, and
-@thm-residual-jacobian applies in $\mathbb{R}^{16T}$. The normalisation
+because position $t$ attends to earlier positions, and @thm-residual-jacobian applies in $\mathbb{R}^{16T}$. The normalisation
 sits inside $F$, so the identity path from $\mathbf{r}^{(0)}_t$ to
 $\mathbf{r}^{(2)}_t$ passes through no normalisation and no matrix.
 The adjoint of the logits reaches $\mathbf{r}^{(0)}_t$ as
 $W_U^\top\bar{\mathbf{z}}_t$ plus the corrections from the two blocks.
 
 The vector $\mathbf{u}_t$ normalises a vector that is already
-normalised. In the forward pass this changes little: by
-@thm-rmsnorm-scaling the mean square of $\mathbf{r}^{(0)}_t$ is
+normalised. In the forward pass this changes little: by @thm-rmsnorm-scaling the mean square of $\mathbf{r}^{(0)}_t$ is
 $\mu/(\mu + \varepsilon)$, just below 1, and normalising it again
 multiplies it by a number close to 1 (@exr-ch11-double-norm). In the
 backward pass it does more: by @thm-rmsnorm-jacobian its Jacobian
@@ -915,8 +903,7 @@ The model has exactly 4192 parameters, distributed as follows.
 :::
 
 ::: {.proof}
-The parameters are the entries of the nine matrices of
-@def-small-gpt: the normalisations have no gain and there are no
+The parameters are the entries of the nine matrices of @def-small-gpt: the normalisations have no gain and there are no
 biases, so nothing else changes in training. An $m\times n$ matrix
 has $mn$ entries, which gives the last column, and
 $432 + 256 + 768 + 256 + 1024 + 1024 + 432 = 4192$.
@@ -968,23 +955,19 @@ $$
 L(\boldsymbol\theta) = \frac1T\sum_{t=1}^T -\ln p_{t,\,x_{t+1}},
 $$ {#eq-gpt-document-loss}
 where $p_{t,\,x}$ is component $x$ of $\mathbf{p}_t$ and
-$\boldsymbol\theta\in\mathbb{R}^{4192}$ is the parameter vector of
-@sec-gpt-parameter-count. The names in
+$\boldsymbol\theta\in\mathbb{R}^{4192}$ is the parameter vector of @sec-gpt-parameter-count. The names in
 the training list have at most 15 letters (the source notes this), so
 $T = m + 1$ and the last prediction is always the closing boundary
 token: the model learns where names end as well as how they start.
 The minimum in $T$ only matters for longer documents, whose last
-targets the model never sees. By the chain rule of probability
-(@thm-sequence-chain-rule), $TL$ is minus the logarithm of the
+targets the model never sees. By the chain rule of probability (@thm-sequence-chain-rule), $TL$ is minus the logarithm of the
 probability that the model assigns to the whole name, closing
-boundary included, and $e^{L}$ is the perplexity of the model on it
-(@def-perplexity).
+boundary included, and $e^{L}$ is the perplexity of the model on it (@def-perplexity).
 
 By @thm-softmax-ce-gradient, the adjoint of the logits at position
 $t$ is $\bar{\mathbf{z}}_t = (\mathbf{p}_t - \mathbf{e}_{x_{t+1}})/T$,
 where $\mathbf{e}_x$ is the standard basis vector of token $x$. Reverse
-mode carries these 27-component vectors back through the equations of
-@def-small-gpt to all 4192 parameters at once (@thm-reverse-mode).
+mode carries these 27-component vectors back through the equations of @def-small-gpt to all 4192 parameters at once (@thm-reverse-mode).
 
 Training runs Adam (@def-adam). Adam keeps, for each parameter, two
 exponential moving averages (@def-ema): $m$ of its recent gradients,
@@ -1011,8 +994,7 @@ parameter, so the optimiser state is $2\times4192 = 8384$ numbers.
 The source computes each softmax after subtracting the largest logit,
 and it treats that maximum as a constant in the computational graph.
 This does not change the derivative: subtracting a constant from
-every component does not change the softmax at all
-(@thm-softmax-shift), so the two computations define the same
+every component does not change the softmax at all (@thm-softmax-shift), so the two computations define the same
 function of the logits.
 
 ```{python}
@@ -1100,8 +1082,7 @@ $\ell_t = -\ln p_{t,\,x_{t+1}}$,
 $$
 \ln 27 \;\le\; \mathbb{E}[\ell_t] \;\le\; \ln 27 + \frac{\sigma_w^2\|\mathbf{r}\|^2}{2} .
 $$
-The same bounds hold for the expected loss $\mathbb{E}[L]$ of
-@eq-gpt-document-loss, with $\|\mathbf{r}\|^2$ replaced by the average of
+The same bounds hold for the expected loss $\mathbb{E}[L]$ of @eq-gpt-document-loss, with $\|\mathbf{r}\|^2$ replaced by the average of
 $\|\mathbf{r}^{(2)}_t\|^2$ over $t$.
 :::
 
@@ -1138,8 +1119,7 @@ $\mathbb{E}[z_y] = 0$ this gives the upper bound. The statement for
 $L$ follows by averaging over $t$, since expectation is linear.
 :::
 
-How large is $\|\mathbf{r}^{(2)}_t\|^2$ at initialisation? By
-@thm-rmsnorm-scaling, $\|\mathbf{r}^{(0)}_t\|^2 = 16\lambda^2$ is just
+How large is $\|\mathbf{r}^{(2)}_t\|^2$ at initialisation? By @thm-rmsnorm-scaling, $\|\mathbf{r}^{(0)}_t\|^2 = 16\lambda^2$ is just
 below 16. The two blocks add $W_O\mathbf{o}_t$ and
 $W_2\mathbf{g}_t$, with $\mathbf{g}_t$ the MLP's hidden vector. Since
 $W_O$ is independent of $\mathbf{r}^{(0)}_t$ and $\mathbf{o}_t$ and
@@ -1155,8 +1135,7 @@ Over 400 random initialisations, averaged over the positions of the
 name "isabella", the three terms are about 16.0, 0.06 and 0.33, so $\|\mathbf{r}^{(2)}_t\|^2 \approx 16.4$ and the gap
 $\sigma_w^2\|\mathbf{r}\|^2/2$ in @thm-initial-loss is about $0.052$.
 The expected initial loss therefore lies between $3.296$ and about
-$3.35$. A direct simulation, averaging the loss of
-@eq-gpt-document-loss over 400 random initialisations and a dozen names,
+$3.35$. A direct simulation, averaging the loss of @eq-gpt-document-loss over 400 random initialisations and a dozen names,
 gives $3.35$, at the top of that range; the standard deviation of a
 single document's loss is about 0.14. The microgpt post reports a
 loss of 3.37 at the first step, consistent with this, and about 2.37
@@ -1366,8 +1345,7 @@ and, for $t = 1, \dots, T$ in turn:
    $\mathbf{k}_t$ and $\mathbf{v}_t$ from $x_t$ and $t$ by the
    formulas of @def-small-gpt, and appends
    $(\mathbf{k}_t, \mathbf{v}_t)$ to $C$;
-2. computes $\hat{\mathbf{o}}_t$ by the attention formulas of
-   @def-small-gpt, using $\mathbf{q}_t$ and every pair in $C$;
+2. computes $\hat{\mathbf{o}}_t$ by the attention formulas of @def-small-gpt, using $\mathbf{q}_t$ and every pair in $C$;
 3. computes $\hat{\mathbf{r}}^{(1)}_t$, $\hat{\mathbf{r}}^{(2)}_t$
    and $\hat{\mathbf{z}}_t$ from $\mathbf{r}^{(0)}_t$ and
    $\hat{\mathbf{o}}_t$ by the remaining formulas.
@@ -1379,8 +1357,7 @@ and, for $t = 1, \dots, T$ in turn:
 Take the model of @def-small-gpt with any values of its parameters.
 For every $T \le 16$ and tokens $x_1, \dots, x_T$, the cached
 evaluation of @def-kv-cache gives $\hat{\mathbf{z}}_t = \mathbf{z}_t$ for
-$t = 1, \dots, T$, where $\mathbf{z}_t$ are the logits of
-@def-small-gpt computed for the whole sequence, and $\mathbf{z}_t$
+$t = 1, \dots, T$, where $\mathbf{z}_t$ are the logits of @def-small-gpt computed for the whole sequence, and $\mathbf{z}_t$
 depends only on $x_1, \dots, x_t$.
 :::
 
@@ -1466,8 +1443,7 @@ residual blocks in the stack of @cor-residual-stack.
 
 *Batching.* Each training step here uses one name, processed one
 position at a time. Production training computes all positions of a
-sequence at once with the causal mask, as in the array code of
-@sec-gpt-model, and averages the gradient over many sequences per step
+sequence at once with the causal mask, as in the array code of @sec-gpt-model, and averages the gradient over many sequences per step
 (GPT-2 used 512). @thm-kv-cache is what makes the all-at-once form
 give the same loss.
 
@@ -1482,8 +1458,7 @@ used here (@sec-floating-point).
 @karpathy2026microgpt walks through the code of the model line by
 line; the code is @karpathy2026microgptcode. @radford2019language
 describes GPT-2, and @vaswani2017attention the original transformer,
-with normalisation after each residual sum.
-@xiong2020layer compare the two placements of normalisation and show
+with normalisation after each residual sum. @xiong2020layer compare the two placements of normalisation and show
 that placing it at the input of each block, as this model does, gives
 better-behaved gradients at initialisation. Layer normalisation is
 from @ba2016layer and RMS normalisation from @zhang2019root; residual
@@ -1501,13 +1476,11 @@ as @thm-rmsnorm-jacobian says.
 
 ::: {#exr-ch11-rmsnorm-gradient}
 Let $\mathbf{y} = \operatorname{rms}(\mathbf{x})$ and let
-$\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}}$, with $J$ the Jacobian of
-@thm-rmsnorm-jacobian. Show that
+$\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}}$, with $J$ the Jacobian of @thm-rmsnorm-jacobian. Show that
 $\mathbf{x}\cdot\bar{\mathbf{x}} = \varepsilon s^3\,(\mathbf{x}\cdot\bar{\mathbf{y}})$.
 Deduce that if $\varepsilon$ were $0$ (and $\mathbf{x}\ne\mathbf{0}$)
 the gradient with respect to $\mathbf{x}$ would always be
-perpendicular to $\mathbf{x}$, and explain this from
-@thm-rmsnorm-scaling.
+perpendicular to $\mathbf{x}$, and explain this from @thm-rmsnorm-scaling.
 :::
 
 ::: {#exr-ch11-layernorm}

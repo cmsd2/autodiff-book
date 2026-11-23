@@ -65,8 +65,7 @@ $$ {#eq-increment-one-output}
 
 The increment of $f$ on the right is a fixed combination
 $4h_1 + 1h_2$ of the increments of the inputs. A function of the
-increments of this form, a sum of fixed multiples of them, is what
-@sec-linear-maps calls a *linear map*, and it is the several-variable
+increments of this form, a sum of fixed multiples of them, is what @sec-linear-maps calls a *linear map*, and it is the several-variable
 version of "multiply the increment by $f'(a)$". That linear map is the
 derivative of $f$ at $(1, 2)$.
 
@@ -311,8 +310,7 @@ in $\mathbb{R}^n$.
 
 ::: {.proof}
 Let $\mathbf{r}_i$ be row $i$ of $A$, written as a column. Component
-$i$ of $A\mathbf{x}$ is $\mathbf{r}_i\cdot\mathbf{x}$, and by
-@thm-cauchy-schwarz $(\mathbf{r}_i\cdot\mathbf{x})^2 \le
+$i$ of $A\mathbf{x}$ is $\mathbf{r}_i\cdot\mathbf{x}$, and by @thm-cauchy-schwarz $(\mathbf{r}_i\cdot\mathbf{x})^2 \le
 \|\mathbf{r}_i\|^2\|\mathbf{x}\|^2$. Summing over $i$ gives
 $\|A\mathbf{x}\|^2 \le \bigl(\sum_i\|\mathbf{r}_i\|^2\bigr)\|\mathbf{x}\|^2
 = \|A\|_F^2\,\|\mathbf{x}\|^2$.
@@ -581,8 +579,7 @@ $\bigl(\partial f/\partial x_1 \;\cdots\; \partial f/\partial x_n\bigr)$.
 For $n = m = 1$ it is the $1\times1$ matrix $(f'(a))$, so the new
 definition agrees with the old one.
 
-@thm-jacobian tells us how to compute a derivative that exists, but
-@exm-partials-not-enough shows that partial derivatives can exist
+@thm-jacobian tells us how to compute a derivative that exists, but @exm-partials-not-enough shows that partial derivatives can exist
 without a derivative. The next theorem gives a practical test that
 covers every function we meet.
 
@@ -653,8 +650,7 @@ it.
 ::: {#exm-jacobian}
 Let $f\colon\mathbb{R}^2\to\mathbb{R}^2$ be
 $f(x, y) = (x^2y,\; x + \sin y)$. Its partial derivatives are
-continuous everywhere, so by @thm-continuous-partials and
-@thm-jacobian it is differentiable everywhere, with
+continuous everywhere, so by @thm-continuous-partials and @thm-jacobian it is differentiable everywhere, with
 $$
 J_f(x, y) = \begin{pmatrix} 2xy & x^2\\ 1 & \cos y\end{pmatrix},
 \qquad
@@ -782,8 +778,7 @@ $2\sqrt{10} \approx 6.32$, and the direction of steepest descent is
 $-(1, 3)/\sqrt{10}$. The minimum of $f$ is at the origin, which lies
 in the direction $-(1, 1)/\sqrt{2}$ from $\mathbf{a}$: steepest
 descent does not head straight for the minimum. The level curves of
-$f$ are ellipses, and the gradient is perpendicular to them
-(@sec-chain-rule proves this), so it crosses each ellipse at a right
+$f$ are ellipses, and the gradient is perpendicular to them (@sec-chain-rule proves this), so it crosses each ellipse at a right
 angle instead of pointing at the centre. @sec-gradient-descent
 shows how this makes gradient descent zigzag along long, narrow
 valleys.

@@ -32,8 +32,7 @@ integers $M$ and $k$. If $1/10 = M\,2^k$ with $k \ge 0$, the right
 side is an integer, which $1/10$ is not. If $k < 0$, then
 $2^{-k} = 10M$, so $5$ divides a power of 2, which is impossible.
 
-So $0.1$, $0.2$ and $0.3$ are each stored with a rounding error, by
-@thm-fp-rounding of relative size at most $u$. The stored values are
+So $0.1$, $0.2$ and $0.3$ are each stored with a rounding error, by @thm-fp-rounding of relative size at most $u$. The stored values are
 $\hat a \approx 0.1 + 5.55\times10^{-18}$ and
 $\hat b \approx 0.2 + 1.11\times10^{-17}$, and their exact sum
 $0.3 + 1.67\times10^{-17}$ lies exactly halfway between two
@@ -98,8 +97,7 @@ sym_equal((sp.sqrt(sp.Symbol("x", positive=True) + 1) - sp.sqrt(sp.Symbol("x", p
 ```
 
 **@exr-a-lse.** Let $m = \max_j z_j$ and $S = \sum_j e^{z_j - m}$, so
-that $\operatorname{lse}(\mathbf{z}) = m + \ln S$ by @eq-fp-lse-shift. By
-@cor-stable-softmax, $1 \le S \le n$, so
+that $\operatorname{lse}(\mathbf{z}) = m + \ln S$ by @eq-fp-lse-shift. By @cor-stable-softmax, $1 \le S \le n$, so
 $m \le \operatorname{lse}(\mathbf{z}) \le m + \ln n$. Equality on the
 right means $S = n$; since each of the $n$ terms is at most $1$, that
 happens exactly when every term is $1$, that is, when $z_j = m$ for

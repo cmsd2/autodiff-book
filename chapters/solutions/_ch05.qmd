@@ -5,8 +5,7 @@ $\boldsymbol{\theta}_k = \bigl((1 - 2\eta)^k, (1 - 6\eta)^k\bigr)$.
 
 (a) Both coordinates tend to $0$ exactly when $|1 - 2\eta| < 1$ and
 $|1 - 6\eta| < 1$, that is, when $0 < \eta < 1$ and $0 < \eta < \frac13$.
-So gradient descent converges exactly when $0 < \eta < \frac13$, as
-@thm-gd-quadratic predicts with $L = 6$.
+So gradient descent converges exactly when $0 < \eta < \frac13$, as @thm-gd-quadratic predicts with $L = 6$.
 
 (b) $y_k = (1 - 6\eta)^k$ changes sign at every step exactly when
 $1 - 6\eta < 0$, that is, $\eta > \frac16$.
@@ -70,8 +69,7 @@ and $\boldsymbol{\theta}_1 = (1 - \frac{10}{28}, 1 - \frac{30}{28}) = (\frac{9}{
 Then $\nabla f(\boldsymbol{\theta}_1) = (\frac97, -\frac37)$, and
 $(\frac97, -\frac37)\cdot(2, 6) = \frac{18}{7} - \frac{18}{7} = 0$.
 
-(b) Write $\mathbf{g} = \nabla f(\boldsymbol{\theta}_k)$. By
-@lem-line-derivative with $\mathbf{d} = -\mathbf{g}$,
+(b) Write $\mathbf{g} = \nabla f(\boldsymbol{\theta}_k)$. By @lem-line-derivative with $\mathbf{d} = -\mathbf{g}$,
 $\varphi'(t) = -\nabla f(\boldsymbol{\theta}_k - t\mathbf{g})\cdot\mathbf{g}$.
 At the minimiser $t_k > 0$, $\varphi'(t_k) = 0$, which says
 $\nabla f(\boldsymbol{\theta}_{k+1})\cdot\mathbf{g} = 0$.
@@ -107,8 +105,7 @@ and the Hessian is $X^\top X$.
 
 (b) If $X^\top X\mathbf{v} = \lambda\mathbf{v}$ with $\|\mathbf{v}\| = 1$,
 then $\lambda = \mathbf{v}^\top X^\top X\mathbf{v} = \|X\mathbf{v}\|^2 \ge 0$.
-By @thm-convex-hessian with $\mu = 0$, $f$ is convex, and by
-@exm-smooth-quadratic it is $L$-smooth with $L$ the largest eigenvalue.
+By @thm-convex-hessian with $\mu = 0$, $f$ is convex, and by @exm-smooth-quadratic it is $L$-smooth with $L$ the largest eigenvalue.
 
 (c) $X^\top X = \begin{pmatrix} 3 & 3\\ 3 & 5\end{pmatrix}$, with
 characteristic equation $\lambda^2 - 8\lambda + 6 = 0$ and eigenvalues
