@@ -5,10 +5,11 @@ finite differences to the 4192 parameters of the model in
 @sec-small-gpt, lives in the computer as a floating-point number: a binary
 fraction with a fixed number of significant bits, scaled by a power of
 2. Arithmetic on such numbers rounds after every operation. This
-appendix states the rounding model that IEEE 754 arithmetic satisfies,
-and uses it to explain two things the main text relies on: why finite
-differences need a carefully chosen step, and why programs compute
-softmax and log-sum-exp after subtracting the largest input.
+appendix states the rounding model that arithmetic following the IEEE
+754 standard satisfies, and uses it to explain two things the main
+text relies on: why finite differences need a carefully chosen step,
+and why programs compute the softmax, and the logarithm of a sum of
+exponentials, after subtracting the largest input.
 
 ```{python}
 #| include: false
@@ -77,6 +78,17 @@ function this happens at moderate arguments: $e^x$ overflows for
 $x > \ln\bigl((2 - 2^{-52})2^{1023}\bigr) \approx 709.78$, and rounds to $0$ for
 $x < \ln 2^{-1075} \approx -745.13$.
 
+Subnormal numbers fill the gap between $0$ and the smallest positive
+normal number $2^{-1022}$. Without them, the next number above $0$
+would be $2^{-1022}$, while the normal numbers just above $2^{-1022}$
+are only $2^{-1074}$ apart; two such numbers could then differ by an
+amount that is not representable, and their computed difference
+would be $0$ although they are not equal. The subnormal numbers are
+the multiples of $2^{-1074}$ below $2^{-1022}$, the same spacing as
+the normal numbers in $[2^{-1022}, 2^{-1021})$, and with them the
+difference of two distinct binary64 numbers is never computed as $0$
+[@goldberg1991what]. @lem-fp-sterbenz below relies on them.
+
 ```{python}
 #| include: false
 fi = sys.float_info
@@ -107,6 +119,18 @@ check(math.isfinite(math.exp(709.78)), "exp(709.78) is finite")
 with np.errstate(over="ignore", under="ignore"):
     check(np.isinf(np.exp(709.79)), "exp(709.79) overflows")
     check(np.exp(-745.13) == 2.0**-1074 and np.exp(-745.14) == 0.0, "exp underflows below -745.13")
+# Subnormals: multiples of 2^-1074 below 2^-1022, the spacing of the normals just above 2^-1022.
+check(math.ulp(2.0**-1022) == 2.0**-1074 and math.ulp(2.0**-1023) == 2.0**-1074
+      and math.ulp(1.5 * 2.0**-1060) == 2.0**-1074, "subnormal spacing 2^-1074")
+check(2.0**-1022 - math.ulp(2.0**-1023) == (2**52 - 1) * 2.0**-1074, "largest subnormal")
+xa_, ya_ = 2.0**-1022 + 2.0**-1074, 2.0**-1022
+check(xa_ != ya_ and xa_ - ya_ == 2.0**-1074 and 2.0**-1074 < 2.0**-1022,
+      "difference of neighbours above 2^-1022 is 2^-1074, below the smallest normal")
+rng_sub = np.random.default_rng(3)
+for _ in range(2000):
+    p1 = float(rng_sub.uniform(1, 2)) * 2.0 ** int(rng_sub.integers(-1074, -1018))
+    q1 = float(np.nextafter(p1, np.inf)) if rng_sub.random() < 0.5 else float(rng_sub.uniform(1, 2)) * p1
+    check(p1 == q1 or p1 - q1 != 0.0, "distinct numbers have a non-zero computed difference")
 ```
 
 Most real numbers are not binary64 numbers. Even $0.1$ is not, because
@@ -227,13 +251,18 @@ check(abs(1 - math.cos(xv) - 2 * math.sin(xv / 2) ** 2) / (2 * math.sin(xv / 2) 
       "cancellation lemma bound")
 ```
 
-The lemma below measures the effect.
+In the example, the computed $\cos x$ is the true value times
+$1 + \delta$ with $|\delta|$ of the order of $u$, and the subtraction
+itself is exact. The general situation is two numbers known only through
+approximations with relative errors at most $u$, as
+@thm-fp-rounding provides.
 
 ::: {#lem-fp-cancellation}
 ## Cancellation
 
-Let $\hat a = a(1 + \delta_a)$ and $\hat b = b(1 + \delta_b)$ with
-$|\delta_a|, |\delta_b| \le u$ and $a \ne b$. Then
+Let $a$ and $b$ be real numbers with $a \ne b$, let $u = 2^{-53}$,
+and let $\hat a = a(1 + \delta_a)$ and $\hat b = b(1 + \delta_b)$
+with $|\delta_a|, |\delta_b| \le u$. Then
 $$
 \frac{|(\hat a - \hat b) - (a - b)|}{|a - b|} \le u\,\frac{|a| + |b|}{|a - b|} .
 $$
@@ -251,7 +280,6 @@ digits that agree cancel, and what remains is mostly the earlier
 rounding error. This is *cancellation*. In @exm-fp-cancellation,
 $a = 1$ and $b = \cos x \approx 1 - x^2/2$, so the factor is about
 $4/x^2$, which is $4\times10^{14}$ for $x = 10^{-7}$.
-
 
 The same effect appears in a difference quotient, where
 $f(x + h)$ and $f(x)$ agree in more and more digits as $h$ shrinks.
@@ -309,8 +337,10 @@ $8.3\times10^{-10}$; and with $h = 2^{-40}$ by $2.7\times10^{-5}$
 again. The function values carry rounding errors, the difference
 cancels their leading digits, and the division by $h$ magnifies what
 is left. The total error has two parts that pull in opposite
-directions, one from truncating the Taylor series and one from
-rounding.
+directions: the *truncation error*, the error of the exact difference
+quotient, which comes from cutting off the Taylor series of $f$ and
+shrinks with $h$; and the *rounding error*, which comes from the
+computed values of $f$ and grows as $h$ shrinks.
 
 ::: {#thm-fd-error}
 ## Error of finite differences
@@ -493,11 +523,15 @@ sym_equal(sp.expand((ser.subs(t_, hh) - ser.subs(t_, -hh)) / (2 * hh) - 1), hh**
 
 ## Softmax and log-sum-exp {#sec-fp-stable-softmax}
 
-The softmax function exponentiates its inputs. In binary64, $e^z$
-overflows for $z$ above about $709.78$, and in the 16-bit format
-binary16 [@ieee754-2019], whose largest finite number is $65504$, it
-overflows for $z$ above about $11.09$. Logits of that size occur in
-practice. The remedy rests on an observation that a small case makes
+The softmax of $\mathbf{z}\in\mathbb{R}^n$ is the vector with
+components $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$
+(@def-softmax), so computing it exponentiates every input. In
+binary64, $e^z$ overflows for $z$ above about $709.78$. The 16-bit format binary16
+[@ieee754-2019] has the same structure as binary64 with 10 fraction
+bits and 5 exponent bits; its largest finite number is
+$(2 - 2^{-10})2^{15} = 65504$, and $e^z$ overflows there for $z$ above
+about $11.09$. The inputs to a softmax in a language model, its logits
+(@sec-small-gpt), reach that size in practice. The remedy rests on an observation that a small case makes
 clear: $\operatorname{softmax}(1, 2, 3) \approx (0.090, 0.245, 0.665)$,
 and $\operatorname{softmax}(101, 102, 103)$ and
 $\operatorname{softmax}(-2, -1, 0)$ are the same vector, because
@@ -625,6 +659,9 @@ for _ in range(100):
           "cross-entropy via lse", tol=1e-12)
 # binary16 overflow.
 check(float(np.finfo(np.float16).max) == 65504.0, "largest binary16 number")
+check(np.finfo(np.float16).nmant == 10 and np.finfo(np.float16).iexp == 5,
+      "binary16: 10 fraction bits, 5 exponent bits")
+check((2 - 2**-10) * 2**15 == 65504, "(2 - 2^-10) 2^15 = 65504")
 close(math.log(65504), 11.09, "ln 65504", tol=1e-3)
 with np.errstate(over="ignore"):
     check(np.isinf(np.exp(np.float16(11.1))) and np.isfinite(np.exp(np.float16(11.08))),

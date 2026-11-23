@@ -1,21 +1,25 @@
 # A small transformer {#sec-small-gpt}
 
 This chapter puts the parts of the book together into one model: a
-transformer language model with 4192 parameters that learns to
-generate names one letter at a time. It has the shape of Andrej
+language model with 4192 parameters that learns to generate names one
+letter at a time. It is a *transformer*, a network in which attention
+(@sec-attention) lets each position of a sequence draw on earlier
+positions, and an MLP then processes each position on its own. It has the shape of Andrej
 Karpathy's microgpt [@karpathy2026microgpt], a single file of Python
 that defines the model and trains it with Adam, computing each
 gradient by reverse mode. We have checked every architectural detail
 stated below against that source [@karpathy2026microgptcode].
 
-Two ingredients are new. *RMS normalisation* rescales a vector to a
-fixed size before each block uses it, and *residual connections* add
-each block's output to its input instead of replacing it. Both change
-how gradients flow, and both have short exact descriptions in terms
-of Jacobians. The rest of the chapter writes down the complete model,
-counts its parameters, explains the value of the loss before training
-and the effect of the sampling temperature, and proves that the
-key–value cache used for generation computes exactly what causal
+Two ingredients are new. Call each stage of the network that has its
+own parameters, such as the attention stage or the MLP, a *block*.
+*RMS normalisation* rescales a vector to a fixed size before a block
+uses it, and *residual connections* add each block's output to its
+input instead of replacing it. Both change how gradients flow, and
+both have short exact descriptions in terms of Jacobians. The rest of
+the chapter writes down the complete model, counts its parameters,
+explains the value of the loss before training and the effect of the
+sampling temperature, and proves that storing the keys and values of
+earlier positions during generation computes exactly what causal
 attention computes.
 
 ```{python}
@@ -154,7 +158,8 @@ theorem gives both factors in general.
 ::: {#thm-rmsnorm-jacobian}
 ## Jacobian of RMS normalisation
 
-Let $\varepsilon > 0$ and write
+Let $n \ge 1$ and $\varepsilon > 0$, let $\operatorname{rms}$ be RMS
+normalisation on $\mathbb{R}^n$ with this $\varepsilon$, and write
 $s(\mathbf{x}) = (\mu(\mathbf{x}) + \varepsilon)^{-1/2}$. Then
 $\operatorname{rms}$ is differentiable on $\mathbb{R}^n$, with
 $$
@@ -163,9 +168,10 @@ J_{\operatorname{rms}}(\mathbf{x})
 = s\Bigl(I - \frac{\mathbf{x}\mathbf{x}^\top}{\|\mathbf{x}\|^2 + n\varepsilon}\Bigr),
 \qquad s = s(\mathbf{x}).
 $$ {#eq-gpt-rmsnorm-jacobian}
-The matrix is symmetric. For $\mathbf{x} \ne \mathbf{0}$ it has
-eigenvalue $s$ on every vector perpendicular to $\mathbf{x}$, and
-eigenvalue $\varepsilon s^3$ on $\mathbf{x}$ itself.
+The matrix is symmetric. For $\mathbf{x} \ne \mathbf{0}$, every
+non-zero vector perpendicular to $\mathbf{x}$ is an eigenvector with
+eigenvalue $s$, and $\mathbf{x}$ is an eigenvector with eigenvalue
+$\varepsilon s^3$.
 :::
 
 Entry $(i, j)$ of this matrix is the rate at which output component
@@ -205,8 +211,13 @@ $$
 because $1/s^2 = \mu + \varepsilon$.
 :::
 
-In reverse mode (@thm-reverse-mode), the adjoint of the input is
-$J^\top$ times the adjoint of the output. Since $J$ is symmetric,
+In reverse mode every intermediate vector $\mathbf{v}$ carries an
+*adjoint* $\bar{\mathbf{v}}$ (@def-adjoint), the gradient of the loss
+$L$ with respect to $\mathbf{v}$, and reverse mode
+(@thm-reverse-mode) obtains the adjoint of a function's input by
+multiplying the adjoint of its output by the transposed Jacobian.
+Write $\mathbf{y} = \operatorname{rms}(\mathbf{x})$. Since $J$ is
+symmetric, $\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}} = J\bar{\mathbf{y}}$, that is,
 $$
 \bar{\mathbf{x}} = s\,\bar{\mathbf{y}} - \frac{s^3}{n}\,(\mathbf{x}\cdot\bar{\mathbf{y}})\,\mathbf{x} .
 $$
@@ -331,10 +342,14 @@ $\mathbf{x} \to \mathbf{0}$ the output tends to $\mathbf{0}$ instead
 of jumping between vectors of root mean square 1. That continuity at
 $\mathbf{0}$ is what $\varepsilon$ buys.
 
-In the model at initialisation, the first vector normalised is a sum
-of two embedding rows whose 16 components have variance
-$2\times0.08^2 = 0.0128$ each, so $\mu \approx 0.0128$ and
-$\varepsilon/(2\mu) \approx 3.9\times10^{-4}$.
+In the model of @sec-gpt-model, the first vector normalised is the sum
+of two vectors of 16 parameters each (a row of the token embedding and
+a row of the position embedding). Before training, every parameter is
+drawn independently with mean 0 and variance $0.08^2$, so each
+component of the sum has variance $2\times0.08^2 = 0.0128$. Then
+$\mu \approx 0.0128$ and $\varepsilon/(2\mu) \approx 3.9\times10^{-4}$:
+at the start of training, $\varepsilon$ shrinks this vector by less
+than $0.04\%$.
 
 ```{python}
 #| include: false
@@ -361,12 +376,17 @@ close(rms_np(np.zeros(16)), np.zeros(16), "rms(0) = 0")
 # Scale of the first normalised vector at initialisation.
 close(2 * INIT_STD**2, 0.0128, "variance 2 * 0.08^2")
 close(EPS / (2 * 0.0128), 3.9e-4, "eps / (2 mu)", tol=1e-5)
+check(EPS / (2 * 0.0128) < 0.0004, "less than 0.04%")
+th_init = init_params(np.random.default_rng(5))
+emb_sum = th_init["E"][:16] + th_init["P"]
+close(np.mean(emb_sum**2), 0.0128, "mean square of the first normalised vector", tol=0.003)
 ```
 
 ### Layer normalisation {#sec-gpt-layernorm}
 
 RMS normalisation is a simplification of the older *layer
-normalisation* [@ba2016layer], which GPT-2 uses [@radford2019language].
+normalisation* [@ba2016layer], which GPT-2, the language model whose
+design this chapter's model follows, uses [@radford2019language].
 The difference shows when the same constant is added to every
 component. Ignoring $\varepsilon$, RMS normalisation sends
 $(1, 2, 3)$ to about $(0.463, 0.926, 1.389)$ and $(11, 12, 13)$ to
@@ -468,8 +488,9 @@ differentiable at $\mathbf{a}$ and
 $$
 J_R(\mathbf{a}) = I + J_F(\mathbf{a}) .
 $$
-If $L = \ell(R(\mathbf{x}))$ for a function $\ell$ differentiable at
-$R(\mathbf{a})$, then with $\bar{\mathbf{y}} = \nabla\ell(R(\mathbf{a}))$,
+If also $\ell\colon\mathbb{R}^n\to\mathbb{R}$ is differentiable at
+$R(\mathbf{a})$ and $L(\mathbf{x}) = \ell(R(\mathbf{x}))$, then with
+$\bar{\mathbf{y}} = \nabla\ell(R(\mathbf{a}))$,
 $$
 \nabla L(\mathbf{a}) = \bar{\mathbf{y}} + J_F(\mathbf{a})^\top\bar{\mathbf{y}} .
 $$ {#eq-gpt-residual-adjoint}
@@ -491,10 +512,24 @@ transposing this row gives @eq-gpt-residual-adjoint.
 In the language of reverse mode, the adjoint $\bar{\mathbf{y}}$
 arriving at the output of the block reaches the input unchanged along
 the identity path, and the block adds its own contribution
-$J_F^\top\bar{\mathbf{y}}$. However small or degenerate $J_F$ is, the
-gradient does not vanish on its way through. The difference matters
-when a network stacks many blocks, and a matrix norm makes it
-quantitative.
+$J_F^\top\bar{\mathbf{y}}$. However small $J_F$ is, even zero, the
+gradient passes through. It can vanish only if the block's
+contribution cancels it exactly, $J_F^\top\bar{\mathbf{y}} = -\bar{\mathbf{y}}$,
+and a block with $\|J_F\|_F < 1$ (in the norm defined next) cannot do
+that (@exr-ch11-residual-invertible). The difference matters when a
+network stacks many blocks. To make it quantitative we need a measure
+of the size of a matrix, and the Frobenius norm of @lem-linear-bound
+serves: for an $m\times n$ matrix $A = (a_{ij})$,
+$\|A\|_F = \bigl(\sum_{i,j}a_{ij}^2\bigr)^{1/2}$, the Euclidean norm
+of the $mn$ entries written as one long vector, and
+$\|A\mathbf{x}\| \le \|A\|_F\,\|\mathbf{x}\|$ for every
+$\mathbf{x}\in\mathbb{R}^n$. For example,
+$A = \begin{pmatrix}1 & 2\\ 0 & 1\end{pmatrix}$ has
+$\|A\|_F = \sqrt6$, and
+$A^2 = \begin{pmatrix}1 & 4\\ 0 & 1\end{pmatrix}$ has
+$\|A^2\|_F = \sqrt{18} \approx 4.24$, below
+$\|A\|_F^2 = 6$. The norm of a product never exceeds the product of
+the norms.
 
 ::: {#lem-frobenius-product}
 For matrices $A$ ($m\times n$) and $B$ ($n\times p$),
@@ -529,8 +564,9 @@ $$
 \le e^{\delta_1 + \dots + \delta_K} - 1 .
 $$
 
-(c) Under the hypothesis of (b), for a loss $L = \ell(G(\mathbf{x}))$
-with $\ell$ differentiable at $\mathbf{x}_K$ and
+(c) Under the hypothesis of (b), for a loss
+$L(\mathbf{x}) = \ell(G(\mathbf{x}))$ with
+$\ell\colon\mathbb{R}^n\to\mathbb{R}$ differentiable at $\mathbf{x}_K$ and
 $\bar{\mathbf{x}}_K = \nabla\ell(\mathbf{x}_K)$, the gradient
 $\bar{\mathbf{x}}_0 = \nabla L(\mathbf{x}_0)$ satisfies
 $\|\bar{\mathbf{x}}_0 - \bar{\mathbf{x}}_K\| \le
@@ -566,9 +602,10 @@ each subset $S$ is a route through the stack that enters the blocks
 in $S$ and skips the others, and the route that skips every block
 carries the identity. Without the identity paths the Jacobian would be
 the single product $J_K\cdots J_1$, whose norm is at most
-$\delta_1\cdots\delta_K$; when every $\delta_k$ is below some
-$\delta < 1$ this shrinks like $\delta^K$, and gradients at the
-bottom of a deep stack become too small to train on. With residual
+$\delta_1\cdots\delta_K$; when every $\delta_k$ is at most some
+$\delta < 1$ this is at most $\delta^K$, which tends to $0$ as $K$
+grows, and gradients at the bottom of a deep stack become too small
+to train on. With residual
 connections, part (c) says that small blocks leave the gradient
 nearly unchanged instead.
 
@@ -590,6 +627,12 @@ N2 = sp.Matrix([[0, 1], [0, 0]])
 check(N2 * N2 == sp.zeros(2, 2), "N^2 = 0")
 check((sp.eye(2) + N2)**2 == sp.Matrix([[1, 2], [0, 1]]), "(I+N)^2 = I + 2N")
 check(((sp.eye(2) + N2)**2).det() == 1, "(I+N)^2 invertible")
+A2 = sp.Matrix([[1, 2], [0, 1]])
+fro = lambda M: sp.sqrt(sum(e**2 for e in M))
+check(fro(A2) == sp.sqrt(6) and A2**2 == sp.Matrix([[1, 4], [0, 1]]) and fro(A2**2) == sp.sqrt(18),
+      "Frobenius norms of A and A^2")
+close(float(sp.sqrt(18)), 4.24, "sqrt(18)", tol=1e-3)
+check(fro(A2**2) < fro(A2)**2 and fro(A2)**2 == 6, "sqrt(18) < 6")
 # Corollary: expansion over subsets and the norm bounds, on random small blocks.
 for K in (1, 2, 3, 5):
     Js = [0.2 * rng.normal(size=(4, 4)) for _ in range(K)]
@@ -627,22 +670,46 @@ close(JR, np.eye(5) + np.diag(1 - np.tanh(Wr @ ar)**2) @ Wr, "J_R = I + J_F", to
 
 The previous chapters supply every part of the model; this section
 says exactly how they fit together, as one function from a sequence of
-tokens to predictions. The model reads a sequence of tokens and, at
-each position, produces a vector of 27 *logits*, real numbers whose
-softmax (@def-softmax) is its probability distribution for the next
-token. Its vocabulary $V$ has
-$|V| = 27$ tokens: the letters a to z, numbered $0$ to $25$ in
-alphabetical order, and a *boundary token*, numbered 26 and written
-$\mathtt{B}$, which marks the start and the end of a name. The name
-"emma" becomes the sequence
+symbols to predictions. As in @sec-language-models, the symbols are
+*tokens*, the elements of a finite *vocabulary* $V$. Here $|V| = 27$:
+the letters a to z, numbered $0$ to $25$ in alphabetical order, and a
+*boundary token*, numbered 26 and written $\mathtt{B}$, which marks
+the start and the end of a name. The name "emma" becomes the sequence
 $\mathtt{B}, \mathrm{e}, \mathrm{m}, \mathrm{m}, \mathrm{a}, \mathtt{B}$,
-that is, $26, 4, 12, 12, 0, 26$.
+that is, $26, 4, 12, 12, 0, 26$. At each position the model produces
+a vector of 27 *logits*, one real number per token, and the softmax
+of that vector, $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$
+(@def-softmax), is the model's probability distribution for the next
+token. A larger logit means a more probable token, and only
+differences between logits matter (@thm-softmax-shift).
 
-The model has width $d = 16$ (every position is represented by a
-vector in $\mathbb{R}^{16}$), $h = 4$ attention heads of width
-$d_h = 4$, a context length of 16 positions, a single layer, and an
-MLP (@def-mlp) with a hidden layer of width $64 = 4d$. Its parameters
-are nine matrices, with no bias vectors and no normalisation gains:
+The other parts come from chapters 7 to 10.
+
+- A *token embedding* (@def-embedding) represents each token by a
+  learned vector, here in $\mathbb{R}^{16}$; the *width* $d = 16$ is the
+  length of the vector that represents each position throughout the
+  model.
+- Attention (@def-attention) computes, at each position $t$, three
+  vectors from the vector there: a *query* $\mathbf{q}_t$, a *key*
+  $\mathbf{k}_t$ and a *value* $\mathbf{v}_t$. Position $t$ gives
+  position $\tau$ a weight that grows with the score
+  $\mathbf{q}_t\cdot\mathbf{k}_\tau$ (the weights are a softmax of the
+  scores), and its output is the weighted average of the values. The
+  causal mask (@def-causal-mask) gives weight zero to positions
+  $\tau > t$, so no position sees later ones.
+- Multi-head attention (@def-multi-head) splits the query, key and
+  value vectors into $h$ consecutive pieces of length $d_h = d/h$, the
+  *heads*, runs attention separately on each piece, and places the
+  $h$ outputs one after another. Here $h = 4$ and $d_h = 4$.
+- An MLP (@def-mlp) applies a matrix, then
+  $\operatorname{relu}(x) = \max(x, 0)$ (@def-relu) to each component,
+  then a second matrix. Here the intermediate *hidden* vector has
+  $64 = 4d$ components.
+
+The model reads at most 16 tokens, its *context length*, and has a
+single *layer*: one attention block followed by one MLP block. Its
+parameters are nine matrices, with no bias vectors and no
+normalisation gains:
 
 - $E$ ($27\times16$), the token embedding (@def-embedding): row $x$
   is the vector that represents token $x$, and $E_x$ denotes that row
@@ -650,17 +717,21 @@ are nine matrices, with no bias vectors and no normalisation gains:
 - $P$ ($16\times16$), the position embedding: row $t$, written $P_t$,
   is the vector added at position $t$.
 - $W_Q$, $W_K$, $W_V$ (each $16\times16$): row $i$ of $W_Q$ gives
-  component $i$ of a query as a weighted sum of the 16 input
-  components, and likewise for keys and values.
-- $W_O$ ($16\times16$): mixes the outputs of the four heads.
-- $W_1$ ($64\times16$) and $W_2$ ($16\times64$): the two layers of
-  the MLP.
+  component $i$ of a query as a linear combination of the 16
+  components of the vector at that position, and likewise for keys
+  and values.
+- $W_O$ ($16\times16$): row $i$ gives component $i$ of the attention
+  output as a linear combination of the 16 components of the four
+  head outputs, so it mixes the heads.
+- $W_1$ ($64\times16$) and $W_2$ ($16\times64$): the two matrices of
+  the MLP. Row $i$ of $W_1$ gives hidden component $i$ before the
+  ReLU; row $i$ of $W_2$ gives output component $i$ from the 64
+  hidden components.
 - $W_U$ ($27\times16$), the output matrix: row $i$, dotted with the
   final vector at a position, gives the logit of token $i$.
 
 A vector $\mathbf{q}\in\mathbb{R}^{16}$ splits into four heads,
-$\mathbf{q}^{(j)} = (q_{4j-3}, \dots, q_{4j})$ for $j = 1, \dots, 4$,
-and $\operatorname{relu}$ (@def-relu) acts on each component.
+$\mathbf{q}^{(j)} = (q_{4j-3}, \dots, q_{4j})$ for $j = 1, \dots, 4$.
 
 ::: {#def-small-gpt}
 ## The model
@@ -710,7 +781,10 @@ the mixed head outputs to the vector; add the output of the MLP; and
 multiply by $W_U$ to get one logit per token. Only the attention line
 lets position $t$ see other positions.
 
-The divisor 2 in the attention scores is $\sqrt{d_h}$
+The divisor 2 in the attention scores is $\sqrt{d_h}$. When the
+components of a query and a key are independent with mean 0 and
+variance 1, their dot product of $d_h$ terms has variance $d_h$, and
+dividing by $\sqrt{d_h}$ brings the variance of the score back to 1
 (@thm-attention-scale). The attention line is causal multi-head
 attention (@def-multi-head, @def-causal-mask): head $j$ uses rows
 $4j - 3$ to $4j$ of $W_Q$, $W_K$ and $W_V$ as its own query, key and
@@ -721,16 +795,18 @@ $P$ in this book's numbering.
 
 Several details differ from GPT-2 [@radford2019language], and each
 is visible in the equations. The vectors $\mathbf{r}^{(0)}_t$,
-$\mathbf{r}^{(1)}_t$, $\mathbf{r}^{(2)}_t$ form the *residual stream*.
-Each block reads a normalised copy of the stream and adds its output
-back. That is the arrangement of GPT-2, which moved normalisation
+$\mathbf{r}^{(1)}_t$, $\mathbf{r}^{(2)}_t$, the successive states of
+the vector that represents position $t$, form the *residual stream*
+at position $t$. Each block reads a normalised copy of the stream and
+adds its output back. That is the arrangement of GPT-2, which moved normalisation
 from after the residual sum [@vaswani2017attention] to the input of
 each block. GPT-2 also normalises the stream once more before the
 output matrix; this model does not, so $\mathbf{z}_t$ is a linear
 function of $\mathbf{r}^{(2)}_t$. Instead, this model normalises the
 embedding sum before it enters the stream, so the stream starts with
 root mean square close to 1. It replaces layer normalisation by RMS
-normalisation without gain, and GELU by ReLU. It has no biases. The
+normalisation without gain, and GELU (a smooth function close to
+ReLU) by ReLU. It has no biases. The
 output matrix $W_U$ is a separate parameter, not a copy
 of $E$.
 
@@ -910,10 +986,17 @@ where $\mathbf{e}_x$ is the standard basis vector of token $x$. Reverse
 mode carries these 27-component vectors back through the equations of
 @def-small-gpt to all 4192 parameters at once (@thm-reverse-mode).
 
-Training runs Adam (@def-adam) with $\beta_1 = 0.85$,
-$\beta_2 = 0.99$ and $\epsilon = 10^{-8}$ (added to the square root of
-the bias-corrected second-moment estimate, @thm-ema-bias), for 1000
-steps. Each step $k = 0, 1, \dots, 999$ takes one name from a shuffled
+Training runs Adam (@def-adam). Adam keeps, for each parameter, two
+exponential moving averages (@def-ema): $m$ of its recent gradients,
+with decay rate $\beta_1$, and $v$ of their squares, with decay rate
+$\beta_2$. It corrects both for their bias towards the starting value
+$0$ (@thm-ema-bias), giving $\hat m$ and $\hat v$, and subtracts the
+learning rate times $\hat m/(\sqrt{\hat v} + \epsilon)$ from the
+parameter, so each parameter's step is scaled by the recent size of
+its own gradients.
+Here $\beta_1 = 0.85$, $\beta_2 = 0.99$ and $\epsilon = 10^{-8}$ (a
+different constant from the $\varepsilon$ of RMS normalisation), and
+training runs for 1000 steps. Each step $k = 0, 1, \dots, 999$ takes one name from a shuffled
 list and computes $L$ and its gradient, and Adam then updates
 $\boldsymbol\theta$ with learning rate
 $$
@@ -969,18 +1052,34 @@ Before training, the loss tells us nothing about names, but its value
 is a useful test of an implementation: it should be close to
 $\ln 27 \approx 3.296$, the loss of a model that gives each of the 27
 tokens probability $1/27$. Every weight starts as an independent
-sample from the normal distribution $N(0, \sigma_w^2)$ with
-$\sigma_w = 0.08$, the logits are then small, and the softmax is close
-to uniform. Close, but on average slightly above, as a two-token case
-shows. Suppose the logits are $(a, -a)$ or $(-a, a)$ with equal
+random sample with mean 0 and standard deviation $\sigma_w = 0.08$, so
+the logits are small and the softmax is close to uniform. Close, but
+on average slightly above, as a two-token case shows. Suppose the logits are $(a, -a)$ or $(-a, a)$ with equal
 probability and the correct token is the first. The loss is
 $\ln(1 + e^{-2a})$ in the first case and $\ln(1 + e^{2a})$ in the
 second; for $a = 0.33$ these are $0.417$ and $1.077$, with average
 $0.747$, which exceeds $\ln 2 \approx 0.693$ by $0.053$, close to
 $a^2/2 \approx 0.054$. Random logits raise the expected loss above
-$\ln|V|$ by about half their variance. The next theorem makes this
-precise for the model. It needs one fact about the normal distribution: if $w$ has distribution
-$N(0, \sigma^2)$ and $c$ is a real number, then, completing the square,
+$\ln|V|$ by about half their variance.
+
+Making this precise for the model needs two facts about random
+variables that can take any real value, beyond the probability of
+finitely many outcomes; @deisenroth2020mathematics [ch. 6] develops
+both. A random variable $w$ has the *normal distribution*
+$N(\nu, \sigma^2)$, with $\sigma > 0$, if for all $a < b$ the
+probability that $a \le w \le b$ is
+$\int_a^b \varphi(w)\,dw$, where
+$\varphi(w) = e^{-(w - \nu)^2/(2\sigma^2)}/(\sqrt{2\pi}\,\sigma)$ is its
+*density*. Then $\int_{-\infty}^\infty\varphi = 1$, $w$ has mean $\nu$
+and variance $\sigma^2$, and the expectation of a function $g(w)$ is
+$\mathbb{E}[g(w)] = \int_{-\infty}^\infty g(w)\varphi(w)\,dw$ whenever
+the integral converges. microgpt draws every weight from
+$N(0, 0.08^2)$, independently of the others. The second fact is that
+the expectation of a product of independent random variables is the
+product of their expectations, when these exist. The density gives
+one formula that the proof below uses: if $w$ has distribution
+$N(0, \sigma^2)$ and $c$ is a real number, then, completing the
+square,
 $$
 \mathbb{E}\bigl[e^{cw}\bigr]
 = \int_{-\infty}^\infty \frac{e^{cw - w^2/(2\sigma^2)}}{\sqrt{2\pi}\,\sigma}\,dw
@@ -1052,8 +1151,8 @@ $$
 = \mathbb{E}\|\mathbf{r}^{(0)}_t\|^2 + \mathbb{E}\|W_O\mathbf{o}_t\|^2
 + \mathbb{E}\|W_2\mathbf{g}_t\|^2 .
 $$
-Over many random initialisations the three terms average about 16.0,
-0.06 and 0.33, so $\|\mathbf{r}^{(2)}_t\|^2 \approx 16.4$ and the gap
+Over 400 random initialisations, averaged over the positions of the
+name "isabella", the three terms are about 16.0, 0.06 and 0.33, so $\|\mathbf{r}^{(2)}_t\|^2 \approx 16.4$ and the gap
 $\sigma_w^2\|\mathbf{r}\|^2/2$ in @thm-initial-loss is about $0.052$.
 The expected initial loss therefore lies between $3.296$ and about
 $3.35$. A direct simulation, averaging the loss of
@@ -1129,6 +1228,11 @@ w_, c_ = sp.symbols("w c", real=True)
 sg = sp.symbols("sigma", positive=True)
 sym_equal(sp.integrate(sp.exp(c_ * w_ - w_**2 / (2 * sg**2)) / (sp.sqrt(2 * sp.pi) * sg),
                        (w_, -sp.oo, sp.oo)), sp.exp(c_**2 * sg**2 / 2), "E e^{cw}")
+nu_ = sp.symbols("nu", real=True)
+phi_ = sp.exp(-(w_ - nu_)**2 / (2 * sg**2)) / (sp.sqrt(2 * sp.pi) * sg)
+sym_equal(sp.integrate(phi_, (w_, -sp.oo, sp.oo)), 1, "normal density integrates to 1")
+sym_equal(sp.integrate(w_ * phi_, (w_, -sp.oo, sp.oo)), nu_, "normal mean")
+sym_equal(sp.integrate((w_ - nu_)**2 * phi_, (w_, -sp.oo, sp.oo)), sg**2, "normal variance")
 close(3.3660, 3.37, "post's first-step loss 3.3660 rounds to 3.37", tol=1e-3)
 ```
 
@@ -1247,14 +1351,16 @@ computed at steps 1 and 2. The repeated work is unnecessary.
 Everything in @def-small-gpt except attention works on one position
 at a time, and attention at position $t$ needs only the query of
 position $t$ and the keys and values of positions $1$ to $t$. So a
-program can keep a *cache*, a list of the key and value vectors of
-the positions seen so far, and process each new position once.
+program can keep a *key–value cache*, a list of the key and value
+vectors of the positions seen so far, and process each new position
+once.
 
 ::: {#def-kv-cache}
 ## Cached evaluation
 
-Given tokens $x_1, x_2, \dots$, the *cached evaluation* of the model
-starts with an empty list $C$ and, for $t = 1, 2, \dots$ in turn:
+Given tokens $x_1, \dots, x_T$ in $\{0, \dots, 26\}$ with $T \le 16$,
+the *cached evaluation* of the model starts with an empty list $C$
+and, for $t = 1, \dots, T$ in turn:
 
 1. computes $\mathbf{r}^{(0)}_t$, $\mathbf{u}_t$, $\mathbf{q}_t$,
    $\mathbf{k}_t$ and $\mathbf{v}_t$ from $x_t$ and $t$ by the
@@ -1310,8 +1416,8 @@ values agree at all positions before $t$, they agree at position $t$
 layer by layer.
 
 The theorem matters for generation and for training. In generation,
-the token drawn at
-step $t$ comes from $\operatorname{softmax}(\mathbf{z}_t/T)$, and
+the token drawn at step $t$ comes from the softmax of $\mathbf{z}_t$
+divided by the temperature (@sec-gpt-temperature), and
 $\mathbf{z}_t$ is the same whether computed with the cache or from
 scratch, so caching changes the cost and not the distribution of the
 samples. In training, microgpt computes the loss with the cache too,
@@ -1319,8 +1425,8 @@ one position at a time. The cached and whole-sequence computations
 define the same function $L(\boldsymbol\theta)$, so they have the
 same gradient, and reverse mode may differentiate through the cache
 like any other computation. Since appending tokens never changes the
-logits at earlier positions, one pass over a name trains all $T$ of
-its predictions.
+logits at earlier positions, one pass over a name trains all of its
+predictions.
 
 ```{python}
 #| include: false
