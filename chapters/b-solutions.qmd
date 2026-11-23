@@ -7,167 +7,26 @@ import sympy as sp
 from checks import check, close, maxima_zero, sym_equal
 ```
 
-## Chapter 1 {#sec-solutions-1}
+{{< include solutions/_ch01.qmd >}}
 
-**@exr-ch1-partials.** Holding the other variables fixed,
-$$
-\frac{\partial f}{\partial x} = e^{yz}, \qquad
-\frac{\partial f}{\partial y} = xz\,e^{yz}, \qquad
-\frac{\partial f}{\partial z} = xy\,e^{yz} .
-$$
-At $(1, 0, 2)$, $e^{yz} = 1$, so $\nabla f(1, 0, 2) = (1, 2, 0)$.
+{{< include solutions/_ch02.qmd >}}
 
-```{python}
-#| include: false
-x, y, z = sp.symbols("x y z", real=True)
-f1 = x * sp.exp(y * z)
-g1 = [sp.diff(f1, v) for v in (x, y, z)]
-for got, want in zip(g1, (sp.exp(y*z), x*z*sp.exp(y*z), x*y*sp.exp(y*z))):
-    sym_equal(got, want, "partials of x e^(yz)")
-check([gi.subs({x: 1, y: 0, z: 2}) for gi in g1] == [1, 2, 0], "gradient at (1,0,2)")
-```
+{{< include solutions/_ch03.qmd >}}
 
-**@exr-ch1-parallelogram.** Expanding with the properties of the dot
-product,
-$\|\mathbf{x}+\mathbf{y}\|^2 = \|\mathbf{x}\|^2 + 2\,\mathbf{x}\cdot\mathbf{y} + \|\mathbf{y}\|^2$
-and
-$\|\mathbf{x}-\mathbf{y}\|^2 = \|\mathbf{x}\|^2 - 2\,\mathbf{x}\cdot\mathbf{y} + \|\mathbf{y}\|^2$.
-Adding, the dot products cancel and leave
-$2\|\mathbf{x}\|^2 + 2\|\mathbf{y}\|^2$.
+{{< include solutions/_ch04.qmd >}}
 
-```{python}
-#| include: false
-xs, ys = sp.Matrix(sp.symbols("x1:5", real=True)), sp.Matrix(sp.symbols("y1:5", real=True))
-n2 = lambda v: (v.T * v)[0, 0]
-sym_equal(n2(xs + ys) + n2(xs - ys), 2 * n2(xs) + 2 * n2(ys), "parallelogram law")
-```
+{{< include solutions/_ch05.qmd >}}
 
-**@exr-ch1-equality.** Both sides of the equation are non-negative,
-so it holds exactly when their squares are equal. By the expansion in
-the proof of @cor-triangle, that means
-$\mathbf{x}\cdot\mathbf{y} = \|\mathbf{x}\|\,\|\mathbf{y}\|$.
+{{< include solutions/_ch06.qmd >}}
 
-If $\mathbf{x} = \mathbf{0}$ this holds. If $\mathbf{y} = c\mathbf{x}$
-with $c \ge 0$, then
-$\mathbf{x}\cdot\mathbf{y} = c\|\mathbf{x}\|^2 = \|\mathbf{x}\|\,\|c\mathbf{x}\|$.
+{{< include solutions/_ch07.qmd >}}
 
-Conversely, suppose
-$\mathbf{x}\cdot\mathbf{y} = \|\mathbf{x}\|\,\|\mathbf{y}\|$ and
-$\mathbf{x} \ne \mathbf{0}$. Then equality holds in
-@thm-cauchy-schwarz, so one vector is a multiple of the other. If
-$\mathbf{y} = \mathbf{0}$ then $\mathbf{y} = 0\mathbf{x}$. Otherwise
-$\mathbf{x} = t\mathbf{y}$ with $t \ne 0$, because
-$\mathbf{x} \ne \mathbf{0}$, and then $\mathbf{y} = (1/t)\mathbf{x}$.
-Either way $\mathbf{y} = c\mathbf{x}$ for some $c$, and
-$c\|\mathbf{x}\|^2 = \mathbf{x}\cdot\mathbf{y} = \|\mathbf{x}\|\,\|\mathbf{y}\| = |c|\,\|\mathbf{x}\|^2$,
-so $c = |c| \ge 0$.
+{{< include solutions/_ch08.qmd >}}
 
-**@exr-ch1-polar.** The Jacobian matrix and its determinant are
-$$
-J_P(r, \theta) = \begin{pmatrix} \cos\theta & -r\sin\theta\\ \sin\theta & r\cos\theta \end{pmatrix},
-\qquad
-\det J_P = r\cos^2\theta + r\sin^2\theta = r .
-$$
+{{< include solutions/_ch09.qmd >}}
 
-```{python}
-#| include: false
-r, th = sp.symbols("r theta", real=True)
-JP = sp.Matrix([r*sp.cos(th), r*sp.sin(th)]).jacobian([r, th])
-check(JP == sp.Matrix([[sp.cos(th), -r*sp.sin(th)], [sp.sin(th), r*sp.cos(th)]]), "polar Jacobian")
-sym_equal(JP.det(), r, "polar determinant")
-maxima_zero("determinant(jacobian([r*cos(t), r*sin(t)], [r, t])) - r", "polar determinant in Maxima")
-```
+{{< include solutions/_ch10.qmd >}}
 
-**@exr-ch1-norm.** (a) $f(\mathbf{x}) = \mathbf{x}^\top I\mathbf{x}$
-is a quadratic form, so by @exm-quadratic it is differentiable
-everywhere with $\nabla f(\mathbf{x}) = (I + I^\top)\mathbf{x} = 2\mathbf{x}$.
+{{< include solutions/_ch11.qmd >}}
 
-(b) For $\mathbf{x} \ne \mathbf{0}$, write
-$g(\mathbf{x}) = (x_1^2 + \dots + x_n^2)^{1/2}$. Differentiating with
-respect to $x_j$ by the chain rule for one variable,
-$\partial g/\partial x_j = x_j/\|\mathbf{x}\|$. These partial
-derivatives are continuous on the open set of non-zero vectors, so by
-@thm-continuous-partials and @thm-jacobian, $g$ is differentiable
-there with $\nabla g(\mathbf{x}) = \mathbf{x}/\|\mathbf{x}\|$.
-
-At $\mathbf{0}$, $(g(t\mathbf{e}_1) - g(\mathbf{0}))/t = |t|/t$,
-which is $1$ for $t > 0$ and $-1$ for $t < 0$, so it has no limit as
-$t \to 0$. The partial derivative $\partial g/\partial x_1(\mathbf{0})$
-does not exist, so by @thm-jacobian $g$ is not differentiable at
-$\mathbf{0}$.
-
-```{python}
-#| include: false
-xv = sp.symbols("x1:4", real=True)
-gn = sp.sqrt(sum(v**2 for v in xv))
-for v in xv:
-    sym_equal(sp.diff(gn, v), v / gn, "partials of the norm")
-t = sp.symbols("t", real=True)
-check(sp.limit(sp.Abs(t) / t, t, 0, "+") == 1 and sp.limit(sp.Abs(t) / t, t, 0, "-") == -1,
-      "one-sided limits of |t|/t")
-```
-
-**@exr-ch1-directional.** $\nabla f(1, 1) = (2, 6)$, so by
-@thm-directional the directional derivative in the direction
-$(3, 4)/5$ is $(2\cdot3 + 6\cdot4)/5 = 6$. A unit vector gives a zero
-directional derivative exactly when it is perpendicular to $(2, 6)$,
-that is, a multiple of $(3, -1)$. The two such unit vectors are
-$\pm(3, -1)/\sqrt{10}$.
-
-```{python}
-#| include: false
-gb = sp.Matrix([2, 6])
-check((gb.T * sp.Matrix([3, 4]) / 5)[0, 0] == 6, "directional derivative 6")
-for s in (1, -1):
-    u = s * sp.Matrix([3, -1]) / sp.sqrt(10)
-    check((gb.T * u)[0, 0] == 0 and sp.simplify(u.norm() - 1) == 0, "perpendicular unit vectors")
-```
-
-**@exr-ch1-not-differentiable.** (a) Since $x^2 \le x^2 + y^2$,
-$|g(x, y)| \le |y| \le \|(x, y)\|$, which tends to $0$ as
-$(x, y) \to (0, 0)$.
-
-(b) For $t \ne 0$ and $u_1^2 + u_2^2 = 1$,
-$g(t\mathbf{u}) = t^3u_1^2u_2/t^2 = t\,u_1^2u_2$, so
-$(g(t\mathbf{u}) - g(\mathbf{0}))/t = u_1^2u_2$ for every $t \ne 0$,
-and the limit is $u_1^2u_2$.
-
-(c) If $g$ were differentiable at the origin, @thm-directional would
-give $D_{\mathbf{u}}g(\mathbf{0}) = \nabla g(\mathbf{0})\cdot\mathbf{u}$.
-Taking $\mathbf{u} = \mathbf{e}_1$ and $\mathbf{u} = \mathbf{e}_2$ in
-(b) gives both partial derivatives as $0$, so $\nabla g(\mathbf{0})$
-would be $\mathbf{0}$ and every directional derivative would be $0$.
-But $\mathbf{u} = (1, 1)/\sqrt2$ gives
-$D_{\mathbf{u}}g(\mathbf{0}) = \tfrac12\cdot\tfrac1{\sqrt2} \ne 0$.
-
-```{python}
-#| include: false
-u1, u2 = sp.symbols("u1 u2", real=True)
-gx = x**2 * y / (x**2 + y**2)
-quot = sp.simplify(gx.subs({x: t*u1, y: t*u2}) / t)
-sym_equal(quot.subs(u1**2 + u2**2, 1), u1**2 * u2, "difference quotient along u")
-sym_equal(sp.simplify(quot.subs({u1: 1/sp.sqrt(2), u2: 1/sp.sqrt(2)})), 1 / (2*sp.sqrt(2)),
-          "value along (1,1)/sqrt 2")
-```
-
-**@exr-ch1-rotation.** The rotation matrix is
-$R = \begin{pmatrix}\cos\theta & -\sin\theta\\ \sin\theta & \cos\theta\end{pmatrix}$,
-and by @exm-affine, $J_F = R$ everywhere. Next,
-$F(\mathbf{x}) - F(\mathbf{y}) = R\mathbf{v}$ with
-$\mathbf{v} = \mathbf{x} - \mathbf{y}$, and
-$$
-\|R\mathbf{v}\|^2
-= (v_1\cos\theta - v_2\sin\theta)^2 + (v_1\sin\theta + v_2\cos\theta)^2
-= v_1^2 + v_2^2 ,
-$$
-because the cross terms cancel and $\cos^2\theta + \sin^2\theta = 1$.
-
-```{python}
-#| include: false
-v1, v2 = sp.symbols("v1 v2", real=True)
-R = sp.Matrix([[sp.cos(th), -sp.sin(th)], [sp.sin(th), sp.cos(th)]])
-Rv = R * sp.Matrix([v1, v2])
-sym_equal((Rv.T * Rv)[0, 0], v1**2 + v2**2, "rotation preserves length")
-maxima_zero("(v1*cos(t) - v2*sin(t))^2 + (v1*sin(t) + v2*cos(t))^2 - v1^2 - v2^2",
-            "rotation in Maxima")
-```
+{{< include solutions/_appendix-a.qmd >}}

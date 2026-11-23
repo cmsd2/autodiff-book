@@ -41,7 +41,19 @@ book:
     - chapters/a-floating-point.qmd
     - chapters/b-solutions.qmd
 
-bibliography: references.bib
+bibliography:
+  - bib/main.bib
+  - bib/ch02.bib
+  - bib/ch03.bib
+  - bib/ch04.bib
+  - bib/ch05.bib
+  - bib/ch06.bib
+  - bib/ch07.bib
+  - bib/ch08.bib
+  - bib/ch09.bib
+  - bib/ch10.bib
+  - bib/ch11.bib
+  - bib/appendix-a.bib
 
 execute:
   echo: false

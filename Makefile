@@ -1,7 +1,7 @@
 PY := .venv/bin/python
 export QUARTO_PYTHON := $(abspath $(PY))
 
-.PHONY: all html pdf lean test clean
+.PHONY: all html pdf lean clean
 
 all: lean html pdf
 
@@ -15,9 +15,6 @@ pdf:
 # Machine-checked proofs of selected theorems.
 lean:
 	cd lean && lake build
-
-test:
-	$(PY) -m pytest -q tests
 
 clean:
 	rm -rf _book .quarto

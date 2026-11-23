@@ -6,5 +6,8 @@ name = "mathlib"
 git = "https://github.com/leanprover-community/mathlib4"
 rev = "v4.36.0"
 
+# Every file under AutodiffBook/ is built, so each chapter adds its own
+# ChNN.lean without editing a shared import list.
 [[lean_lib]]
 name = "AutodiffBook"
+globs = ["AutodiffBook.+"]
