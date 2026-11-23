@@ -1,0 +1,252 @@
+## Chapter 10 {#sec-solutions-10}
+
+```{python}
+#| include: false
+# Names in this file start with c10 so that they cannot disturb other chapters'
+# solutions, which run in the same Python session.
+import checks.ch10 as c10
+from checks import num_grad as c10_num_grad
+from checks.ch09 import rounds_to as c10_rounds_to
+
+c10_rng = np.random.default_rng(100)
+```
+
+**@exr-ch10-compute.** The scores are $qk_j/\sqrt1 = 2, 0, -2$, so
+the weights are
+$$
+\mathbf{a} = \frac{(e^2, 1, e^{-2})}{e^2 + 1 + e^{-2}} \approx (0.867, 0.117, 0.016),
+$$
+and the output is
+$$
+y = \frac{e^2 + 2 + 3e^{-2}}{e^2 + 1 + e^{-2}} \approx 1.149 .
+$$
+The first key matches the positive query best, so the output is close
+to $v_1 = 1$.
+
+```{python}
+#| include: false
+c10_a, c10_y = c10.attend(np.array([2.0]), np.array([[1.0], [0.0], [-1.0]]),
+                          np.array([[1.0], [2.0], [3.0]]))
+c10_den = np.e**2 + 1 + np.e**-2
+close(c10_a, np.array([np.e**2, 1, np.e**-2]) / c10_den, "weights")
+for c10_got, c10_want in zip(c10_a, (0.867, 0.117, 0.016)):
+    c10_rounds_to(c10_got, c10_want, 3, "weights to three places")
+close(c10_y[0], (np.e**2 + 2 + 3 * np.e**-2) / c10_den, "output")
+c10_rounds_to(c10_y[0], 1.149, 3, "output to three places")
+```
+
+**@exr-ch10-shift.** (a) The new scores are
+$\mathbf{q}\cdot(\mathbf{k}_j + \mathbf{b})/\sqrt{d_h} = s_j + c$ with
+$c = \mathbf{q}\cdot\mathbf{b}/\sqrt{d_h}$, the same for every $j$.
+Then
+$$
+\frac{e^{s_j + c}}{\sum_r e^{s_r + c}} = \frac{e^ce^{s_j}}{e^c\sum_r e^{s_r}}
+= \frac{e^{s_j}}{\sum_r e^{s_r}} ,
+$$
+so the weights do not change (this is @thm-softmax-shift).
+
+(b) $\sum_j a_j(\mathbf{v}_j + \mathbf{w}) = \sum_j a_j\mathbf{v}_j +
+\bigl(\sum_j a_j\bigr)\mathbf{w} = \mathbf{y} + \mathbf{w}$, because
+the weights sum to 1.
+
+```{python}
+#| include: false
+for _ in range(20):
+    c10_T, c10_dh, c10_dv = c10_rng.integers(1, 6, size=3)
+    c10_q = c10_rng.normal(size=c10_dh)
+    c10_K, c10_V = c10_rng.normal(size=(c10_T, c10_dh)), c10_rng.normal(size=(c10_T, c10_dv))
+    c10_b, c10_w = c10_rng.normal(size=c10_dh), c10_rng.normal(size=c10_dv)
+    c10_a, c10_y = c10.attend(c10_q, c10_K, c10_V)
+    close(c10.attend(c10_q, c10_K + c10_b, c10_V)[0], c10_a, "shifted keys keep the weights")
+    close(c10.attend(c10_q, c10_K, c10_V + c10_w)[1], c10_y + c10_w, "shifted values shift output")
+```
+
+**@exr-ch10-hard-limit.** Let $s^*$ be the largest score. Dividing
+numerator and denominator by $e^{\lambda s^*}$,
+$$
+a_j = \frac{e^{\lambda(s_j - s^*)}}{\sum_r e^{\lambda(s_r - s^*)}} .
+$$
+For $r\in M$ the exponent is $0$; for $r\notin M$ it is $\lambda$ times
+a negative number, so the term tends to $0$ as $\lambda\to\infty$. The
+denominator tends to $|M|$, and the numerator to $1$ if $j\in M$ and
+$0$ otherwise. The output $\sum_j a_j\mathbf{v}_j$ therefore tends to
+$\frac{1}{|M|}\sum_{j\in M}\mathbf{v}_j$. This is the exact lookup of @sec-attention-lookup when one key matches best. As $\lambda\to0$
+every $e^{\lambda s_j}\to1$, so the weights tend to $1/T$ and the
+output to the plain average of all the values.
+
+```{python}
+#| include: false
+c10_s = np.array([1.0, 3.0, -2.0, 3.0, 0.5])
+c10_V5 = c10_rng.normal(size=(5, 2))
+c10_big = c10.softmax(200 * c10_s)
+close(c10_big, [0, 0.5, 0, 0.5, 0], "lambda large: uniform on the maximisers", tol=1e-12)
+close(c10_big @ c10_V5, (c10_V5[1] + c10_V5[3]) / 2, "output tends to the average over M",
+      tol=1e-12)
+close(c10.softmax(1e-9 * c10_s), np.full(5, 0.2), "lambda small: uniform weights", tol=1e-8)
+```
+
+**@exr-ch10-init.** (a) The proof of @thm-attention-scale goes through
+with $\mathbb{E}[q_i^2] = \sigma^2$ and $\mathbb{E}[k_i^2] = \tau^2$:
+the mean is still $0$, the terms with $i \ne j$ still vanish, and each
+of the $d_h$ diagonal terms is
+$\mathbb{E}[q_i^2]\,\mathbb{E}[k_i^2] = \sigma^2\tau^2$.
+
+(b) Component $i$ of $\mathbf{q}$ is $q_i = \sum_{j=1}^{16} w_{ij}x_j$,
+where the $w_{ij}$ are independent with mean $0$ and variance
+$0.08^2 = 0.0064$. So $\mathbb{E}[q_i] = 0$, and expanding the square,
+$$
+\mathbb{E}[q_i^2] = \sum_{j,l} x_jx_l\,\mathbb{E}[w_{ij}w_{il}]
+= \sum_j x_j^2\,(0.0064) = 16\cdot0.0064 = 0.1024 ,
+$$
+because $\mathbb{E}[w_{ij}w_{il}] = \mathbb{E}[w_{ij}]\,\mathbb{E}[w_{il}] = 0$
+for $j \ne l$ by @thm-independent-product, and
+$\mathbb{E}[w_{ij}^2] = 0.0064$ by @lem-variance-formula. So
+$\operatorname{Var}[q_i] = 0.1024$, and the same holds for each $k_i$.
+The hypotheses of (a) hold: $\mathbf{q}$ is a function of $W_Q$ and
+$\mathbf{k}$ of $W_K$, whose entries are independent of each other,
+and different components of $\mathbf{q}$ use different rows of $W_Q$,
+which are disjoint sets of independent entries (the general facts
+cited after @thm-attention-scale). By (a) with $d_h = 4$,
+$\operatorname{Var}[\mathbf{q}\cdot\mathbf{k}] = 4\cdot0.1024^2 \approx 0.0419$,
+and the score $\mathbf{q}\cdot\mathbf{k}/2$ has variance
+$0.1024^2 \approx 0.0105$, so standard deviation $0.1024$. Scores of
+size about $0.1$ change $e^{s}$ by about 10%, so at the start of
+training each head spreads its weight nearly evenly over the positions
+it can see, and attention starts as an approximate average of the
+earlier values.
+
+```{python}
+#| include: false
+c10_rounds_to(16 * 0.08**2, 0.1024, 4, "variance of a query component")
+c10_rounds_to(4 * 0.1024**2, 0.0419, 4, "variance of q.k")
+c10_rounds_to(0.1024**2, 0.0105, 4, "variance of the score")
+close(np.sqrt(4 * 0.1024**2 / 4), 0.1024, "standard deviation of the score")
+# Monte Carlo with the book's shapes: fixed inputs of squared norm 16.
+c10_x = c10_rng.normal(size=16)
+c10_x *= 4 / np.linalg.norm(c10_x)
+c10_x2 = c10_rng.normal(size=16)
+c10_x2 *= 4 / np.linalg.norm(c10_x2)
+c10_WQ = c10_rng.normal(scale=0.08, size=(100000, 4, 16))
+c10_WK = c10_rng.normal(scale=0.08, size=(100000, 4, 16))
+c10_scores = ((c10_WQ @ c10_x) * (c10_WK @ c10_x2)).sum(axis=1) / 2
+check(abs(c10_scores.var() / 0.1024**2 - 1) < 0.03, "score variance about 0.0105")
+check(abs(c10_scores.mean()) < 0.002, "score mean about 0")
+```
+
+**@exr-ch10-cache-cost.** (a) With a cache, step $t$ computes the new
+query against the $t$ keys so far, $t$ dot products, for a total of
+$\sum_{t=1}^{T} t = T(T+1)/2$. (b) Without a cache, step $t$ redoes
+attention for every position $r \le t$, which costs
+$\sum_{r=1}^{t} r = t(t+1)/2$ dot products, for a total of
+$$
+\sum_{t=1}^{T}\frac{t(t+1)}{2} = \frac{T(T+1)(T+2)}{6} .
+$$
+(By induction: the case $T = 1$ is $1 = 1$, and adding
+$(T+1)(T+2)/2$ to $T(T+1)(T+2)/6$ gives $(T+1)(T+2)(T+3)/6$.) For
+$T = 16$ these are $136$ and $816$. The cache turns a cost that grows
+like $T^3$ into one that grows like $T^2$.
+
+```{python}
+#| include: false
+c10_T = sp.symbols("T", positive=True, integer=True)
+c10_t, c10_r = sp.symbols("t r", positive=True, integer=True)
+sym_equal(sp.summation(c10_t, (c10_t, 1, c10_T)), c10_T * (c10_T + 1) / 2, "sum of t")
+sym_equal(sp.summation(sp.summation(c10_r, (c10_r, 1, c10_t)), (c10_t, 1, c10_T)),
+          c10_T * (c10_T + 1) * (c10_T + 2) / 6, "sum of t(t+1)/2")
+sym_equal(c10_T * (c10_T + 1) * (c10_T + 2) / 6 + (c10_T + 1) * (c10_T + 2) / 2,
+          (c10_T + 1) * (c10_T + 2) * (c10_T + 3) / 6, "induction step")
+check(sum(range(1, 17)) == 136, "136 with a cache")
+check(sum(t * (t + 1) // 2 for t in range(1, 17)) == 816, "816 without a cache")
+maxima_zero("sum(t*(t+1)/2, t, 1, 16) - 816", "816 (Maxima)")
+```
+
+**@exr-ch10-kv-gradients.** The weights do not depend on the values,
+and $\mathbf{y} = \sum_i a_i\mathbf{v}_i$ is linear in $\mathbf{v}_j$
+with coefficient $a_j$, so its Jacobian with respect to $\mathbf{v}_j$
+is $a_jI$.
+
+The key $\mathbf{k}_j$ enters only the score
+$s_j = \mathbf{q}\cdot\mathbf{k}_j/\sqrt{d_h}$, whose derivative with
+respect to $\mathbf{k}_j$ is the row $\mathbf{q}^\top/\sqrt{d_h}$. By @eq-attention-softmax-entries,
+$$
+\frac{\partial\mathbf{y}}{\partial s_j}
+= \sum_i \mathbf{v}_i\frac{\partial a_i}{\partial s_j}
+= \sum_i \mathbf{v}_i\,a_i\bigl([i = j] - a_j\bigr)
+= a_j\mathbf{v}_j - a_j\mathbf{y} = a_j(\mathbf{v}_j - \mathbf{y}) .
+$$
+By the chain rule, the Jacobian with respect to $\mathbf{k}_j$ is the
+column $a_j(\mathbf{v}_j - \mathbf{y})$ times the row
+$\mathbf{q}^\top/\sqrt{d_h}$.
+
+```{python}
+#| include: false
+for _ in range(10):
+    c10_T, c10_dh, c10_dv = c10_rng.integers(1, 6, size=3)
+    c10_q = c10_rng.normal(size=c10_dh)
+    c10_K, c10_V = c10_rng.normal(size=(c10_T, c10_dh)), c10_rng.normal(size=(c10_T, c10_dv))
+    c10_a, c10_y = c10.attend(c10_q, c10_K, c10_V)
+    c10_j = c10_rng.integers(c10_T)
+
+    def c10_y_of_v(v, i):
+        V2 = c10_V.copy()
+        V2[c10_j] = v
+        return c10.attend(c10_q, c10_K, V2)[1][i]
+
+    def c10_y_of_k(k, i):
+        K2 = c10_K.copy()
+        K2[c10_j] = k
+        return c10.attend(c10_q, K2, c10_V)[1][i]
+
+    c10_Jv = np.array([c10_num_grad(lambda v: c10_y_of_v(v, i), c10_V[c10_j]) for i in range(c10_dv)])
+    c10_Jk = np.array([c10_num_grad(lambda k: c10_y_of_k(k, i), c10_K[c10_j]) for i in range(c10_dv)])
+    close(c10_Jv, c10_a[c10_j] * np.eye(c10_dv), "dy/dv_j = a_j I", tol=1e-6)
+    close(c10_Jk, c10_a[c10_j] * np.outer(c10_V[c10_j] - c10_y, c10_q) / np.sqrt(c10_dh),
+          "dy/dk_j", tol=1e-6)
+```
+
+**@exr-ch10-causal-not-equivariant.** For $(x_1, x_2) = (1, 2)$:
+position 1 attends only to itself, so $y_1 = v_1 = 1$. Position 2 has
+query $2$ and scores $2\cdot1 = 2$ and $2\cdot2 = 4$, so
+$$
+y_2 = \frac{e^2\cdot1 + e^4\cdot2}{e^2 + e^4} = \frac{1 + 2e^2}{1 + e^2} \approx 1.881 .
+$$
+For $(2, 1)$: $y'_1 = 2$, and position 2 has query $1$ and scores $2$
+and $1$, so
+$$
+y'_2 = \frac{e^2\cdot2 + e\cdot1}{e^2 + e} = \frac{2e + 1}{e + 1} \approx 1.731 .
+$$
+The swapped outputs would be $(y_2, y_1) \approx (1.881, 1)$, but the
+outputs for the swapped input are $(2, 1.731)$.
+
+```{python}
+#| include: false
+c10_X = np.array([[1.0], [2.0]])
+c10_Y = c10.attention(c10_X, c10_X, c10_X, causal=True)[1].ravel()
+c10_Ys = c10.attention(c10_X[::-1], c10_X[::-1], c10_X[::-1], causal=True)[1].ravel()
+close(c10_Y, [1, (1 + 2 * np.e**2) / (1 + np.e**2)], "outputs for (1, 2)")
+close(c10_Ys, [2, (2 * np.e + 1) / (np.e + 1)], "outputs for (2, 1)")
+c10_rounds_to(c10_Y[1], 1.881, 3, "1.881")
+c10_rounds_to(c10_Ys[1], 1.731, 3, "1.731")
+check(not np.allclose(c10_Ys, c10_Y[::-1]), "not the swapped outputs")
+```
+
+**@exr-ch10-heads-sum.** The product $W_O\mathbf{o}_t$ is the
+combination of the columns of $W_O$ with weights the components of
+$\mathbf{o}_t$. Grouping the columns into the $h$ blocks of $d_h$,
+block $i$ of columns is multiplied by block $i$ of $\mathbf{o}_t$,
+which is $\mathbf{o}^{(i)}_t$, so
+$W_O\mathbf{o}_t = \sum_i W_O^{(i)}\mathbf{o}^{(i)}_t$. Head $i$ together
+with $W_O^{(i)}$ is a single-head attention whose output matrix is
+$d\times d_h$, and the layer adds the $h$ results.
+
+```{python}
+#| include: false
+for _ in range(10):
+    c10_h, c10_dh = c10_rng.integers(1, 5), c10_rng.integers(1, 4)
+    c10_d = c10_h * c10_dh
+    c10_WO = c10_rng.normal(size=(c10_d, c10_d))
+    c10_o = c10_rng.normal(size=c10_d)
+    c10_sum = sum(c10_WO[:, i*c10_dh:(i+1)*c10_dh] @ c10_o[i*c10_dh:(i+1)*c10_dh]
+                  for i in range(c10_h))
+    close(c10_WO @ c10_o, c10_sum, "block columns of W_O")
+```

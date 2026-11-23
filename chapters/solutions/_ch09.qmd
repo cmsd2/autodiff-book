@@ -1,0 +1,252 @@
+## Chapter 9 {#sec-solutions-9}
+
+```{python}
+#| include: false
+# Names in this file start with c9 so that they cannot disturb other chapters'
+# solutions, which run in the same Python session.
+import math as c9_math
+from fractions import Fraction as c9_F
+from itertools import product as c9_product
+
+import checks.ch09 as c9
+from checks import num_grad as c9_num_grad
+
+c9_counts = c9.bigram_counts(c9.CORPUS)
+c9_mle = c9.mle(c9_counts)
+c9_add = c9.add_one(c9_counts)
+c9_rng = np.random.default_rng(90)
+
+
+def c9_softmax(z):
+    e = np.exp(z - z.max())
+    return e / e.sum()
+```
+
+**@exr-ch9-tokens.** (a) With $\mathtt{a} = 0$, $\mathtt{d} = 3$ and
+$\diamond = 26$, `ada` is $(26, 0, 3, 0, 26)$.
+
+(b) A name with $\ell$ letters is wrapped into $\ell + 2$ tokens, and
+every token except the first is predicted, so it gives $\ell + 1$
+predictions. Adding over the $m$ names gives $M + m$. The five names
+have $M = 4 + 3 + 4 + 3 + 3 = 17$ letters and $m = 5$, so $22$
+predictions.
+
+```{python}
+#| include: false
+c9_ids = {ch: i for i, ch in enumerate("abcdefghijklmnopqrstuvwxyz")}
+c9_ids[c9.BOUNDARY] = 26
+check([c9_ids[ch] for ch in c9.wrap("ada")] == [26, 0, 3, 0, 26], "token numbers of ada")
+check([len(w) for w in c9.CORPUS] == [4, 3, 4, 3, 3], "letters per name")
+check(sum(len(c9.pairs(w)) for w in c9.CORPUS) == 17 + 5 == 22, "M + m predictions")
+for w in ["", "a", "emma", "anastasia"]:
+    check(len(c9.pairs(w)) == len(w) + 1, "a name of l letters gives l + 1 predictions")
+```
+
+**@exr-ch9-chain.** Two names, `ava` and `eva`, have second letter
+$\mathtt{v}$, so $P(X_2 = \mathtt{v}) = 2/5$. Of these two, one starts
+with $\mathtt{a}$, so
+$$
+P(X_1 = \mathtt{a}\mid X_2 = \mathtt{v})
+= \frac{P(X_1 = \mathtt{a}, X_2 = \mathtt{v})}{P(X_2 = \mathtt{v})}
+= \frac{1/5}{2/5} = \frac12 ,
+$$
+and $P(X_2 = \mathtt{v})\,P(X_1 = \mathtt{a}\mid X_2 = \mathtt{v}) =
+\frac25\cdot\frac12 = \frac15$, as before. The chain rule holds in
+either order because both orders come from the same definition @eq-lm-conditional.
+
+```{python}
+#| include: false
+c9_pv = sum(c9_F(1, 5) for w in c9.CORPUS if w[1] == "v")
+c9_pav = sum(c9_F(1, 5) for w in c9.CORPUS if w[:2] == "av")
+check(c9_pv == c9_F(2, 5), "P(X2 = v) = 2/5")
+check(c9_pav / c9_pv == c9_F(1, 2), "P(X1 = a | X2 = v) = 1/2")
+check(c9_pv * (c9_pav / c9_pv) == c9_F(1, 5), "product is 1/5")
+```
+
+**@exr-ch9-name-probs.** Multiplying the transition probabilities of
+the pairs,
+$$
+\begin{aligned}
+P(\mathtt{anna}) &= p(\mathtt{a}\mid\diamond)\,p(\mathtt{n}\mid\mathtt{a})\,p(\mathtt{n}\mid\mathtt{n})\,p(\mathtt{a}\mid\mathtt{n})\,p(\diamond\mid\mathtt{a})
+= \tfrac35\cdot\tfrac18\cdot\tfrac12\cdot\tfrac12\cdot\tfrac58 = \tfrac{3}{256},\\
+P(\mathtt{emma}) &= \tfrac25\cdot\tfrac12\cdot\tfrac12\cdot\tfrac12\cdot\tfrac58 = \tfrac{1}{32}.
+\end{aligned}
+$$
+The other names have $P(\mathtt{ava}) = P(\mathtt{ada}) =
+\frac35\cdot\frac18\cdot1\cdot\frac58 = \frac{3}{64}$ and
+$P(\mathtt{eva}) = \frac18$ from @exm-bigram-fit, so `eva` is the most
+probable. It is short, and after its first letter every step except
+the last has probability $1/2$ or $1$.
+
+```{python}
+#| include: false
+c9_want = {"anna": c9_F(3, 256), "emma": c9_F(1, 32), "ava": c9_F(3, 64), "ada": c9_F(3, 64),
+           "eva": c9_F(1, 8)}
+for w, pw in c9_want.items():
+    check(c9.sequence_probability(w, c9_mle) == pw, f"P({w})")
+check(c9_F(3, 5) * c9_F(1, 8) * c9_F(1, 2) * c9_F(1, 2) * c9_F(5, 8) == c9_F(3, 256),
+      "anna product")
+check(c9_F(2, 5) * c9_F(1, 2) ** 3 * c9_F(5, 8) == c9_F(1, 32), "emma product")
+check(c9_F(3, 5) * c9_F(1, 8) * c9_F(5, 8) == c9_F(3, 64), "ava and ada product")
+check(max(c9_want, key=c9_want.get) == "eva", "eva is the most probable")
+```
+
+**@exr-ch9-add-one.** (a) Summing the numerators of row $a$ gives
+$\sum_b (n_{ab} + 1) = n_a + |V|$, which is the denominator.
+
+(b) The counts $m_{ab} = n_{ab} + 1$ have row totals
+$m_a = \sum_b m_{ab} = n_a + |V| > 0$. By @thm-bigram-mle, the
+maximum-likelihood model for them is $m_{ab}/m_a$, which is @eq-lm-add-one.
+
+(c) $p(\diamond\mid\mathtt{a}) = (5 + 1)/(8 + 7) = 2/5$, smaller than
+$5/8$: smoothing takes probability from the observed pairs and gives it
+to the unobserved ones.
+
+```{python}
+#| include: false
+c9_nab = sp.symbols("n1:8", nonnegative=True)
+sym_equal(sum(ni + 1 for ni in c9_nab), sum(c9_nab) + 7, "row of add-one numerators")
+for row_counts, row_add in zip(c9_counts, c9_add):
+    c9_m = row_counts + 1
+    check([c9_F(int(x), int(c9_m.sum())) for x in c9_m] == row_add, "add-one is MLE of counts + 1")
+check(c9_add[c9.INDEX["a"]][c9.INDEX[c9.BOUNDARY]] == c9_F(2, 5), "p(end | a) = 2/5")
+check(c9_F(6, 15) == c9_F(2, 5) < c9_F(5, 8), "smaller than 5/8")
+```
+
+**@exr-ch9-perplexity.** (a) Each $p_i$ is a probability, so
+$0 < p_i \le 1$ and $-\ln p_i \ge 0$. So $L \ge 0$ and
+$e^L \ge e^0 = 1$. Equality holds exactly when $L = 0$, that is, when
+every $-\ln p_i$ is $0$, so every $p_i = 1$.
+
+(b) $\operatorname{PPL}_A/\operatorname{PPL}_B = e^{L_A - L_B} =
+e^{-0.1} \approx 0.905$: model B's perplexity is about $1.105$ times
+model A's.
+
+```{python}
+#| include: false
+for _ in range(200):
+    c9_p = c9_rng.uniform(0.01, 1, size=c9_rng.integers(1, 20))
+    c9_L = -np.log(c9_p).mean()
+    check(np.exp(c9_L) >= 1 and c9_L >= 0, "perplexity at least 1")
+    close(np.exp(c9_L), np.prod(c9_p) ** (-1 / c9_p.size), "perplexity is 1/geometric mean")
+check(np.exp(-np.log(np.ones(5)).mean()) == 1, "perplexity 1 when every p is 1")
+c9.rounds_to(c9_math.exp(-0.1), 0.905, 3, "e^-0.1")
+c9.rounds_to(c9_math.exp(0.1), 1.105, 3, "e^0.1")
+```
+
+**@exr-ch9-termination.** (a) For a string $w = (w_1, \dots, w_k)$ of
+letters, with $w_0 = \diamond$, write
+$\pi(w) = \prod_{t=1}^{k} p(w_t\mid w_{t-1})$ for the probability that
+generation produces $w_1, \dots, w_k$ first. Then $r_k = \sum_w \pi(w)$
+over letter strings of length $k$, and by @eq-lm-document-probability the
+name $w$ has probability $\pi(w)\,p(\diamond\mid w_k)$, so
+$q_k = \sum_w \pi(w)\,p(\diamond\mid w_k)$. A string of $k + 1$ letters
+is a string $w$ of $k$ letters followed by a letter $c$, so
+$$
+r_{k+1} = \sum_w \pi(w)\sum_{c\ne\diamond} p(c\mid w_k)
+= \sum_w \pi(w)\bigl(1 - p(\diamond\mid w_k)\bigr) = r_k - q_k ,
+$$
+and since $1 - p(\diamond\mid w_k) \le 1 - \varepsilon$, also
+$r_{k+1} \le (1-\varepsilon)r_k$.
+
+(b) Adding $q_k = r_k - r_{k+1}$ for $k = 0, \dots, K$, the sum
+telescopes: $\sum_{k=0}^{K} q_k = r_0 - r_{K+1} = 1 - r_{K+1}$. By (a)
+and induction, $0 \le r_{K+1} \le (1-\varepsilon)^{K+1}$, which tends
+to $0$, so the total probability of all names is
+$\sum_{k\ge0} q_k = 1$.
+
+```{python}
+#| include: false
+# The add-one model has every p(end | a) positive. Track the probability of
+# having generated k letters, split by the last token.
+c9_P = np.array([[float(x) for x in row] for row in c9_add])
+c9_letters = np.r_[0, np.ones(6)]
+c9_eps = c9_P[:, 0].min()
+check(c9_eps > 0, "add-one model satisfies the hypothesis")
+c9_state, c9_total, c9_r = np.eye(7)[0], 0.0, 1.0
+for k in range(400):
+    c9_q = c9_state @ c9_P[:, 0]
+    c9_state = (c9_state @ c9_P) * c9_letters
+    c9_r_next = c9_state.sum()
+    close(c9_r_next, c9_r - c9_q, "r_{k+1} = r_k - q_k")
+    check(c9_r_next <= (1 - c9_eps) * c9_r + 1e-15, "r_{k+1} <= (1 - eps) r_k")
+    c9_total += c9_q
+    c9_r = c9_r_next
+close(c9_total, 1.0, "name probabilities sum to 1", tol=1e-12)
+# q_2 by listing every two-letter name agrees with the recursion.
+c9_q2 = sum(c9.sequence_probability("".join(w), c9_add) for w in c9_product("ademnv", repeat=2))
+c9_s2 = ((np.eye(7)[0] @ c9_P) * c9_letters @ c9_P) * c9_letters
+close(float(c9_q2), c9_s2 @ c9_P[:, 0], "q_2 by listing names")
+```
+
+**@exr-ch9-two-tokens.** Call the tokens 1 and 2. With $d = 1$ the
+embeddings are numbers $u_1, u_2$, and $W = (w_1, w_2)^\top$, so the
+logits after token $a$ are $(w_1u_a, w_2u_a)$ and
+$$
+p(1\mid a) = \frac{e^{w_1u_a}}{e^{w_1u_a} + e^{w_2u_a}}
+= \frac{1}{1 + e^{-(w_1 - w_2)u_a}} .
+$$
+Given a bigram model with positive entries, take $w_1 = 1$, $w_2 = 0$
+and $u_a = \ln\bigl(p(1\mid a)/p(2\mid a)\bigr)$. Then
+$$
+\frac{1}{1 + e^{-u_a}} = \frac{1}{1 + p(2\mid a)/p(1\mid a)}
+= \frac{p(1\mid a)}{p(1\mid a) + p(2\mid a)} = p(1\mid a),
+$$
+and the probability of token 2 is $1 - p(1\mid a) = p(2\mid a)$
+because both rows sum to 1.
+
+```{python}
+#| include: false
+for _ in range(50):
+    c9_T = c9_rng.dirichlet([1, 1], size=2)  # row a is p(.|a)
+    c9_u = np.log(c9_T[:, 0] / c9_T[:, 1])
+    for c9_a in range(2):
+        close(c9_softmax(np.array([1.0, 0.0]) * c9_u[c9_a]), c9_T[c9_a],
+              "two-token neural bigram model")
+```
+
+**@exr-ch9-embedding-gradient.** Write
+$\mathbf{g} = \mathbf{p} - \mathbf{e}_b$, so that
+$\partial\ell/\partial z_i = g_i$ by @thm-softmax-ce-gradient. Write
+$\epsilon_{kj}$ for entry $(k, j)$ of $E$. The logits are
+$z_i = \sum_j w_{ij}\,(E^\top\mathbf{e}_a)_j = \sum_j w_{ij}\,\epsilon_{aj}$,
+so $\epsilon_{kj}$ appears only if $k = a$, and then
+$\partial z_i/\partial \epsilon_{aj} = w_{ij}$. By the chain rule,
+$$
+\frac{\partial\ell}{\partial \epsilon_{kj}} = [k = a]\sum_i g_i w_{ij}
+= [k = a]\,(W^\top\mathbf{g})_j ,
+$$
+which is entry $(k, j)$ of $\mathbf{e}_a(W^\top\mathbf{g})^\top$. All
+rows other than row $a$ are zero, so a gradient step changes only
+$\mathbf{u}_a$.
+
+```{python}
+#| include: false
+for _ in range(10):
+    c9_E, c9_Wm = c9_rng.normal(size=(7, 3)), c9_rng.normal(size=(7, 3))
+    c9_a, c9_b = c9_rng.integers(7, size=2)
+
+    def c9_loss(e, a=c9_a, b=c9_b, W=c9_Wm):
+        z = W @ e.reshape(7, 3)[a]
+        return -(z[b] - np.log(np.exp(z).sum()))
+
+    c9_g = c9_softmax(c9_Wm @ c9_E[c9_a]) - np.eye(7)[c9_b]
+    c9_grad = c9_num_grad(c9_loss, c9_E.ravel()).reshape(7, 3)
+    close(c9_grad, np.outer(np.eye(7)[c9_a], c9_Wm.T @ c9_g), "gradient with respect to E",
+          tol=1e-6)
+    check(np.allclose(np.delete(c9_grad, c9_a, axis=0), 0, atol=1e-8), "only row a changes")
+```
+
+**@exr-ch9-sparsity.** Each prediction adds one to a count in the row
+of its context, the $n - 1$ tokens before it. $N$ predictions touch at
+most $N$ different rows, so at most $N$ rows are non-zero. A 4-gram
+table over 27 tokens has $27^3 = 19{,}683$ rows, so at least
+$1 - 1000/19{,}683 \approx 0.949$ of them are empty.
+
+```{python}
+#| include: false
+check(27**3 == 19683, "27^3 rows")
+c9.rounds_to(1 - 1000 / 19683, 0.949, 3, "fraction of empty rows")
+c9_ctx = c9_rng.integers(27, size=(1000, 3))
+check(len({tuple(r) for r in c9_ctx}) <= 1000, "at most N rows touched")
+```

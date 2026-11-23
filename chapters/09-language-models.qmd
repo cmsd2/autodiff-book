@@ -1,13 +1,1136 @@
 # Language models {#sec-language-models}
 
-::: {.callout-note}
-## Not yet written
+A language model assigns probabilities to sequences of symbols. The
+model this book builds reads a name one character at a time and, after
+each character, gives a probability for every character that could
+come next. Multiplying those probabilities along a name gives the
+probability of the whole name, and training adjusts the model's
+parameters to make the names in a list of real names probable.
 
-This chapter will cover:
+This chapter sets up the probability behind that description and
+studies the simplest language model, in which the next character
+depends only on the current one. For that model the maximum-likelihood
+parameters have a closed form: they are relative frequencies of
+pairs, and we can compute them by counting. The same model written as
+a small neural network introduces embeddings, the vectors that
+represent tokens in every later model, and shows how a neural model
+shares information between tokens. The chapter ends with the problem
+that counting cannot solve, longer contexts, which @sec-attention takes
+up.
 
-- sequences and the chain rule of probability
-- bigram models and maximum likelihood by counting
-- perplexity
-- character-level tokenisation
-- embeddings and neural bigram models
+```{python}
+#| include: false
+import math
+from fractions import Fraction
+
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+from checks.ch09 import (BOUNDARY, CORPUS, INDEX, VOCAB, add_one, average_nll,
+                         bigram_counts, mle, pairs, rounds_to, sequence_probability,
+                         wrap)
+
+rng = np.random.default_rng(9)
+F = Fraction
+
+
+def softmax(z):
+    """Softmax of each column of z."""
+    e = np.exp(z - z.max(axis=0, keepdims=True))
+    return e / e.sum(axis=0, keepdims=True)
+```
+
+## Tokens and vocabularies {#sec-lm-tokens}
+
+A model computes with numbers and vectors, so text has to be cut into
+pieces from a fixed, finite list before the model can see it, and the
+model needs a way to tell where a piece of text starts and stops.
+
+Take the name `emma`. Cut into characters it is
+$\mathtt{e}, \mathtt{m}, \mathtt{m}, \mathtt{a}$. A model that reads
+it one character at a time must also learn which characters names
+start with and when a name ends, so we add a marker at both ends,
+written $\diamond$:
+$$
+(\diamond, \mathtt{e}, \mathtt{m}, \mathtt{m}, \mathtt{a}, \diamond).
+$$
+The model reads this sequence from the left and, at each position,
+predicts the next symbol. From the leading $\diamond$ it predicts the
+first letter $\mathtt{e}$; from $\diamond\,\mathtt{e}$ it predicts
+$\mathtt{m}$; and from the whole name it predicts the closing
+$\diamond$, which says that the name ends there. That is five
+predictions for a name of four letters. The first $\diamond$ is never
+predicted; it only starts the sequence.
+
+::: {#def-vocabulary}
+## Vocabulary and tokens
+
+A *vocabulary* is a finite set $V$ whose elements are called *tokens*;
+$|V|$ is the number of tokens. A *tokeniser* turns a piece of text into
+a finite sequence of tokens. A *character-level* tokeniser makes each
+character a token. The *boundary token* $\diamond$ is a token that
+marks the start and the end of a piece of text.
+:::
+
+For names written in the 26 lower-case letters, the vocabulary is the
+26 letters together with $\diamond$, so $|V| = 27$. A name of $n$
+letters becomes $n + 2$ tokens and gives $n + 1$ predictions.
+
+Programs refer to tokens by number. The microgpt program that this
+book's model follows [@karpathy2026microgpt] numbers the letters
+$\mathtt{a}, \dots, \mathtt{z}$ as $0, \dots, 25$ and gives
+$\diamond$ the number $26$, so `emma` becomes $(26, 4, 12, 12, 0, 26)$.
+The numbers are labels. Nothing in a model may depend on $\mathtt{b}$
+having a number one larger than $\mathtt{a}$, and @sec-lm-embeddings
+replaces each number by a vector that the model learns.
+
+Character-level tokenisation keeps the vocabulary small. Large models
+for general text use tokens that are pieces of words, found by merging
+frequent pairs of symbols; GPT-2, for example, has a vocabulary of
+50,257 tokens [@radford2019language]. Nothing in this chapter or the
+next depends on how the tokens were chosen.
+
+The examples in this chapter use five names as a training *corpus*,
+the collection of text a model learns from:
+$$
+\mathtt{anna}, \quad \mathtt{ava}, \quad \mathtt{emma}, \quad
+\mathtt{eva}, \quad \mathtt{ada}.
+$$
+To keep tables small, the examples use the vocabulary of the symbols
+that occur in these names,
+$V = \{\diamond, \mathtt{a}, \mathtt{d}, \mathtt{e}, \mathtt{m}, \mathtt{n}, \mathtt{v}\}$,
+with $|V| = 7$. The names have 17 letters between them, so they give
+$17 + 5 = 22$ predictions.
+
+```{python}
+#| include: false
+check(VOCAB == [BOUNDARY, "a", "d", "e", "m", "n", "v"], "example vocabulary")
+check(sum(len(w) for w in CORPUS) == 17, "17 letters")
+check(sum(len(pairs(w)) for w in CORPUS) == 22, "22 predictions")
+check(len(wrap("emma")) == 6 and len(pairs("emma")) == 5, "emma: 6 tokens, 5 predictions")
+ids = {c: i for i, c in enumerate("abcdefghijklmnopqrstuvwxyz")}
+ids[BOUNDARY] = 26
+check([ids[c] for c in wrap("emma")] == [26, 4, 12, 12, 0, 26], "microgpt token ids of emma")
+check(len(ids) == 27, "27 tokens")
+```
+
+## The probability of a sequence {#sec-lm-sequence-probability}
+
+A language model gives a probability to a whole name by giving a
+probability to each prediction and multiplying. This section shows
+why multiplying is right. The tool is conditional probability, the
+probability of one event once we know that another has happened.
+
+Choose one of the five corpus names at random, each with probability
+$1/5$. The probability that the name starts with $\mathtt{a}$ is $3/5$
+(`anna`, `ava`, `ada`). Once we know that it starts with
+$\mathtt{a}$, only those three names remain, and one of them, `ava`,
+has $\mathtt{v}$ second, so the probability of $\mathtt{v}$ second is
+now $1/3$. Multiplying gives $\frac35\cdot\frac13 = \frac15$, which is
+the probability that the name begins `av`, counted directly: one name
+in five. The probability of the first two letters is the probability
+of the first, times the probability of the second given the first.
+
+We work on finite probability spaces (@def-finite-probability). A
+random variable there is a real-valued function on the outcomes; since
+tokens are numbered, a function from the outcomes to the tokens is a
+random variable too. We write
+$P(X_1 = x_1, \dots, X_t = x_t)$ for the probability of the event
+$\{X_1 = x_1\}\cap\dots\cap\{X_t = x_t\}$ that all $t$ statements hold.
+
+::: {#def-conditional-probability}
+## Conditional probability
+
+Let $A$ and $B$ be events in a finite probability space with
+$P(A) > 0$. The *conditional probability* of $B$ given $A$ is
+$$
+P(B \mid A) = \frac{P(A\cap B)}{P(A)} .
+$$ {#eq-lm-conditional}
+:::
+
+In words, $P(B \mid A)$ is the probability of $B$ when we keep only
+the outcomes in $A$ and rescale their probabilities so that they sum
+to 1. In the example, $A$ is "starts with $\mathtt{a}$", $B$ is
+"has $\mathtt{v}$ second", $P(A\cap B) = 1/5$ and $P(A) = 3/5$, so
+$P(B\mid A) = 1/3$. Rearranged, @eq-lm-conditional says
+$P(A\cap B) = P(A)\,P(B\mid A)$, and applying this once per position
+breaks the probability of a sequence into one factor per position.
+
+::: {#thm-sequence-chain-rule}
+## Chain rule of probability
+
+Let $X_1, \dots, X_T$ be random variables on a finite probability
+space, with values in a vocabulary $V$, and let
+$x_1, \dots, x_T \in V$ satisfy
+$P(X_1 = x_1, \dots, X_{T-1} = x_{T-1}) > 0$. Then
+$$
+P(X_1 = x_1, \dots, X_T = x_T)
+= \prod_{t=1}^{T} P(X_t = x_t \mid X_1 = x_1, \dots, X_{t-1} = x_{t-1}),
+$$ {#eq-lm-chain-rule}
+where the factor for $t = 1$ is $P(X_1 = x_1)$.
+:::
+
+The probability of the whole sequence is the product, over the
+positions, of the probability of the token at that position given all
+the tokens before it.
+
+::: {.proof}
+Let $A_0 = \Omega$ and, for $t \ge 1$,
+$A_t = \{X_1 = x_1\}\cap\dots\cap\{X_t = x_t\}$. Then
+$A_t = A_{t-1}\cap\{X_t = x_t\}$, so $A_t \subseteq A_{t-1}$, and the
+probabilities $P(A_t)$ decrease as $t$ grows. In particular
+$P(A_{t-1}) \ge P(A_{T-1}) > 0$ for $t = 1, \dots, T$, so every
+conditional probability in @eq-lm-chain-rule is defined. The
+factor for $t$ is $P(X_t = x_t \mid A_{t-1})$, and for $t = 1$ this is
+$P(X_1 = x_1 \mid \Omega) = P(X_1 = x_1)$ because $P(\Omega) = 1$.
+
+We prove by induction on $t$ that
+$P(A_t) = \prod_{s=1}^{t} P(X_s = x_s \mid A_{s-1})$ for
+$t = 1, \dots, T$. For $t = 1$ both sides are $P(X_1 = x_1)$. If the
+statement holds for $t - 1$, then by @eq-lm-conditional,
+$$
+P(A_t) = P(A_{t-1}\cap\{X_t = x_t\})
+= P(A_{t-1})\,P(X_t = x_t \mid A_{t-1})
+= \prod_{s=1}^{t} P(X_s = x_s \mid A_{s-1}) .
+$$
+The case $t = T$ is @eq-lm-chain-rule.
+:::
+
+If instead $P(X_1 = x_1, \dots, X_{T-1} = x_{T-1}) = 0$, the left side
+of @eq-lm-chain-rule is $0$ as well, because $A_T \subseteq A_{T-1}$.
+
+::: {#exm-chain-rule-names}
+In the example above, with $X_1$ and $X_2$ the first and second
+letters of a randomly chosen corpus name,
+$$
+P(X_1 = \mathtt{a}, X_2 = \mathtt{v})
+= P(X_1 = \mathtt{a})\,P(X_2 = \mathtt{v} \mid X_1 = \mathtt{a})
+= \frac35\cdot\frac13 = \frac15 .
+$$
+@exr-ch9-chain applies the theorem in the other order, conditioning
+on the second letter first.
+:::
+
+```{python}
+#| include: false
+p_a = sum(F(1, 5) for w in CORPUS if w[0] == "a")
+p_av = sum(F(1, 5) for w in CORPUS if w[:2] == "av")
+check(p_a == F(3, 5), "P(X1 = a) = 3/5")
+check(p_av / p_a == F(1, 3), "P(X2 = v | X1 = a) = 1/3")
+check(p_a * (p_av / p_a) == F(1, 5) == p_av, "chain rule for the av example")
+# The chain rule on a random joint distribution of three tokens.
+joint = rng.random((4, 4, 4))
+joint /= joint.sum()
+for x in [(0, 1, 2), (3, 3, 0), (2, 0, 1)]:
+    p1 = joint[x[0]].sum()
+    p2 = joint[x[0], x[1]].sum() / p1
+    p3 = joint[x] / joint[x[0], x[1]].sum()
+    close(p1 * p2 * p3, joint[x], "chain rule on a random joint distribution")
+```
+
+@thm-sequence-chain-rule says that to give a probability to every
+sequence, it is enough to give, for every possible beginning of a
+sequence, a probability distribution for the next token. That is how
+every model in this book is built.
+
+::: {#def-language-model}
+## Language model
+
+Let $V$ be a vocabulary containing a boundary token $\diamond$. A
+*language model* over $V$ gives, for each finite sequence
+$(x_0, x_1, \dots, x_{t-1})$ of tokens with $x_0 = \diamond$, a
+probability distribution $p(\,\cdot \mid x_0, \dots, x_{t-1})$ on $V$.
+The sequence $(x_0, \dots, x_{t-1})$ is the *context*. A *document*
+$w = (w_1, \dots, w_n)$ of tokens other than $\diamond$ is wrapped as
+$x = (\diamond, w_1, \dots, w_n, \diamond)$ and receives the
+probability
+$$
+P(w) = \prod_{t=1}^{n+1} p(x_t \mid x_0, \dots, x_{t-1}) .
+$$ {#eq-lm-document-probability}
+:::
+
+The product has one factor for each of the $n + 1$ predictions: the
+probability that the model gives to the token that actually comes
+next, given everything before it. The model's distributions play the
+part of the conditional probabilities in @eq-lm-chain-rule. A model
+*generates* a document by the same route: start from $\diamond$, draw
+a token from $p(\,\cdot \mid \diamond)$, append it, draw the next token
+from the distribution for the longer context, and stop when it draws
+$\diamond$. @exr-ch9-termination shows that, under a mild condition,
+the probabilities of all documents sum to 1.
+
+## Bigram models {#sec-lm-bigram}
+
+The simplest useful language model forgets everything but the latest
+token. To see what such a model should predict, look at what follows
+$\mathtt{a}$ in the corpus. The wrapped names contain eight pairs that
+start with $\mathtt{a}$: five times $\mathtt{a}$ ends a name, and
+$\mathtt{d}$, $\mathtt{n}$ and $\mathtt{v}$ each follow it once. A
+natural guess for the probability that $\mathtt{a}$ is followed by the
+boundary token is $5/8$, and $1/8$ for each of the three letters. This
+section shows that the guess is the maximum-likelihood estimate. @shannon1948mathematical used models of this kind, built from
+frequencies of letter pairs in English, to generate imitations of
+English text.
+
+::: {#def-bigram}
+## Bigram model
+
+A *bigram model* is a language model whose next-token distribution
+depends only on the last token of the context:
+$p(b \mid x_0, \dots, x_{t-1}) = p(b \mid x_{t-1})$. It is given by
+$|V|^2$ numbers $p(b \mid a)$, the *transition probabilities*, with
+$$
+p(b \mid a) \ge 0, \qquad \sum_{b\in V} p(b \mid a) = 1
+\quad\text{for every } a \in V .
+$$
+:::
+
+The number $p(b\mid a)$ is the probability that token $b$ comes next
+when the current token is $a$, and the conditions say that, for each
+current token, these probabilities form a distribution. Arranged as a
+$|V|\times|V|$ *transition matrix*, row $a$ lists the probabilities of
+the possible next tokens after $a$, column $b$ lists the probabilities
+of reaching $b$ from each token, and each row sums to 1. A sequence in
+which each token is drawn from a distribution that depends only on the
+token before is called a *Markov chain*. Because each row sums to 1,
+the transition matrix sends the all-ones vector to itself: 1 is an
+eigenvalue with eigenvector $(1, \dots, 1)^\top$.
+
+To fit a bigram model to data we choose the transition probabilities
+that make the data most probable. Write $n_{ab}$ for the number of
+times token $b$ follows token $a$ in the corpus, counting the pairs in
+every wrapped name, and $n_a = \sum_b n_{ab}$ for the number of pairs
+that start with $a$. By @eq-lm-document-probability, the probability
+of one name is a product with one factor $p(b \mid a)$ for each of its
+pairs. The names are treated as independent, so the probability of the
+corpus is the product over all names, and gathering equal factors
+gives the *likelihood* (@def-likelihood)
+$$
+\prod_{a, b\in V} p(b \mid a)^{n_{ab}} ,
+$$
+in which each transition probability appears once for every time its
+pair occurs. Maximising the likelihood is the same as maximising its
+logarithm, the *log-likelihood*
+$$
+\ell(p) = \sum_{a, b\in V} n_{ab}\ln p(b\mid a) ,
+$$ {#eq-lm-log-likelihood}
+where terms with $n_{ab} = 0$ count as $0$, and $\ell(p) = -\infty$ if
+$p(b\mid a) = 0$ for a pair with $n_{ab} > 0$.
+
+Counting the pairs takes a few lines of code. Here the boundary token
+is written as a full stop, and each line of output lists what followed
+one token.
+
+```{python}
+#| echo: true
+names = ["anna", "ava", "emma", "eva", "ada"]
+counts = {}
+for name in names:
+    tokens = ["."] + list(name) + ["."]
+    for a, b in zip(tokens, tokens[1:]):
+        counts[a, b] = counts.get((a, b), 0) + 1
+for a in sorted({a for a, _ in counts}):
+    print(a, {b: n for (x, b), n in sorted(counts.items()) if x == a})
+```
+
+```{python}
+#| include: false
+n_counts = bigram_counts(CORPUS)
+check(names == CORPUS and BOUNDARY == ".", "visible code uses the corpus")
+for (a, b), c in counts.items():
+    check(n_counts[INDEX[a], INDEX[b]] == c, f"count of {a}{b}")
+check(sum(counts.values()) == n_counts.sum() == 22, "22 pairs")
+```
+
+@tbl-lm-bigram-counts shows the same counts as a matrix. Row $a$ lists
+what followed $a$, the entry in column $b$ is $n_{ab}$, and the last
+column is the row total $n_a$.
+
+| $a \backslash b$ | $\diamond$ | $\mathtt{a}$ | $\mathtt{d}$ | $\mathtt{e}$ | $\mathtt{m}$ | $\mathtt{n}$ | $\mathtt{v}$ | $n_a$ |
+|---|---|---|---|---|---|---|---|---|
+| $\diamond$ | 0 | 3 | 0 | 2 | 0 | 0 | 0 | 5 |
+| $\mathtt{a}$ | 5 | 0 | 1 | 0 | 0 | 1 | 1 | 8 |
+| $\mathtt{d}$ | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
+| $\mathtt{e}$ | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 2 |
+| $\mathtt{m}$ | 0 | 1 | 0 | 0 | 1 | 0 | 0 | 2 |
+| $\mathtt{n}$ | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 2 |
+| $\mathtt{v}$ | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
+
+: Pair counts $n_{ab}$ for the five names: row $a$ is the earlier token, column $b$ the later one. {#tbl-lm-bigram-counts}
+
+```{python}
+#| include: false
+table = np.array([
+    [0, 3, 0, 2, 0, 0, 0],
+    [5, 0, 1, 0, 0, 1, 1],
+    [0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0, 1],
+    [0, 1, 0, 0, 1, 0, 0],
+    [0, 1, 0, 0, 0, 1, 0],
+    [0, 2, 0, 0, 0, 0, 0],
+])
+check((table == n_counts).all(), "table of pair counts")
+check(list(n_counts.sum(axis=1)) == [5, 8, 1, 2, 2, 2, 2], "row totals")
+check(list(n_counts[INDEX["a"]]) == [5, 0, 1, 0, 0, 1, 1], "what follows a")
+```
+
+The maximiser of @eq-lm-log-likelihood comes from an inequality that @sec-probability-loss proves as @thm-gibbs. We need it in a form with
+counts that allows zero probabilities, so we prove that form here.
+
+::: {#lem-gibbs-counts}
+Let $c_1, \dots, c_m \ge 0$ with $N = c_1 + \dots + c_m > 0$, and let
+$p_1, \dots, p_m \ge 0$ with $p_1 + \dots + p_m = 1$. Then
+$$
+\sum_{i=1}^m c_i\ln p_i \le \sum_{i=1}^m c_i\ln\frac{c_i}{N},
+$$
+with terms where $c_i = 0$ counted as $0$ on both sides. Equality holds
+if and only if $p_i = c_i/N$ for every $i$.
+:::
+
+If outcome $i$ was observed $c_i$ times, the left side is the
+log-likelihood of the distribution $p$, and the lemma says that no
+distribution beats the observed frequencies $c_i/N$.
+
+::: {.proof}
+If $p_i = 0$ for some $i$ with $c_i > 0$, the left side is $-\infty$
+and the inequality holds strictly. Otherwise let $I$ be the set of $i$
+with $c_i > 0$; then $p_i > 0$ for $i \in I$. The tangent line to
+$\ln$ at $1$ lies above its graph: $\ln x \le x - 1$ for $x > 0$, with
+equality only at $x = 1$ (the function $x - 1 - \ln x$ has derivative
+$1 - 1/x$, so it decreases on $(0, 1]$, increases on $[1, \infty)$, and
+is $0$ at $1$). Taking $x = Np_i/c_i$,
+$$
+\sum_{i\in I} c_i\ln p_i - \sum_{i\in I} c_i\ln\frac{c_i}{N}
+= \sum_{i\in I} c_i\ln\frac{Np_i}{c_i}
+\le \sum_{i\in I} c_i\Bigl(\frac{Np_i}{c_i} - 1\Bigr)
+= N\sum_{i\in I}p_i - N \le N - N = 0 .
+$$
+Equality needs $Np_i/c_i = 1$ for every $i \in I$, so $p_i = c_i/N$
+there; these $p_i$ already sum to 1, so $p_i = 0 = c_i/N$ for
+$i \notin I$. Conversely, $p_i = c_i/N$ gives equality.
+:::
+
+::: {#thm-bigram-mle}
+## Maximum likelihood for a bigram model
+
+Let $n_{ab}$ be the pair counts of a corpus over a vocabulary $V$, and
+$n_a = \sum_b n_{ab}$. A bigram model $p$ over $V$ maximises the
+log-likelihood @eq-lm-log-likelihood if and only if
+$$
+p(b \mid a) = \frac{n_{ab}}{n_a}
+\quad\text{for every } a \text{ with } n_a > 0 \text{ and every } b .
+$$
+Rows with $n_a = 0$ can be any probability distributions.
+:::
+
+The best transition probabilities are the *relative frequencies*: the
+fraction of the pairs starting with $a$ that continue with $b$.
+
+::: {.proof}
+The log-likelihood is a sum over rows,
+$\ell(p) = \sum_a \ell_a(p)$ with
+$\ell_a(p) = \sum_b n_{ab}\ln p(b\mid a)$, and $\ell_a$ depends only
+on row $a$ of $p$. The constraints of @def-bigram also act on each row
+separately. So $p$ maximises $\ell$ exactly when each row maximises
+its own $\ell_a$. If $n_a = 0$ then $\ell_a = 0$ whatever the row is.
+If $n_a > 0$, @lem-gibbs-counts with $c_b = n_{ab}$ and $N = n_a$ says
+that $\ell_a$ is largest exactly when $p(b\mid a) = n_{ab}/n_a$.
+:::
+
+Fitting the model needs no optimisation, only counting. The rows sum
+to 1 because $\sum_b n_{ab} = n_a$.
+
+::: {#exm-bigram-fit}
+Dividing each row of @tbl-lm-bigram-counts by its total gives the
+maximum-likelihood model. Its non-zero entries are
+$$
+\begin{aligned}
+&p(\mathtt{a}\mid\diamond) = \tfrac35, \quad p(\mathtt{e}\mid\diamond) = \tfrac25, \quad
+p(\diamond\mid\mathtt{a}) = \tfrac58,\\
+&p(\mathtt{d}\mid\mathtt{a}) = p(\mathtt{n}\mid\mathtt{a}) = p(\mathtt{v}\mid\mathtt{a}) = \tfrac18,
+\quad p(\mathtt{a}\mid\mathtt{d}) = p(\mathtt{a}\mid\mathtt{v}) = 1,\\
+&p(\mathtt{m}\mid\mathtt{e}) = p(\mathtt{v}\mid\mathtt{e}) = p(\mathtt{a}\mid\mathtt{m})
+= p(\mathtt{m}\mid\mathtt{m}) = p(\mathtt{a}\mid\mathtt{n}) = p(\mathtt{n}\mid\mathtt{n}) = \tfrac12 .
+\end{aligned}
+$$
+Row $\mathtt{a}$ is the guess made at the start of this section. The
+name `eva` has probability
+$p(\mathtt{e}\mid\diamond)\,p(\mathtt{v}\mid\mathtt{e})\,p(\mathtt{a}\mid\mathtt{v})\,p(\diamond\mid\mathtt{a})
+= \frac25\cdot\frac12\cdot1\cdot\frac58 = \frac18$.
+The model also gives positive probability to names it has not seen:
+`ana` has probability
+$\frac35\cdot\frac18\cdot\frac12\cdot\frac58 = \frac{3}{128}$. Its
+pairs `an` and `na` both occur in `anna`, and the model recombines
+them.
+:::
+
+```{python}
+#| include: false
+p_mle = mle(n_counts)
+want = {
+    (BOUNDARY, "a"): F(3, 5), (BOUNDARY, "e"): F(2, 5),
+    ("a", BOUNDARY): F(5, 8), ("a", "d"): F(1, 8), ("a", "n"): F(1, 8), ("a", "v"): F(1, 8),
+    ("d", "a"): F(1), ("v", "a"): F(1),
+    ("e", "m"): F(1, 2), ("e", "v"): F(1, 2), ("m", "a"): F(1, 2), ("m", "m"): F(1, 2),
+    ("n", "a"): F(1, 2), ("n", "n"): F(1, 2),
+}
+for a in VOCAB:
+    for b in VOCAB:
+        check(p_mle[INDEX[a]][INDEX[b]] == want.get((a, b), 0), f"p({b}|{a})")
+    check(sum(p_mle[INDEX[a]]) == 1, f"row {a} sums to 1")
+check(sequence_probability("eva", p_mle) == F(1, 8), "P(eva) = 1/8")
+check(F(2, 5) * F(1, 2) * 1 * F(5, 8) == F(1, 8), "P(eva) product")
+check(sequence_probability("ana", p_mle) == F(3, 128), "P(ana) = 3/128")
+check("ana" not in CORPUS and ("a", "n") in pairs("anna") and ("n", "a") in pairs("anna"),
+      "ana is new and its pairs come from anna")
+
+
+def loglik(p):
+    return sum(n_counts[i, j] * math.log(p[i][j]) for i in range(7) for j in range(7)
+               if n_counts[i, j] > 0)
+
+
+# The theorem: relative frequencies beat random models and nearby models.
+p_mle_f = np.array([[float(x) for x in row] for row in p_mle])
+best = loglik(p_mle_f)
+for _ in range(2000):
+    q = rng.dirichlet(np.ones(7), size=7)
+    check(loglik(q) <= best + 1e-12, "MLE beats random bigram models")
+    pert = (1 - 1e-3) * p_mle_f + 1e-3 * q
+    check(loglik(pert) < best, "MLE beats nearby models")
+```
+
+### Zero counts and smoothing
+
+The maximum-likelihood model gives probability $0$ to every pair it
+has not seen. The name `dana` is plausible, but no name in the corpus
+starts with $\mathtt{d}$, so $p(\mathtt{d}\mid\diamond) = 0$ and the
+model gives `dana` probability $0$. A model that rules out every
+unseen pair fits the training names well and new names badly.
+
+The simplest repair is *add-one* (or *Laplace*) *smoothing*: pretend
+that every pair occurred once more than it did,
+$$
+p(b \mid a) = \frac{n_{ab} + 1}{n_a + |V|} .
+$$ {#eq-lm-add-one}
+The numerator adds one to each count; the denominator adds $|V|$, one
+for each possible next token, so each row still sums to 1. Every
+probability is now positive, and @exr-ch9-add-one shows that @eq-lm-add-one is the maximum-likelihood model for the corpus with one
+extra copy of each of the $|V|^2$ pairs. With $|V| = 7$, the smoothed
+model gives $p(\mathtt{d}\mid\diamond) = 1/12$ and
+$$
+P(\mathtt{dana}) = \frac{1}{12}\cdot\frac{2}{8}\cdot\frac{2}{15}\cdot\frac{2}{9}\cdot\frac{6}{15}
+= \frac{1}{4050} .
+$$
+The price is a worse fit to the training data, measured in the next
+section. Add-one smoothing moves a lot of probability to unseen pairs
+when the counts are small, and practical systems use better methods; @chen1999empirical compare many of them.
+
+```{python}
+#| include: false
+p_add = add_one(n_counts)
+for row in p_add:
+    check(sum(row) == 1 and all(x > 0 for x in row), "add-one rows are distributions")
+check(p_add[INDEX[BOUNDARY]][INDEX["d"]] == F(1, 12), "add-one p(d|start)")
+factors = [p_add[INDEX[a]][INDEX[b]] for a, b in pairs("dana")]
+check(factors == [F(1, 12), F(2, 8), F(2, 15), F(2, 9), F(6, 15)], "factors for dana")
+check(sequence_probability("dana", p_add) == F(1, 4050), "P(dana) = 1/4050 with smoothing")
+check(p_mle[INDEX[BOUNDARY]][INDEX["d"]] == 0, "MLE gives dana probability 0")
+```
+
+## Loss and perplexity {#sec-lm-perplexity}
+
+To compare models we need one number that says how well a model
+predicts a text. The probability of the whole text will not do,
+because it shrinks as the text gets longer. Under the model of @exm-bigram-fit, `eva` has probability $1/8$ and `anna` has $3/256$,
+partly because `anna` needs five predictions and `eva` four. The four
+predictions for `eva` have probabilities $\frac25, \frac12, 1, \frac58$,
+and their *geometric mean*, the fourth root of their product, is
+$(1/8)^{1/4} \approx 0.595$. For `anna` the geometric mean of the five
+probabilities is $(3/256)^{1/5} \approx 0.411$. Per prediction, the
+model finds `eva` easier. Its reciprocal, $8^{1/4} \approx 1.68$ for
+`eva`, reads as a number of choices: the model is as uncertain, on
+average, as if it were choosing among $1.68$ equally likely tokens at
+each step. Taking logarithms turns the geometric mean into an ordinary
+average, which is easier to compute and to differentiate.
+
+::: {#def-perplexity}
+## Loss and perplexity
+
+Suppose a model makes $N$ predictions on a text and gives probability
+$p_i > 0$ to the token that actually comes next at prediction $i$. Its
+*loss* on the text is the average negative log-likelihood
+$$
+L = -\frac1N\sum_{i=1}^{N}\ln p_i ,
+$$ {#eq-lm-average-nll}
+and its *perplexity* is
+$$
+\operatorname{PPL} = e^{L} = \Bigl(\prod_{i=1}^{N} p_i\Bigr)^{-1/N} .
+$$ {#eq-lm-perplexity}
+:::
+
+The loss is the average, over the predictions, of how surprised the
+model is by the correct token ($-\ln p_i$ is $0$ when $p_i = 1$ and
+grows as $p_i$ falls), and the perplexity is the reciprocal of the
+geometric mean of the $p_i$. The loss is the cross-entropy of @def-cross-entropy averaged over the predictions, and it is the
+quantity that training minimises. For a bigram model on a corpus with
+pair counts $n_{ab}$, the loss is $-\ell(p)/N$, with
+$N = \sum_{a,b} n_{ab}$ and $\ell$ from @eq-lm-log-likelihood, so
+minimising the loss and maximising the likelihood are the same
+problem. The next result makes the reading of perplexity as a number
+of choices exact.
+
+::: {#thm-uniform-perplexity}
+## The uniform model
+
+Let $V$ be a vocabulary. A model that gives every token of $V$
+probability $1/|V|$ at every prediction has loss $\ln|V|$ and
+perplexity $|V|$ on every text.
+:::
+
+::: {.proof}
+Every $p_i$ is $1/|V|$, so
+$L = -\frac1N\cdot N\ln(1/|V|) = \ln|V|$ and $e^L = |V|$.
+:::
+
+For the 27-token vocabulary of names, the uniform model has loss
+$\ln 27 \approx 3.30$. This is where training starts. The book's model
+starts from small random weights, so its first predictions are close to
+uniform, and the loss on the first training step of microgpt is about
+3.37 [@karpathy2026microgpt]. A model that has learned nothing has a
+loss near 3.30, and every improvement shows as a loss below that.
+
+::: {#exm-bigram-perplexity}
+On the 22 predictions of the training corpus, the maximum-likelihood
+model of @exm-bigram-fit has log-likelihood
+$$
+\ell = 3\ln\tfrac35 + 2\ln\tfrac25 + 5\ln\tfrac58 + 3\ln\tfrac18 + 6\ln\tfrac12
+\approx -16.11 ,
+$$
+one term for each non-zero entry of @tbl-lm-bigram-counts, grouped by
+equal probabilities. So its loss is $16.11/22 \approx 0.732$ and its
+perplexity is $e^{0.732} \approx 2.08$. The uniform model over the 7
+tokens has loss $\ln 7 \approx 1.95$ and perplexity 7. The add-one
+smoothed model has loss about $1.33$ and perplexity about $3.79$ on the
+training names: worse than the maximum-likelihood model there, as @thm-bigram-mle guarantees. On the new name `dana`, with 5
+predictions, the maximum-likelihood model has infinite loss, and the
+smoothed model has loss $\ln(4050)/5 \approx 1.66$ and perplexity
+$4050^{1/5} \approx 5.27$.
+:::
+
+```{python}
+#| include: false
+# The lead-in: geometric means for eva and anna.
+check(sequence_probability("anna", p_mle) == F(3, 256), "P(anna) = 3/256")
+check([p_mle[INDEX[a]][INDEX[b]] for a, b in pairs("eva")] == [F(2, 5), F(1, 2), 1, F(5, 8)],
+      "the four predictions for eva")
+rounds_to((1 / 8) ** 0.25, 0.595, 3, "geometric mean for eva")
+rounds_to((3 / 256) ** 0.2, 0.411, 3, "geometric mean for anna")
+rounds_to(8 ** 0.25, 1.68, 2, "perplexity of eva")
+close(average_nll(["eva"], p_mle)[1], 8 ** 0.25, "perplexity of eva from the definition")
+# The example.
+ell = 3*math.log(3/5) + 2*math.log(2/5) + 5*math.log(5/8) + 3*math.log(1/8) + 6*math.log(1/2)
+loss_mle, ppl_mle, n_pred = average_nll(CORPUS, p_mle)
+check(n_pred == 22, "22 predictions")
+close(ell, loglik(p_mle_f), "log-likelihood formula matches the model")
+close(-ell / 22, loss_mle, "loss is minus the log-likelihood over N")
+rounds_to(ell, -16.11, 2, "log-likelihood -16.11")
+rounds_to(loss_mle, 0.732, 3, "MLE loss 0.732")
+rounds_to(ppl_mle, 2.08, 2, "MLE perplexity 2.08")
+rounds_to(math.exp(0.732), 2.08, 2, "e^0.732")
+rounds_to(math.log(7), 1.95, 2, "ln 7")
+loss_add, ppl_add, _ = average_nll(CORPUS, p_add)
+rounds_to(loss_add, 1.33, 2, "add-one training loss")
+rounds_to(ppl_add, 3.79, 2, "add-one training perplexity")
+check(loss_add > loss_mle, "smoothing is worse on the training data")
+loss_dana, ppl_dana, n_dana = average_nll(["dana"], p_add)
+check(n_dana == 5, "5 predictions for dana")
+close(loss_dana, math.log(4050) / 5, "dana loss formula")
+rounds_to(loss_dana, 1.66, 2, "dana loss 1.66")
+close(ppl_dana, 4050 ** 0.2, "dana perplexity formula")
+rounds_to(ppl_dana, 5.27, 2, "dana perplexity 5.27")
+rounds_to(math.log(27), 3.30, 2, "ln 27 is about 3.30")
+uniform = [[F(1, 7)] * 7 for _ in range(7)]
+lu, pu, _ = average_nll(CORPUS, uniform)
+close(lu, math.log(7), "uniform loss ln 7")
+close(pu, 7, "uniform perplexity 7")
+maxima_zero("-(1/n)*n*log(1/k) - log(k)", "uniform loss is ln k (Maxima)")
+```
+
+## Embeddings and a neural bigram model {#sec-lm-embeddings}
+
+A table of transition probabilities treats every token as unrelated to
+every other: what the corpus says about $\mathtt{a}$ tells the table
+nothing about $\mathtt{e}$. Neural language models instead give each
+token a vector, compute the probabilities from the vectors, and so let
+tokens with similar vectors receive similar predictions. The first
+step is to turn a token into a vector.
+
+Number the tokens $1, 2, 3$ and attach to each a row of the matrix
+$$
+E = \begin{pmatrix} 1 & 0\\ 2 & -1\\ 0 & 3\end{pmatrix} ,
+$$
+so that token 2 has the vector $(2, -1)$. Writing token 2 as the
+standard basis vector $\mathbf{e}_2 = (0, 1, 0)^\top$ of
+$\mathbb{R}^3$ turns the lookup into a matrix product:
+$E^\top\mathbf{e}_2$ is the combination of the columns of $E^\top$
+with weights $0, 1, 0$, which is column 2 of $E^\top$, the vector
+$(2, -1)^\top$.
+
+::: {#def-embedding}
+## One-hot vector and embedding
+
+Number the tokens of a vocabulary $V$ as $1, \dots, |V|$. The
+*one-hot vector* of token $a$ is the standard basis vector
+$\mathbf{e}_a$ of $\mathbb{R}^{|V|}$. An *embedding matrix* of width
+$d$ is a $|V|\times d$ matrix $E$, and the *embedding* of token $a$ is
+$$
+\mathbf{u}_a = E^\top\mathbf{e}_a \in \mathbb{R}^d ,
+$$
+the $a$th row of $E$ written as a column.
+:::
+
+Row $a$ of $E$ is the vector of token $a$, and column $j$ holds the
+$j$th component of every token's vector. Multiplying by a one-hot
+vector picks out one row, so programs store $E$ and look up row $a$
+directly instead of forming a product.
+
+```{python}
+#| include: false
+E_ex = sp.Matrix([[1, 0], [2, -1], [0, 3]])
+check(E_ex.T * sp.Matrix([0, 1, 0]) == sp.Matrix([2, -1]), "embedding picks out row 2")
+for _ in range(20):
+    Er = rng.normal(size=(27, 16))
+    a = rng.integers(27)
+    close(Er.T @ np.eye(27)[a], Er[a], "one-hot times embedding matrix is a row")
+```
+
+The book's model has an embedding matrix with $|V| = 27$ rows and
+width $d = 16$. An embedding alone predicts nothing. The smallest
+neural language model maps the embedding of the current token to one
+score for each possible next token, and turns the scores into
+probabilities with the softmax function of @def-softmax. Continue the
+example with a second $3\times2$ matrix $W$, with rows
+$(1, 0)$, $(0, 1)$ and $(1, 1)$. After token 2, the scores are
+$W\mathbf{u}_2 = (2, -1, 1)$, one for each token that could come next,
+and softmax turns them into the probabilities
+$$
+\frac{(e^{2}, e^{-1}, e^{1})}{e^{2} + e^{-1} + e^{1}} \approx (0.705, 0.035, 0.259) .
+$$
+
+::: {#def-neural-bigram}
+## Neural bigram model
+
+Let $V$ be a vocabulary and $E$, $W$ be $|V|\times d$ matrices. The
+*neural bigram model* with parameters $E$, $W$ is the bigram model
+with transition probabilities
+$$
+p(\,\cdot \mid a) = \operatorname{softmax}(\mathbf{z}_a),
+\qquad \mathbf{z}_a = W\mathbf{u}_a = WE^\top\mathbf{e}_a .
+$$
+The vector $\mathbf{z}_a \in \mathbb{R}^{|V|}$ holds the *logits*
+(scores before the softmax) for the token after $a$. The
+$|V|\times|V|$ matrix $Z = WE^\top$ is the *logit matrix*.
+:::
+
+Entry $(b, a)$ of $Z$ is the logit of $b$ as the next token after
+$a$: column $a$ of $Z$ is $\mathbf{z}_a$, the scores used after $a$,
+and row $b$ holds the scores that token $b$ receives after each
+possible current token. Row $b$ of $W$ is the vector that the
+embedding of the current token is compared with, by a dot product, to
+score $b$.
+
+```{python}
+#| include: false
+W_ex = sp.Matrix([[1, 0], [0, 1], [1, 1]])
+z_ex = W_ex * sp.Matrix([2, -1])
+check(z_ex == sp.Matrix([2, -1, 1]), "logits after token 2")
+p_ex = softmax(np.array([2.0, -1.0, 1.0]))
+close(p_ex, np.exp([2, -1, 1]) / np.exp([2, -1, 1]).sum(), "softmax of the logits")
+for got, want in zip(p_ex, (0.705, 0.035, 0.259)):
+    rounds_to(got, want, 3, "probabilities after token 2")
+```
+
+The book's model ends the same way: a $27\times16$ output matrix turns
+a 16-dimensional vector into 27 logits. In between, the full model
+replaces $\mathbf{u}_a$ by a vector that depends on the whole context,
+which is what @sec-attention and @sec-small-gpt build.
+
+What can such a model represent? Its probabilities come out of a
+softmax, so they are never zero, and the logit matrix is a product
+through a $d$-dimensional space, which limits its *rank*, the
+dimension of the space spanned by its columns.
+
+::: {#thm-neural-bigram}
+## What a neural bigram model can represent
+
+Let $V$ be a vocabulary and $d \ge 1$.
+
+(a) Every neural bigram model with $|V|\times d$ parameter matrices is
+a bigram model whose transition probabilities are all positive.
+
+(b) Every logit matrix $Z = WE^\top$ with $E$ and $W$ of size
+$|V|\times d$ has rank at most $d$.
+
+(c) If $d = |V|$, every bigram model over $V$ whose transition
+probabilities are all positive is a neural bigram model: take $E = I$
+and let $W$ have entries $w_{ba} = \ln p(b \mid a)$.
+:::
+
+::: {.proof}
+(a) Softmax outputs are positive and sum to 1, so each
+$p(\,\cdot\mid a)$ is a probability distribution with positive entries.
+
+(b) Each column of $Z = WE^\top$ is $W$ times a vector, so it is a
+combination of the $d$ columns of $W$. The column space of $Z$ lies in
+a space spanned by $d$ vectors, so its dimension is at most $d$.
+
+(c) With $E = I$, $\mathbf{u}_a = \mathbf{e}_a$ and $\mathbf{z}_a$ is
+column $a$ of $W$, whose entries are $\ln p(b \mid a)$. Then
+$$
+\operatorname{softmax}(\mathbf{z}_a)_b
+= \frac{e^{\ln p(b\mid a)}}{\sum_{c} e^{\ln p(c\mid a)}}
+= \frac{p(b\mid a)}{\sum_c p(c\mid a)} = p(b \mid a) .
+$$
+:::
+
+```{python}
+#| include: false
+# (a) and (b) on random neural bigram models.
+for d in (1, 2, 5):
+    Er, Wr = rng.normal(size=(7, d)), rng.normal(size=(7, d))
+    Zr = Wr @ Er.T
+    Pr = softmax(Zr)
+    check((Pr > 0).all(), "neural bigram probabilities are positive")
+    close(Pr.sum(axis=0), np.ones(7), "columns are distributions")
+    check(np.linalg.matrix_rank(Zr) <= d, "logit matrix has rank at most d")
+# (c): log-probabilities as logits, with E = I, reproduce the add-one model.
+P_add = np.array([[float(x) for x in row] for row in p_add])  # row a is p(.|a)
+W_log = np.log(P_add).T                                      # w_ba = ln p(b|a)
+close(softmax(W_log @ np.eye(7).T).T, P_add, "softmax of log-probabilities")
+maxima_zero("exp(log(p1))/(exp(log(p1))+exp(log(p2))+exp(log(1-p1-p2))) - p1",
+            "softmax of logs returns the distribution (Maxima)")
+```
+
+So with $d = |V|$ the neural bigram model can represent every bigram
+model except those with zero entries, and those it can approach by
+letting logits tend to $-\infty$. Training it by gradient descent on
+the loss of @def-perplexity leads to the same place as counting.
+
+::: {#cor-neural-mle}
+Let $V$ be a vocabulary, $d = |V|$, and let $L(E, W)$ be the loss of
+the neural bigram model with parameters $E$, $W$ on a corpus with pair
+counts $n_{ab}$ and row totals $n_a$.
+
+(a) If every $n_{ab}$ is positive, the minimum of $L$ is attained, and
+$(E, W)$ attains it exactly when the model's transition probabilities
+are the relative frequencies $n_{ab}/n_a$.
+
+(b) If $n_{ab} = 0$ for some pair with $n_a > 0$, then $L$ has no
+minimum: its infimum is the loss of the relative frequencies, and no
+$(E, W)$ attains it.
+:::
+
+::: {.proof}
+Write $f(b\mid a) = n_{ab}/n_a$ for the relative frequencies and $L^*$
+for their loss. By @thm-bigram-mle, every bigram model has loss at
+least $L^*$, and a model has loss $L^*$ only if it agrees with $f$ on
+every row with $n_a > 0$.
+
+(a) Every $n_a$ is positive, so every row is determined. The
+frequencies are positive, so by part (c) of @thm-neural-bigram some
+$(E, W)$ gives them, with loss $L^*$, and any $(E, W)$ with loss $L^*$
+gives them.
+
+(b) By part (a) of @thm-neural-bigram, no neural bigram model agrees
+with $f$, because $f$ has a zero entry in a row with $n_a > 0$. So
+$L > L^*$ everywhere. For $0 < \delta < 1$, the model
+$p_\delta = (1-\delta)f + \delta/|V|$ (with $f$ extended by uniform
+rows where $n_a = 0$) has positive entries, so it is a neural bigram
+model. Each term of its loss with $n_{ab} > 0$ has $f(b\mid a) > 0$,
+and $\ln p_\delta(b\mid a) \to \ln f(b\mid a)$ as $\delta \to 0$
+because $\ln$ is continuous at positive numbers. So the loss of
+$p_\delta$ tends to $L^*$.
+:::
+
+In case (b), gradient descent keeps lowering the loss by pushing the
+logits of unseen pairs towards $-\infty$, and the weights grow without
+bound.
+
+```{python}
+#| include: false
+# Gradient descent on (E, W) with d = |V| reaches the relative frequencies when
+# every count is positive. The add-one counts are all positive.
+n_pos = n_counts + 1
+f_pos = n_pos / n_pos.sum(axis=1, keepdims=True)
+N_pos = n_pos.sum()
+Eg = rng.normal(scale=0.1, size=(7, 7))
+Wg = rng.normal(scale=0.1, size=(7, 7))
+for _ in range(20000):
+    P = softmax(Wg @ Eg.T)                          # column a is p(.|a)
+    G = (P * n_pos.sum(axis=1) - n_pos.T) / N_pos   # dL/dZ
+    Wg, Eg = Wg - G @ Eg, Eg - G.T @ Wg
+close(softmax(Wg @ Eg.T).T, f_pos, "gradient descent finds the relative frequencies", tol=1e-6)
+# The gradient with respect to the logits, checked by finite differences.
+Zt = rng.normal(size=(7, 7))
+lossZ = lambda z: -(n_pos.T * np.log(softmax(z.reshape(7, 7)))).sum() / N_pos
+Pz = softmax(Zt)
+close(num_grad(lossZ, Zt.ravel()).reshape(7, 7), (Pz * n_pos.sum(axis=1) - n_pos.T) / N_pos,
+      "gradient of the loss with respect to the logits", tol=1e-6)
+# Part (b): with zero counts the loss of p_delta decreases to L* without reaching it.
+prev = np.inf
+for delta in (0.5, 0.1, 1e-2, 1e-4, 1e-6):
+    pd = (1 - delta) * p_mle_f + delta / 7
+    Ld = -(n_counts * np.log(pd)).sum() / 22
+    check(loss_mle < Ld < prev, "loss of p_delta decreases towards L*")
+    prev = Ld
+close(prev, loss_mle, "loss of p_delta tends to L*", tol=1e-4)
+```
+
+### How a neural model shares information
+
+The two models differ in what one training example changes. In a count
+table, an occurrence of the pair $(a, b)$ changes row $a$ and nothing
+else, so the predictions after a rare token rest on that token's few
+occurrences alone. In the neural model the matrix $W$ is used in every
+row, so a gradient step taken for one pair changes predictions after
+other tokens too. The next lemma says by how much.
+
+::: {#lem-shared-gradient}
+Consider a neural bigram model with parameters $E$, $W$, and let
+$\ell = -\ln p(b \mid a)$ be the loss of one occurrence of the pair
+$(a, b)$. Write $\mathbf{p} = p(\,\cdot\mid a)$. Then
+$$
+\frac{\partial\ell}{\partial W} = (\mathbf{p} - \mathbf{e}_b)\,\mathbf{u}_a^\top ,
+$$
+where $\partial\ell/\partial W$ is the matrix of partial derivatives
+$\partial\ell/\partial w_{ij}$. After a gradient step
+$W \leftarrow W - \eta\,\partial\ell/\partial W$ with learning rate
+$\eta > 0$ and $E$ held fixed, the logits after any token $c$ change by
+$$
+-\eta\,(\mathbf{u}_a\cdot\mathbf{u}_c)\,(\mathbf{p} - \mathbf{e}_b) .
+$$
+:::
+
+The gradient is an outer product: row $i$ is the embedding
+$\mathbf{u}_a$ scaled by $p_i - [i = b]$, where $[i = b]$ is $1$ if
+$i = b$ and $0$ otherwise. The step lowers the logit of the observed
+token $b$ relative to the others after $a$, and moves the logits after
+$c$ in the same pattern, scaled by the dot product of the two
+embeddings.
+
+::: {.proof}
+By @thm-softmax-ce-gradient, $\partial\ell/\partial z_i = p_i - [i = b]$,
+the $i$th entry of $\mathbf{p} - \mathbf{e}_b$, where
+$\mathbf{z} = W\mathbf{u}_a$. Since $z_i = \sum_j w_{ij}u_{a,j}$, the
+weight $w_{ij}$ affects only $z_i$, with
+$\partial z_i/\partial w_{ij} = u_{a,j}$. By the chain rule,
+$\partial\ell/\partial w_{ij} = (p_i - [i = b])\,u_{a,j}$, which is
+entry $(i, j)$ of $(\mathbf{p} - \mathbf{e}_b)\mathbf{u}_a^\top$. The
+new logits after $c$ are
+$$
+\Bigl(W - \eta(\mathbf{p} - \mathbf{e}_b)\mathbf{u}_a^\top\Bigr)\mathbf{u}_c
+= W\mathbf{u}_c - \eta\,(\mathbf{u}_a^\top\mathbf{u}_c)(\mathbf{p} - \mathbf{e}_b) .
+$$
+:::
+
+```{python}
+#| include: false
+for _ in range(10):
+    d = 3
+    Er, Wr = rng.normal(size=(7, d)), rng.normal(size=(7, d))
+    a, b, c = rng.integers(7, size=3)
+
+    def ell_of_W(w):
+        z = w.reshape(7, d) @ Er[a]
+        return -(z[b] - np.log(np.exp(z).sum()))
+
+    p = softmax(Wr @ Er[a])
+    close(num_grad(ell_of_W, Wr.ravel()).reshape(7, d), np.outer(p - np.eye(7)[b], Er[a]),
+          "gradient of one-pair loss with respect to W", tol=1e-6)
+    eta = 0.3
+    W_new = Wr - eta * np.outer(p - np.eye(7)[b], Er[a])
+    close(W_new @ Er[c] - Wr @ Er[c], -eta * (Er[a] @ Er[c]) * (p - np.eye(7)[b]),
+          "change of the logits after c")
+```
+
+So a step taken for an occurrence of $a$ also moves the predictions
+after every token $c$ whose embedding is not perpendicular to
+$\mathbf{u}_a$. When $d < |V|$ this cannot be avoided. Vectors
+$\mathbf{u}_1, \dots, \mathbf{u}_m$ are *linearly independent* if the
+only combination $\sum_i\lambda_i\mathbf{u}_i$ equal to $\mathbf{0}$
+has every $\lambda_i = 0$, and $\mathbb{R}^d$ contains at most $d$
+linearly independent vectors. Non-zero vectors that are pairwise
+perpendicular are linearly independent: if
+$\sum_i\lambda_i\mathbf{u}_i = \mathbf{0}$, taking the dot product with
+$\mathbf{u}_j$ gives $\lambda_j\|\mathbf{u}_j\|^2 = 0$. So if the
+$|V|$ embeddings are non-zero, some two of them have a non-zero dot
+product.
+
+This is the precise sense in which a neural model with small
+embeddings shares information between tokens. If training gives
+similar embeddings to tokens that are followed by similar tokens, then
+evidence about one helps the predictions after the other. Nothing
+proved here says that training does this, or that sharing lowers the
+loss on names outside the training data; that depends on the data and
+on the training run. @bengio2003neural proposed learned embeddings for
+word-level language models with this argument, and reported on two
+text corpora that their models improved on the best $n$-gram models of
+the time. The neural model is not smaller than the table for bigrams:
+with $|V| = 27$ and $d = 16$ it has $2\cdot27\cdot16 = 864$
+parameters, against $27\cdot26 = 702$ free numbers in a table (each
+row of 27 probabilities has one fewer free number, because it must sum
+to 1). The saving in parameters appears with longer contexts.
+
+```{python}
+#| include: false
+check(2 * 27 * 16 == 864 and 27 * 26 == 702, "parameter counts 864 and 702")
+# Pairwise orthogonal non-zero vectors are linearly independent.
+Qm, _ = np.linalg.qr(rng.normal(size=(5, 5)))
+check(np.linalg.matrix_rank(Qm * rng.uniform(0.5, 2, size=5)) == 5,
+      "orthogonal vectors are independent")
+```
+
+## Longer contexts {#sec-lm-longer-contexts}
+
+A bigram model cannot know that `emm` is likely to continue with
+$\mathtt{a}$, because it sees only the last $\mathtt{m}$, and after a
+single $\mathtt{m}$ the corpus has $\mathtt{a}$ and $\mathtt{m}$ equally
+often. The obvious extension conditions on more tokens.
+
+::: {#def-ngram}
+## $n$-gram model
+
+Let $n \ge 2$. An *$n$-gram model* is a language model whose next-token
+distribution depends only on the last $n - 1$ tokens of the context,
+with the context padded by $\diamond$ at the start when it is shorter.
+:::
+
+A bigram model is the case $n = 2$. An $n$-gram model is a table with
+one row for each possible sequence of $n - 1$ tokens and one entry in
+each row for each next token, so it has $|V|^{n-1}$ rows and $|V|^n$
+entries. Its maximum-likelihood estimate is again given by relative
+frequencies, by the proof of @thm-bigram-mle with rows indexed by
+contexts. The table grows exponentially with the context length: with
+$|V| = 27$, a trigram ($n = 3$) model has $27^2 = 729$ rows, a 4-gram
+model $27^3 = 19{,}683$ rows, and a model that conditions on 16
+tokens, the context length of the book's model, has
+$27^{16} \approx 7.98\times10^{22}$ rows.
+
+The data cannot fill such a table. Each prediction in the training
+data adds a count to one row, so a corpus with $N$ predictions gives
+counts to at most $N$ rows. The names data of microgpt has 32,033
+names [@karpathy2026microgpt], and the model makes at most 16
+predictions per name, so there are at most
+$32{,}033\times16 = 512{,}528$ predictions. Even for the 4-gram model,
+a corpus of 1000 predictions leaves more than 94% of the rows empty (@exr-ch9-sparsity), and for a 16-token context the fraction of rows
+that receive any count at all is below $10^{-17}$. A row without
+counts is a context about which the table knows nothing, and
+smoothing can only spread probability evenly over its entries.
+
+```{python}
+#| include: false
+check(n_counts[INDEX["m"], INDEX["a"]] == n_counts[INDEX["m"], INDEX["m"]] == 1,
+      "after m: a and m equally often")
+check(27**2 == 729 and 27**3 == 19683, "trigram and 4-gram rows")
+rounds_to(27.0**16 / 1e22, 7.98, 2, "27^16")
+check(32033 * 16 == 512528, "at most 512,528 predictions")
+check(512528 / 27**16 < 1e-17, "fraction of rows below 1e-17")
+check(1 - 1000 / 27**3 > 0.94, "more than 94% of 4-gram rows empty")
+```
+
+Neural models avoid this growth by computing the distribution from
+the context instead of looking it up. @bengio2003neural concatenated
+the embeddings of the last $n - 1$ tokens and passed them through a
+small network, so the number of parameters grows linearly with $n$.
+That model still has a fixed window, and each position in the window
+has its own weights. The book's model forms, at each position, a
+weighted average of vectors computed from all the earlier tokens, with
+weights that the tokens themselves determine, and it uses the same
+parameters for every context length up to 16. That operation is
+attention, the subject of @sec-attention.
+
+## Notes and further reading {#sec-lm-notes}
+
+@shannon1948mathematical [§3] builds a series of approximations to
+English from letter and word frequencies, including letter-pair
+(bigram) models, and treats them as Markov processes. @jurafsky2026speech [ch. 3] cover $n$-gram models, perplexity and
+smoothing at greater length, and @chen1999empirical compare smoothing
+methods on large corpora. The neural language model with learned
+embeddings is due to @bengio2003neural. @radford2019language describe
+GPT-2, a large model that factorises the probability of text with the
+chain rule as in @def-language-model and is evaluated by perplexity. @karpathy2026microgpt describes the small model that this book
+rebuilds, including its tokeniser and training data.
+
+## Exercises {#sec-lm-exercises}
+
+::: {#exr-ch9-tokens}
+(a) Write the name `ada` as a sequence of microgpt token numbers.
+
+(b) Show that a corpus of $m$ names with $M$ letters in total gives
+$M + m$ predictions, and check this against the five names of @sec-lm-tokens.
+:::
+
+::: {#exr-ch9-chain}
+Choose one of the five corpus names uniformly at random, and let $X_1$
+and $X_2$ be its first and second letters. Compute
+$P(X_2 = \mathtt{v})$ and $P(X_1 = \mathtt{a}\mid X_2 = \mathtt{v})$,
+and check that
+$P(X_2 = \mathtt{v})\,P(X_1 = \mathtt{a}\mid X_2 = \mathtt{v})$ equals
+$P(X_1 = \mathtt{a}, X_2 = \mathtt{v})$ from @exm-chain-rule-names.
+:::
+
+::: {#exr-ch9-name-probs}
+Using the maximum-likelihood model of @exm-bigram-fit, compute the
+probabilities of `anna` and `emma`. Which name in the corpus has the
+largest probability under the model?
+:::
+
+::: {#exr-ch9-add-one}
+(a) Show that each row of the add-one model @eq-lm-add-one sums to 1.
+
+(b) Show that @eq-lm-add-one is the maximum-likelihood bigram model for
+the counts $n_{ab} + 1$.
+
+(c) Compute $p(\diamond\mid\mathtt{a})$ in the add-one model of @sec-lm-bigram and compare it with the maximum-likelihood value $5/8$.
+:::
+
+::: {#exr-ch9-perplexity}
+(a) Show that the perplexity of @def-perplexity is at least 1, with
+equality exactly when every $p_i = 1$.
+
+(b) Model A has loss $0.1$ lower than model B on the same text. Find
+the ratio of their perplexities.
+:::
+
+::: {#exr-ch9-termination}
+Consider a bigram model with $p(\diamond\mid a) \ge \varepsilon$ for
+every $a\in V$, where $0 < \varepsilon \le 1$, and generate names as
+described after @def-language-model. For $k \ge 0$ let $r_k$ be the
+probability that the first $k$ tokens generated are all letters (so
+$r_0 = 1$), and let $q_k$ be the total probability of all names with
+exactly $k$ letters.
+
+(a) Show that $r_{k+1} = r_k - q_k$ and $r_{k+1} \le (1-\varepsilon)r_k$.
+
+(b) Deduce that the probabilities of all names sum to 1.
+:::
+
+::: {#exr-ch9-two-tokens}
+Let $|V| = 2$ and $d = 1$. Show that every bigram model with positive
+transition probabilities is a neural bigram model. (Hint: with two
+tokens, the softmax depends only on the difference of the two
+logits.)
+:::
+
+::: {#exr-ch9-embedding-gradient}
+In the setting of @lem-shared-gradient, show that
+$\partial\ell/\partial E = \mathbf{e}_a\bigl(W^\top(\mathbf{p} - \mathbf{e}_b)\bigr)^\top$,
+so that a gradient step on $E$ changes only the embedding of $a$.
+:::
+
+::: {#exr-ch9-sparsity}
+A corpus gives $N$ predictions. Show that at most $N$ rows of an
+$n$-gram table have a non-zero count. For $|V| = 27$, $n = 4$ and
+$N = 1000$, find a lower bound for the fraction of rows with no counts.
 :::
