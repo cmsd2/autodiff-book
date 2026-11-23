@@ -159,11 +159,11 @@ check(sorted(edges) == sorted((i, k) for k, ps in P.items() for i in ps), "figur
 The figure keeps what the computation needs, namely which values feed
 which operations, and drops the numbering. The numbering of @tbl-fwd-trace is one choice among several: $v_5$ could be computed
 before $v_3$, since it uses only the inputs, and the value of $f$
-would not change. A program that records a computation as it runs,
-such as the engine of @sec-rev-engine, does not number its variables
-either; it stores, with each result, links to the arguments it was
-computed from. So we want a description of the figure that does not
-depend on a numbering. Its boxes are called *nodes* and its arrows
+would not change. A program that records a computation as it runs
+need not number its variables either: it can store, with each result,
+links to the arguments it was computed from, as the engines described
+in @sec-rev-linked do. So we want a description of the figure that
+does not depend on a numbering. Its boxes are called *nodes* and its arrows
 *edges*, and the next definition makes these terms precise.
 
 ::: {#def-computational-graph}

@@ -1,9 +1,11 @@
 """Helpers for the hidden checks of chapters 3 and 4.
 
-The chapters define visible code (a dual-number class, a reverse-mode
-engine) in cells labelled ``dual-...`` or ``engine-...``. The solutions
-appendix renders in a separate kernel, so it loads that code from the
-chapter source instead of keeping a copy that could drift.
+The chapters define visible code in labelled cells: the dual numbers of
+chapter 3 (``dual-...``), and the tape engine (``tape-...``) and the
+depth-first search over linked nodes (``linked-...``) of chapter 4.
+Chapter 4 and the solutions appendix render in separate kernels, so they
+load that code from the chapter source instead of keeping a copy that
+could drift.
 """
 
 import re

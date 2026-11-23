@@ -13,8 +13,9 @@ $n$ is.
 This is *reverse mode*, and applied to a neural network it goes by the
 name *backpropagation*. The chapter proves that it is correct on any
 acyclic computational graph and bounds its cost. It then builds a
-small reverse-mode engine in Python, of the kind that the dependency-free
-program behind the model of @sec-small-gpt uses to train it.
+small reverse-mode engine in Python that records the evaluation trace
+as a table, line by line, and compares it with the design of linked
+nodes that the program behind the model of @sec-small-gpt uses.
 
 ```{python}
 #| include: false
@@ -23,6 +24,7 @@ import math
 import numpy as np
 import sympy as sp
 from checks import check, close, maxima_zero, num_grad, sym_equal
+from checks.ch03 import load_chapter_code
 ```
 
 ## Adjoints {#sec-rev-adjoints}
@@ -367,79 +369,6 @@ for i in range(2):
     close(t4[3], vb4[i], "forward tangent equals adjoint")
 ```
 
-## Topological order by depth-first search {#sec-rev-dfs}
-
-A program that records a computational graph as it runs, as the
-engine of @sec-rev-engine does, ends up with a set of linked nodes:
-each node knows its parents and nothing else. To run the sweep it
-needs the nodes on which the output depends, listed so that every
-node comes after its parents; reading the list backwards then
-processes every node before its arguments. The list can be built by
-following parent links from the output. In @exm-ab-plus-a, start at
-$L = v_4$. Before listing $v_4$, list its parents, $v_3$ and $v_1$.
-Before listing $v_3$, list its parents $v_1$ and $v_2$, which have no
-parents and are listed at once. So the list begins $v_1, v_2, v_3$.
-The other parent of $v_4$ is $v_1$, which is already listed, and
-finally $v_4$ is listed: the result is $v_1, v_2, v_3, v_4$.
-
-::: {#def-rev-dfs}
-## Depth-first topological sort
-
-Start with an empty list and no node marked. To *visit* a node $u$:
-if $u$ is marked, do nothing; otherwise mark $u$, visit each parent of
-$u$ in turn, and then append $u$ to the list. The *depth-first order*
-from a node $o$ is the list obtained by visiting $o$.
-:::
-
-A node $u$ is an *ancestor* of $o$ if there is a path from $u$ to $o$
-(possibly the empty path, so $o$ is an ancestor of itself).
-
-::: {#thm-rev-dfs}
-## Depth-first search gives a topological order
-
-Let $o$ be a node of a DAG. The depth-first order from $o$ contains
-every ancestor of $o$ exactly once and no other node, and each node in
-it comes after all of its parents.
-:::
-
-::: {.proof}
-A node is marked before its visit appends it, and a visit to a marked
-node does nothing, so each node is appended at most once. Each visit
-to an unmarked node marks it, so at most as many visits do any work as
-there are nodes, and the search ends. Visits happen only to $o$ and,
-from inside the visit of a node, to that node's parents, so by
-induction every visited node is an ancestor of $o$. Conversely, if
-$u_0 \to u_1 \to \dots \to u_r = o$ is a path, then by induction
-downwards from $o$ each $u_i$ is visited, since every visit to an
-unmarked node visits all its parents, and a marked node has already
-been visited. Every visited node is marked, and is appended when its
-first visit ends.
-
-Now let $p$ be a parent of $u$, with $u$ in the list. During the first
-visit to $u$, the search visits $p$. If $p$ is unmarked at that
-moment, the visit to $p$ finishes, and appends $p$, before the visit
-to $u$ appends $u$. If $p$ is already marked, its first visit began
-earlier. If that visit has already finished, $p$ is already in the
-list. Otherwise the visit to $p$ is still in progress, so the visit to
-$u$ was started, directly or through a chain of visits, from inside
-it. Each visit in that chain is to a parent of the node before it, so
-there is a path from $u$ to $p$. Together with the edge $p \to u$ it
-forms a cycle, which is impossible in a DAG.
-:::
-
-Each node is marked once and each edge is followed once, so the
-search does work proportional to the number of nodes plus the number
-of edges of the part of the graph above $o$. @tarjan1972depth showed
-how depth-first search leads to efficient graph algorithms.
-
-There is a simpler order available to an engine that records
-operations as they happen: the order of creation. An engine creates
-each node after its parents, so creation order is a topological
-order. Keeping it requires a separate list of every operation
-performed, in the order performed, often called a *tape*. Depth-first
-search needs only the parent links that the nodes already hold, and
-visits only the nodes that the output depends on.
-
 ## The cost of a gradient {#sec-rev-cost}
 
 How much more does the gradient cost than the function? Count the
@@ -690,171 +619,366 @@ check(list(range(0, 100, 10)) == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90], "ten c
 check(checkpoint_cost(100, 10) == (20, 90), f"T = 100, K = 10: {checkpoint_cost(100, 10)}")
 ```
 
-## A scalar reverse-mode engine {#sec-rev-engine}
+## A reverse-mode engine on a tape {#sec-rev-engine}
 
-The engine below implements @def-reverse-sweep for scalar functions.
-Each number is a `Value` object holding
+The reverse sweep of @def-reverse-sweep reads three things from the
+forward pass: the order of the lines, the arguments of each line, and
+the local partial derivatives $d_{ki}$ at the values of the forward
+pass. A program can collect all three while it evaluates the
+function. Each time it applies an elementary operation, it computes
+the result together with the local partial derivatives of the
+operation, and writes one line into a list: the operation, the value,
+and a pair $(i, d_{ki})$ for each argument $v_i$. We call such a list
+a *tape*. For $L = ab + a$ at $a = 2$, $b = 3$ the tape
+is @tbl-rev-tape.
 
-- `data`, its value $v_k$;
-- `grad`, its accumulator, which holds the adjoint $\bar v_k$ after a
-  sweep;
-- `parents`, the `Value` objects that were the arguments of the
-  operation that produced it;
-- `local`, the partial derivatives of that operation with respect to
-  each argument, evaluated when the operation runs.
+| line | operation | value | pairs $(i, d_{ki})$ |
+|---|---|---|---|
+| $v_1$ | $a$ | $2$ | |
+| $v_2$ | $b$ | $3$ | |
+| $v_3$ | $v_1 v_2$ | $6$ | $(1, 3)$, $(2, 2)$ |
+| $v_4$ | $v_3 + v_1$ | $8$ | $(3, 1)$, $(1, 1)$ |
 
-Each operation computes its value and its local partial derivatives
-at once, and so records one line of the trace. Running ordinary Python
-arithmetic on `Value` objects builds the computational graph as a side
-effect.
+: The tape of $L = ab + a$ at $(a, b) = (2, 3)$: the evaluation trace
+of @sec-rev-adjoints, with the local partial derivatives of each
+line. {#tbl-rev-tape}
+
+The first three columns are the evaluation trace as we wrote it by
+hand in @sec-rev-adjoints. The last column holds the non-zero entries
+of the matrix $C$ of @sec-rev-transposition, one column of $C$ per
+line. The sweep of @exm-ab-plus-a reads only this column, from the
+bottom row up: row $4$ adds $1\cdot1$ to the accumulators of $v_3$
+and $v_1$, and row $3$ then adds $1\cdot3$ to that of $v_1$ and
+$1\cdot2$ to that of $v_2$.
+
+A tape needs no sorting before the sweep. A program can apply an
+operation only to values that already exist, so every argument of a
+line was recorded on an earlier line, and $P(k) \subseteq \{1, \dots,
+k-1\}$ as @def-evaluation-trace requires. The order of recording is
+therefore a topological order of the computational graph, and the
+sweep can take the lines in reverse order of recording. The proof
+of @thm-reverse-mode (c) is an induction downwards over the line numbers
+and uses nothing else about the order, so it applies to the tape as
+recorded.
+
+The engine below rests on three decisions. The first is what a
+number of the computation is: a *variable*, an object that holds a
+line number $k$ and the value $v_k$. Python lets a class say what
+`+`, `*` and the other operators mean for its objects (operator
+overloading, as in @sec-fwd-code). The operators of a variable compute the result and the local partial
+derivatives, and append the line to the tape. Ordinary arithmetic on
+variables then writes the trace as a side effect.
+
+The second is how the operators know which tape to write to. The
+program *starts* a tape before it evaluates the function and *stops*
+it afterwards, and only a tape that has been started and not yet
+stopped, the *recording* tape, receives lines. Python's `with`
+statement does both: `with Tape() as tape:` starts a new tape, runs
+the indented block below it, and stops the tape when the block ends,
+even if the block fails with an error. Arithmetic outside the block,
+such as the update of the parameters after a step of gradient
+descent, then stays off the tape: it is not part of the function being
+differentiated.
+
+The third is how long a tape lives: each evaluation gets a new tape,
+which the program discards after the sweep. A tape keeps every line it
+receives, so its memory grows with the length of the computation,
+as @sec-rev-checkpointing explains. A training loop that recorded every
+step on one tape would keep the lines of all earlier steps, and every
+sweep would pass through all of them. The line number held by a
+variable refers to the tape that recorded it, so a variable belongs to
+one evaluation. A model's parameters therefore live between steps as
+ordinary numbers, and each step records them afresh as inputs of its
+own tape.
 
 ```{python}
-#| label: engine-value
+#| label: tape-record
 #| echo: true
 import math
+from collections import namedtuple
+
+# Line k of the trace: a pattern for printing the operation, the value
+# v_k, and one pair (i, d_ki) for each argument v_i.
+Line = namedtuple("Line", "op value partials")
 
 
-class Value:
-    """A number in a computational graph, with its value and its adjoint."""
+class Tape:
+    """An evaluation trace, recorded one line at a time."""
 
-    def __init__(self, data, parents=(), local=()):
-        self.data = data        # the value v_k
-        self.grad = 0.0         # the accumulator; the adjoint after backward()
-        self.parents = parents  # the arguments of the operation that made v_k
-        self.local = local      # the partial derivative of v_k by each argument
+    recording = None  # the tape that operations on variables write to
 
-    def __add__(self, other):
-        other = as_value(other)
-        return Value(self.data + other.data, (self, other), (1.0, 1.0))
+    def __init__(self):
+        self.lines = [None]  # line k is self.lines[k]; entry 0 is unused
 
-    def __mul__(self, other):
-        other = as_value(other)
-        return Value(self.data * other.data, (self, other), (other.data, self.data))
+    def __enter__(self):
+        if Tape.recording is not None:
+            raise RuntimeError("another tape is recording")
+        Tape.recording = self
+        return self
+
+    def __exit__(self, *exc_info):
+        Tape.recording = None
+
+    def input(self, value, name="input"):
+        """Record an input line holding value, and return its variable."""
+        return record(name, float(value))
+
+
+class Var:
+    """Variable v_k of the trace being recorded."""
+
+    def __init__(self, k, value):
+        self.k = k          # its line number on the tape
+        self.value = value  # the number v_k
 
     def __pow__(self, c):
-        """self ** c for a constant number c."""
-        return Value(self.data**c, (self,), (c * self.data ** (c - 1),))
-
-    def exp(self):
-        e = math.exp(self.data)
-        return Value(e, (self,), (e,))
-
-    def log(self):
-        return Value(math.log(self.data), (self,), (1 / self.data,))
-
-    def relu(self):
-        return Value(max(self.data, 0.0), (self,), (1.0 if self.data > 0 else 0.0,))
+        """v ** c for a constant exponent c."""
+        t = self.value
+        return record(f"{{}} ** {c:g}", t**c, (self.k, c * t ** (c - 1)))
 
     def __neg__(self):
-        return self * -1.0
-
-    def __sub__(self, other):
-        return self + (-as_value(other))
-
-    def __truediv__(self, other):
-        return self * as_value(other) ** -1
-
-    def __radd__(self, other):
-        return self + other
-
-    def __rmul__(self, other):
-        return self * other
-
-    def __rsub__(self, other):
-        return as_value(other) - self
-
-    def __rtruediv__(self, other):
-        return as_value(other) / self
-
-    def __repr__(self):
-        return f"Value(data={self.data:.6g}, grad={self.grad:.6g})"
+        return -1.0 * self
 
 
-def as_value(x):
-    """Wrap a plain number as a Value with no parents."""
-    return x if isinstance(x, Value) else Value(float(x))
+def record(op, value, *partials):
+    """Append a line to the recording tape, and return its variable."""
+    tape = Tape.recording
+    if tape is None:
+        raise RuntimeError("no tape is recording; use `with Tape():`")
+    tape.lines.append(Line(op, value, partials))
+    return Var(len(tape.lines) - 1, value)
+
+
+def binary(symbol, g, d1, d2):
+    """Two methods of Var for g(s, t), written s symbol t, partials d1, d2.
+
+    Python calls the first for u symbol w with u a Var, and the second
+    for c symbol u with c a number.
+    """
+    def var_first(u, w):
+        if isinstance(w, Var):
+            s, t = u.value, w.value
+            return record(f"{{}} {symbol} {{}}", g(s, t),
+                          (u.k, d1(s, t)), (w.k, d2(s, t)))
+        s = u.value
+        return record(f"{{}} {symbol} {w:g}", g(s, w), (u.k, d1(s, w)))
+
+    def number_first(u, c):
+        t = u.value
+        return record(f"{c:g} {symbol} {{}}", g(c, t), (u.k, d2(c, t)))
+
+    return var_first, number_first
+
+
+Var.__add__, Var.__radd__ = binary(
+    "+", lambda s, t: s + t, lambda s, t: 1.0, lambda s, t: 1.0)
+Var.__sub__, Var.__rsub__ = binary(
+    "-", lambda s, t: s - t, lambda s, t: 1.0, lambda s, t: -1.0)
+Var.__mul__, Var.__rmul__ = binary(
+    "*", lambda s, t: s * t, lambda s, t: t, lambda s, t: s)
+Var.__truediv__, Var.__rtruediv__ = binary(
+    "/", lambda s, t: s / t, lambda s, t: 1 / t, lambda s, t: -s / t**2)
+
+
+def elementary(name, g, dg):
+    """The operation t -> g(t), with derivative dg, on a variable."""
+    def apply(u):
+        return record(f"{name} {{}}", g(u.value), (u.k, dg(u.value)))
+    return apply
+
+
+exp = elementary("exp", math.exp, math.exp)
+log = elementary("log", math.log, lambda t: 1 / t)
+sin = elementary("sin", math.sin, math.cos)
+cos = elementary("cos", math.cos, lambda t: -math.sin(t))
+relu = elementary("relu", lambda t: max(t, 0.0),
+                  lambda t: 1.0 if t > 0 else 0.0)
 ```
 
-The engine builds subtraction and division from the other operations,
-so they need no derivative rules of their own. The ReLU, $\max(t, 0)$, has no
-derivative at $0$; the engine uses $0$ there, a choice @sec-networks
-discusses. At points where no ReLU receives exactly $0$, each ReLU
-agrees with $0$ or with $t$ on an interval around its argument, so it
-is differentiable there and @thm-reverse-mode applies.
+The class `Tape` holds the list `lines`, with line $k$ in entry $k$.
+Python numbers the entries of a list from $0$, and entry $0$ stays
+empty so that the numbering matches the book's. The class attribute
+`Tape.recording` names the recording tape, or is `None` when no tape
+records. The methods `__enter__` and `__exit__` are the ones that the
+`with` statement calls at the start and the end of its block: the
+first makes the new tape the recording one, refusing if another tape
+is already recording, and the second stops it. Each line is a `Line`
+with three fields: `op`, a pattern for printing the operation in which
+`{}` stands for each argument; `value`, the value $v_k$; and
+`partials`, the pairs $(i, d_{ki})$. The function `record` appends a
+line to the recording tape and returns a `Var` holding the new line
+number and the value. The method `tape.input` records an input line,
+which has no pairs.
 
-The sweep itself is the depth-first search of @def-rev-dfs followed by
-step 3 of @def-reverse-sweep. The most direct translation of @def-rev-dfs is a function `visit` that calls itself once for each
-parent. But a call that has started and not yet finished occupies
-space until it returns, and Python allows only about a thousand such
-calls at once, so a chain of a thousand operations would exceed the
-limit. So `topological_order` keeps its own list of the visits in
-progress. It adds and removes entries only at the end of that list,
-which programmers call a *stack*. The last entry is the visit being
-carried out, together with the parents it has yet to visit. At each
-step that visit takes its next parent and, if the parent is unmarked,
-marks it and starts a visit to it by adding an entry. When a visit has
-no parents left, its entry is removed and its node is appended to the
-order, as @def-rev-dfs prescribes. The set `visited` holds the marked
-nodes.
+The operators come from the function `binary`. It turns an operation
+$g(s, t)$ of two numbers and its partial derivatives
+$\partial g/\partial s$ and $\partial g/\partial t$ into two methods.
+The first handles `u + w` with `u` a variable. If `w` is also a
+variable, the line has two arguments. If `w` is a number, the line has
+one, because constants live inside the operations: $t + 2$ is an
+operation of one variable (@sec-fwd-traces). The second method handles
+`2 + u`, with a number on the left, which Python passes to the method
+`__radd__` of `u`. The function `elementary` does the same for an
+operation $g(t)$ of one variable with derivative $g'$, as `extend`
+does for dual numbers in @sec-fwd-code.
+
+The *primitive* operations, the ones with a derivative rule of their
+own, are the elementary operations of @sec-fwd-traces: addition,
+subtraction, multiplication and division of two numbers or of a
+number and a constant, powers with a constant exponent, and $\exp$,
+$\log$, $\sin$ and $\cos$. To these the engine adds the ReLU,
+$\max(t, 0)$. Each primitive records one line, so the tape of a
+formula is the trace a reader would write for it by hand, as
+in @tbl-rev-tape. The other operations are *derived*: negation records
+`-1.0 * u`, a multiplication by a constant, and a square root is
+written `u ** 0.5`. A derived operation needs no derivative rule,
+because the tape records the primitive lines it is made of and the
+sweep differentiates those. Division could be derived in the same way,
+as `u * w ** -1`, at the price of a second line for every quotient;
+as a primitive it keeps the tape equal to the trace
+of @sec-forward-mode.
+
+The ReLU has no derivative at $0$, and the engine uses $0$ there, a
+choice @sec-networks discusses. At points where no ReLU receives
+exactly $0$, each ReLU agrees with $0$ or with $t$ on an interval
+around its argument, so it is differentiable there
+and @thm-reverse-mode applies.
 
 ```{python}
-#| label: engine-backward
+#| label: tape-backward
 #| echo: true
-def topological_order(root):
-    """Every node that root depends on, each listed after all of its parents."""
-    order, visited = [], {root}
-    stack = [(root, iter(root.parents))]   # the visits in progress
-    while stack:
-        node, parents = stack[-1]
-        parent = next(parents, None)
-        if parent is None:                 # every parent of node is finished
-            stack.pop()
-            order.append(node)
-        elif parent not in visited:        # start a visit to parent
-            visited.add(parent)
-            stack.append((parent, iter(parent.parents)))
-    return order
+def backward(tape, out):
+    """Return bar, where bar[k] is the adjoint of line k for output out."""
+    N = len(tape.lines) - 1
+    bar = [0.0] * (N + 1)
+    bar[out] = 1.0
+    for k in range(N, 0, -1):
+        for i, d in tape.lines[k].partials:
+            bar[i] += bar[k] * d
+    return bar
 
 
-def backward(root):
-    """Set node.grad to the adjoint of node, for every node that root depends on."""
-    order = topological_order(root)
-    for node in order:
-        node.grad = 0.0
-    root.grad = 1.0
-    for node in reversed(order):
-        for parent, d in zip(node.parents, node.local):
-            parent.grad += node.grad * d
+def gradient(f, a):
+    """Return f(a) and the gradient of f at a, by one tape and one sweep."""
+    with Tape() as tape:
+        x = [tape.input(aj) for aj in a]
+        out = f(*x)
+    bar = backward(tape, out.k)
+    return out.value, [bar[xj.k] for xj in x]
+
+
+def print_tape(tape):
+    """Print the tape as a table of lines, values and pairs (i, d_ki)."""
+    print(f"{'line':<6}{'operation':<14}{'value':>9}   pairs (i, d_ki)")
+    for k in range(1, len(tape.lines)):
+        op, value, partials = tape.lines[k]
+        formula = op.format(*(f"v{i}" for i, _ in partials))
+        pairs = ", ".join(f"({i}, {d:.6g})" for i, d in partials)
+        print(f"v{k:<5}{formula:<14}{value:>9.6g}   {pairs}".rstrip())
 ```
 
-The function `backward` is @def-reverse-sweep with the order from
-`topological_order` in place of the numbering. It sets every
-accumulator to $0$, which also clears the results of any earlier call,
-and the accumulator of the output to $1$. It then takes the nodes from
-last to first and adds `node.grad * d` to the accumulator of each
-parent, where `d` is the stored local partial derivative. Nodes
-without parents, the inputs and constants, contribute nothing. Running
-it on @exm-ab-plus-a gives the value $8$ and the gradient $(4, 2)$:
+The function `backward` takes a tape and the line number `out` of the
+output. It makes a list `bar` of adjoints indexed by line number,
+with every entry $0$ except `bar[out]`, which is $1$. It then runs
+through the lines from the last, $N$, down to $1$, and for each pair
+$(i, d)$ of line $k$ adds `bar[k] * d` to `bar[i]`. This is step 3
+of @def-reverse-sweep, with `bar` as the list of accumulators. Input
+lines have no pairs and add nothing. The function returns the whole
+list, so the adjoint of every line is available, inputs included.
+
+The function `gradient` runs the whole cycle for a function of $n$
+numbers: it starts a tape, records the inputs, evaluates $f$ on them,
+stops the tape, sweeps, and returns $f(\mathbf{a})$ together with the
+adjoints of the inputs. It plays the part of the forward-mode
+`gradient` of @sec-fwd-code, with one sweep in place of $n$ passes.
+The function `print_tape` prints one row for each line: the line, the
+operation with each argument written as $v_i$, the value, and the
+pairs.
+
+Running the engine on @exm-ab-plus-a prints the tape and the adjoints:
 
 ```{python}
 #| echo: true
-a, b = Value(2.0), Value(3.0)
-L = a * b + a
-backward(L)
-print(L, a, b, sep="\n")
+with Tape() as tape:
+    a = tape.input(2.0, "a")
+    b = tape.input(3.0, "b")
+    L = a * b + a
+print_tape(tape)
+
+bar = backward(tape, L.k)
+print("adjoints:", bar[1:])
+print("gradient:", (bar[a.k], bar[b.k]))
 ```
+
+The printed tape is @tbl-rev-tape, row for row. The sweep gives the
+adjoints $(4, 2, 1, 1)$ of @exm-ab-plus-a, and the gradient
+$\nabla L(2, 3) = (4, 2)$.
 
 ```{python}
 #| include: false
-check((L.data, a.grad, b.grad) == (8.0, 4.0, 2.0), "engine on ab + a")
-check(len(topological_order(L)) == 4, "four nodes")
+import contextlib
+import io
+
+# The tape of ab + a: the rows of tbl-rev-tape, the printed table, and the sweep.
+check(len(tape.lines) == 5 and tape.lines[0] is None, "four lines, entry 0 unused")
+check([ln.value for ln in tape.lines[1:]] == [2, 3, 6, 8], "values 2, 3, 6, 8")
+check([ln.partials for ln in tape.lines[1:]] == [(), (), ((1, 3.0), (2, 2.0)), ((3, 1.0), (1, 1.0))],
+      "pairs of tbl-rev-tape")
+check((a.k, b.k, L.k, L.value) == (1, 2, 4, 8.0), "line numbers and value")
+check(bar == [0.0, 4.0, 2.0, 1.0, 1.0], "adjoints (4, 2, 1, 1)")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    print_tape(tape)
+check(buf.getvalue().splitlines() == [
+    "line  operation         value   pairs (i, d_ki)",
+    "v1    a                     2",
+    "v2    b                     3",
+    "v3    v1 * v2               6   (1, 3), (2, 2)",
+    "v4    v3 + v1               8   (3, 1), (1, 1)",
+], f"printed tape:\n{buf.getvalue()}")
+# The pairs are the non-zero entries of the matrix C of sec-rev-transposition.
+C_tape = np.zeros((4, 4))
+for k_ in range(1, 5):
+    for i_, d_ in tape.lines[k_].partials:
+        C_tape[i_ - 1, k_ - 1] += d_
+check(np.array_equal(C_tape, C4), "tape gives the matrix C")
+# Against SymPy and finite differences.
+val_ab, grad_ab = gradient(lambda p, q: p * q + p, [2.0, 3.0])
+check(val_ab == 8.0 and grad_ab == [4.0, 2.0], "gradient() on ab + a")
+close(grad_ab, [float(sp.diff(L_ab, s).subs({a_s: 2, b_s: 3})) for s in (a_s, b_s)], "ab + a against SymPy")
+close(grad_ab, num_grad(lambda u: u[0] * u[1] + u[0], [2.0, 3.0]), "ab + a against num_grad", tol=1e-7)
+# Recording order is topological: every argument is on an earlier line.
+check(all(i_ < k_ for k_ in range(1, 5) for i_, _ in tape.lines[k_].partials), "arguments come earlier")
+# Recording happens only inside the with block; tapes do not nest; an error stops the tape.
+check(Tape.recording is None, "no tape recording after the block")
+try:
+    a * b
+    check(False, "arithmetic outside a block must fail")
+except RuntimeError:
+    pass
+with Tape():
+    try:
+        with Tape():
+            pass
+        check(False, "a second tape must not start")
+    except RuntimeError:
+        pass
+try:
+    with Tape() as t_err:
+        t_err.input(1.0) / 0.0
+except ZeroDivisionError:
+    pass
+check(Tape.recording is None, "an error in the block stops the tape")
 ```
 
-A product `x * x` records `x` twice among its parents, with local
-derivative `x.data` each time, and the `+=` in `backward` adds the two
+A product `x * x` records one line whose two pairs both name the line
+of `x`, each with $d = x$, and the `+=` in `backward` adds the two
 contributions to give $2x$. This is @eq-rev-adjoint for the operation
 $t \mapsto t^2$, whose derivative is the sum of the partial
-derivatives of $t_1t_2$ at $t_1 = t_2 = t$.
+derivatives of $t_1t_2$ at $t_1 = t_2 = t$. The sweep runs over every
+line, including lines that the output does not depend on. Their
+adjoints stay $0$, so their pairs add
+nothing (@exr-ch4-dead-lines).
 
 A small two-layer network, of the kind @sec-networks studies, shows
 the engine on the kind of expression the rest of the book trains. From
@@ -864,32 +988,36 @@ $$
 h_i = \max(w_{i1}x_1 + w_{i2}x_2,\; 0) \quad (i = 1, 2), \qquad
 y = c_1h_1 + c_2h_2, \qquad \text{loss} = (y - 1)^2 ,
 $$
-the squared distance of $y$ from a target of $1$. The code finds the
-derivative of the loss with respect to each of the six weights.
+the squared distance of $y$ from a target of $1$. The code records
+the inputs and the six weights as the first eight lines, evaluates the
+loss, and sweeps once for the derivative of the loss with respect to
+each weight.
 
 ```{python}
 #| echo: true
-x = [Value(0.5), Value(-1.5)]
-W = [[Value(0.3), Value(-0.8)],
-     [Value(1.1), Value(0.4)]]
-c = [Value(0.7), Value(-1.2)]
+with Tape() as tape:
+    x = [tape.input(0.5), tape.input(-1.5)]
+    W = [[tape.input(0.3), tape.input(-0.8)],
+         [tape.input(1.1), tape.input(0.4)]]
+    c = [tape.input(0.7), tape.input(-1.2)]
+    h = [relu(W[i][0] * x[0] + W[i][1] * x[1]) for i in range(2)]
+    y = c[0] * h[0] + c[1] * h[1]
+    loss = (y - 1.0) ** 2
+bar = backward(tape, loss.k)
 
-h = [(W[i][0] * x[0] + W[i][1] * x[1]).relu() for i in range(2)]
-y = c[0] * h[0] + c[1] * h[1]
-loss = (y - 1.0) ** 2
-backward(loss)
-
-print(f"loss = {loss.data:.6f}")
-print("dloss/dW =", [[round(w.grad, 6) for w in row] for row in W])
-print("dloss/dc =", [round(ci.grad, 6) for ci in c])
+print(f"loss = {loss.value:.6f}, lines on the tape: {len(tape.lines) - 1}")
+print("dloss/dW =", [[round(bar[w.k], 6) for w in row] for row in W])
+print("dloss/dc =", [round(bar[ci.k], 6) for ci in c])
 ```
 
 For $h_2$ the argument of the maximum is
 $1.1 \cdot 0.5 + 0.4 \cdot (-1.5) = -0.05$, so $h_2 = 0$, the ReLU
-passes back adjoint $0$, and the weights $w_{21}$, $w_{22}$ and $c_2$
-get zero derivative at this point. For $h_1$ it is $1.35$, so
-$y = 0.7 \cdot 1.35 = 0.945$ and the loss is
-$0.055^2 = 0.003025$.
+line has $d = 0$ and passes back adjoint $0$, and the weights
+$w_{21}$, $w_{22}$ and $c_2$ get zero derivative at this point. For
+$h_1$ it is $1.35$, so $y = 0.7 \cdot 1.35 = 0.945$ and the loss is
+$0.055^2 = 0.003025$. The tape has $21$ lines: $8$ inputs, $4$ for
+each $h_i$ (two products, a sum and a ReLU), $3$ for $y$, and $2$ for
+the loss (a subtraction of a constant and a square).
 
 ```{python}
 #| include: false
@@ -902,69 +1030,308 @@ loss_s = (cs[0] * hs[0] + cs[1] * hs[1] - 1)**2
 point = {xs[0]: 0.5, xs[1]: -1.5, Ws[0, 0]: 0.3, Ws[0, 1]: -0.8, Ws[1, 0]: 1.1, Ws[1, 1]: 0.4,
          cs[0]: 0.7, cs[1]: -1.2}
 params = [Ws[0, 0], Ws[0, 1], Ws[1, 0], Ws[1, 1], cs[0], cs[1]]
-engine_grads = [W[0][0].grad, W[0][1].grad, W[1][0].grad, W[1][1].grad, c[0].grad, c[1].grad]
+engine_grads = [bar[v.k] for v in (W[0][0], W[0][1], W[1][0], W[1][1], c[0], c[1])]
 sym_grads = [float(sp.diff(loss_s, p).subs(point)) for p in params]
 close(engine_grads, sym_grads, "two-layer gradients against SymPy", tol=1e-12)
-close(loss.data, float(loss_s.subs(point)), "two-layer loss")
-close(loss.data, 0.055**2, "loss = 0.003025", tol=1e-12)
-close([y.data, h[0].data, h[1].data], [0.945, 1.35, 0.0], "y, h1, h2", tol=1e-12)
+close(loss.value, float(loss_s.subs(point)), "two-layer loss")
+close(loss.value, 0.055**2, "loss = 0.003025", tol=1e-12)
+check(f"{loss.value:.6f}" == "0.003025", "printed loss")
+close([y.value, h[0].value, h[1].value], [0.945, 1.35, 0.0], "y, h1, h2", tol=1e-12)
 close(1.1 * 0.5 + 0.4 * -1.5, -0.05, "second pre-activation", tol=1e-12)
 check(engine_grads[2] == engine_grads[3] == engine_grads[5] == 0.0, "inactive unit gets zero gradient")
+check(tape.lines[h[1].k].partials[0][1] == 0.0, "ReLU line of h2 has d = 0")
+check(len(tape.lines) - 1 == 21 == 8 + 2 * 4 + 3 + 2, "21 lines on the tape")
+check([x[0].k, c[1].k] == [1, 8], "inputs and weights are the first eight lines")
 def loss_np(p):
     W_, c_ = p[:4].reshape(2, 2), p[4:]
     hh = np.maximum(W_ @ np.array([0.5, -1.5]), 0)
     return (c_ @ hh - 1)**2
 close(num_grad(loss_np, [0.3, -0.8, 1.1, 0.4, 0.7, -1.2]), engine_grads, "two-layer finite differences",
       tol=1e-7)
-# x * x gives 2x.
-xv = Value(3.0)
-backward(xv * xv)
-check(xv.grad == 6.0, "x * x gives 2x")
-# Every operation of the engine, on several functions and random points,
-# against SymPy and num_grad.
+# x * x gives 2x, from one line with two pairs naming the same line.
+with Tape() as t_sq:
+    xv = t_sq.input(3.0)
+    sq = xv * xv
+check(t_sq.lines[sq.k].partials == ((1, 3.0), (1, 3.0)), "x * x records x twice")
+check(backward(t_sq, sq.k)[xv.k] == 6.0, "x * x gives 2x")
+# Every operation of the engine, with variables and numbers on either side,
+# on several functions and random points, against SymPy and num_grad.
 p_, q_, r_ = sp.symbols("p q r", real=True)
 cases = [
-    (lambda p, q, r: (1 + (p * q).exp()).log() + p / q - r ** 0.5,
+    (lambda p, q, r: log(1 + exp(p * q)) + p / q - r ** 0.5,
      sp.log(1 + sp.exp(p_ * q_)) + p_ / q_ - sp.sqrt(r_)),
-    (lambda p, q, r: (p - r) ** 3 * q.exp() / (2 + q * q) + (3 - p) / r,
-     (p_ - r_)**3 * sp.exp(q_) / (2 + q_**2) + (3 - p_) / r_),
-    (lambda p, q, r: (p * q - r).relu() * p + (q * 2.0 - 1.0).relu(),
-     sp.Max(0, p_ * q_ - r_) * p_ + sp.Max(0, 2 * q_ - 1)),
+    (lambda p, q, r: (p - r) ** 3 * exp(q) / (2 + q * q) + (3 - p) / r - 2 / (q + 1),
+     (p_ - r_)**3 * sp.exp(q_) / (2 + q_**2) + (3 - p_) / r_ - 2 / (q_ + 1)),
+    (lambda p, q, r: relu(p * q - r) * p + relu(q * 2.0 - 1.0) - (-r) * sin(p) / 4,
+     sp.Max(0, p_ * q_ - r_) * p_ + sp.Max(0, 2 * q_ - 1) + r_ * sp.sin(p_) / 4),
+    (lambda p, q, r: cos(p - q) * (r - 0.5) + 1 - p * q * r,
+     sp.cos(p_ - q_) * (r_ - sp.Rational(1, 2)) + 1 - p_ * q_ * r_),
 ]
 for fv, fs in cases:
     for _ in range(6):
         pt = rng.uniform(0.2, 1.8, size=3)
-        vs = [Value(float(u)) for u in pt]
-        out = fv(*vs)
-        backward(out)
+        val, grad = gradient(fv, pt)
         sub = dict(zip((p_, q_, r_), pt))
-        close(out.data, float(fs.subs(sub)), "engine value")
-        close([v.grad for v in vs], [float(sp.diff(fs, s).subs(sub)) for s in (p_, q_, r_)],
+        close(val, float(fs.subs(sub)), "engine value")
+        close(grad, [float(sp.diff(fs, s).subs(sub)) for s in (p_, q_, r_)],
               "engine gradient against SymPy", tol=1e-10)
-        npf = lambda u: fv(*[Value(float(t)) for t in u]).data
-        close([v.grad for v in vs], num_grad(npf, pt), "engine gradient against num_grad", tol=1e-6)
-# Calling backward twice gives the same gradients (accumulators are reset).
-backward(loss)
-close([W[0][0].grad, c[0].grad], engine_grads[0:5:4], "backward is repeatable", tol=1e-15)
-# The sweep's multiply-adds equal the number of edges, at most 2 per operation node.
-xs_big = [Value(float(i) / 100) for i in range(1000)]
-total = xs_big[0] * xs_big[0]
-for xi in xs_big[1:]:
-    total = total + xi * xi
-order_big = topological_order(total)
-edges_big = sum(len(nd.parents) for nd in order_big)
-ops_big = sum(1 for nd in order_big if nd.parents)
-check(edges_big <= 2 * ops_big and len(order_big) == 1000 + ops_big, "edges at most twice the operations")
-backward(total)
-close([xi.grad for xi in xs_big], [2 * xi.data for xi in xs_big], "gradient of a sum of squares")
+        close(grad, num_grad(lambda u: gradient(fv, u)[0], pt), "engine gradient against num_grad", tol=1e-6)
+# Derived operations: negation is a multiplication by -1, a square root a power.
+with Tape() as t_neg:
+    z_ = -t_neg.input(2.0)
+    s_ = t_neg.input(4.0) ** 0.5
+check(t_neg.lines[z_.k].op == "-1 * {}" and t_neg.lines[s_.k].op == "{} ** 0.5", "derived operations")
+check(t_neg.lines[s_.k].partials == ((3, 0.25),), "d/dt sqrt t = 1/4 at 4")
+# A chain of 1000 lines: x, then 333 times v -> v + 0.01 sin v (three lines each).
+# Against forward mode with the dual numbers of chapter 3, the product of the
+# local derivatives, and num_grad.
+ch3 = load_chapter_code("03-forward-mode.qmd", "dual-")
+def chain(v, sine):
+    for _ in range(333):
+        v = v + 0.01 * sine(v)
+    return v
+with Tape() as t_long:
+    x_long = t_long.input(0.3)
+    out_long = chain(x_long, sin)
+check(len(t_long.lines) - 1 == 1000, "the chain has 1000 lines")
+check(all(i_ < k_ for k_ in range(1, 1001) for i_, _ in t_long.lines[k_].partials),
+      "every argument of the long chain is on an earlier line")
+d_long = backward(t_long, out_long.k)[x_long.k]
+dual_out = chain(ch3["Dual"](0.3, 1.0), ch3["sin"])
+close([out_long.value, d_long], [dual_out.a, dual_out.b], "long chain against forward mode", tol=1e-12)
+vv, prod_ = 0.3, 1.0
+for _ in range(333):
+    prod_ *= 1 + 0.01 * math.cos(vv)
+    vv = vv + 0.01 * math.sin(vv)
+close(d_long, prod_, "long chain against the product of local derivatives", tol=1e-12)
+close(d_long, num_grad(lambda u: chain(float(u[0]), math.sin), [0.3])[0], "long chain against num_grad",
+      tol=1e-7)
+xt_s = sp.Symbol("x", real=True)
+vt_s = xt_s
+for _ in range(3):
+    vt_s = vt_s + sp.Rational(1, 100) * sp.sin(vt_s)
+with Tape() as t_short:
+    x_short = t_short.input(0.3)
+    v_short = x_short
+    for _ in range(3):
+        v_short = v_short + 0.01 * sin(v_short)
+close(backward(t_short, v_short.k)[x_short.k], float(sp.diff(vt_s, xt_s).subs(xt_s, 0.3)),
+      "three steps of the chain against SymPy", tol=1e-14)
+# A sum of 1000 squares: 1999 operation lines, gradient 2x.
+with Tape() as t_sum:
+    xs_big = [t_sum.input(i / 100) for i in range(1000)]
+    total = xs_big[0] * xs_big[0]
+    for xi in xs_big[1:]:
+        total = total + xi * xi
+check(len(t_sum.lines) - 1 == 1000 + 1999, "1000 inputs and 1999 operations")
+check(sum(len(ln.partials) for ln in t_sum.lines[1:]) == 2 * 1999, "two pairs per operation line")
+bar_sum = backward(t_sum, total.k)
+close([bar_sum[xi.k] for xi in xs_big], [2 * xi.value for xi in xs_big], "gradient of a sum of squares")
 ```
 
 The source of this book checks every gradient this engine produces
-against SymPy and against central differences. The engine is
-slow, since every scalar operation creates a Python object, but it is
-complete: @sec-small-gpt trains a transformer with nothing more. Real
-systems apply the same sweep to arrays, with one node per matrix
-operation instead of one per number, which is the subject of @thm-backprop-matrix.
+against SymPy and against central differences, and on a chain of
+$1000$ lines against the forward mode of @sec-fwd-code. The engine is
+slow, since every scalar operation creates a Python object and a line,
+but its operations suffice for the model of @sec-small-gpt: the
+program behind that model differentiates with the same operations,
+kept as linked nodes (@sec-rev-linked) instead of a tape
+[@karpathy2026microgptcode]. Real systems apply the same sweep to
+arrays, with one line per matrix operation instead of one per number,
+which is the subject of @thm-backprop-matrix.
+
+## Linked nodes and depth-first search {#sec-rev-linked}
+
+A tape is one way to keep the trace. Another keeps no list at all:
+each result holds references to its arguments and the local partial
+derivatives with respect to them, and nothing else records the
+computation. Call these objects *nodes*. Each node holds its value and
+links to its parents, the arguments of the operation that produced
+it, so the nodes and links form the computational graph
+of @def-computational-graph. In @exm-ab-plus-a the node of $L$ links to
+the nodes of $v_3$ and $a$, and the node of $v_3$ links to those of
+$a$ and $b$. No table of lines exists in memory, and no node records
+when it was made.
+
+To run the sweep, such an engine needs the nodes on which the output
+depends, listed so that every node comes after its parents; reading
+the list backwards then processes every node before its arguments. It
+must build the list from the links, starting at the output.
+In @exm-ab-plus-a, start at $L = v_4$. Before listing $v_4$, list its
+parents, $v_3$ and $v_1$. Before listing $v_3$, list its parents $v_1$
+and $v_2$, which have no parents and are listed at once. So the list
+begins $v_1, v_2, v_3$. The other parent of $v_4$ is $v_1$, which is
+already listed, and finally $v_4$ is listed: the result is
+$v_1, v_2, v_3, v_4$.
+
+::: {#def-rev-dfs}
+## Depth-first topological sort
+
+Start with an empty list and no node marked. To *visit* a node $u$:
+if $u$ is marked, do nothing; otherwise mark $u$, visit each parent of
+$u$ in turn, and then append $u$ to the list. The *depth-first order*
+from a node $o$ is the list obtained by visiting $o$.
+:::
+
+A node $u$ is an *ancestor* of $o$ if there is a path from $u$ to $o$
+(possibly the empty path, so $o$ is an ancestor of itself).
+
+::: {#thm-rev-dfs}
+## Depth-first search gives a topological order
+
+Let $o$ be a node of a DAG. The depth-first order from $o$ contains
+every ancestor of $o$ exactly once and no other node, and each node in
+it comes after all of its parents.
+:::
+
+::: {.proof}
+A node is marked before its visit appends it, and a visit to a marked
+node does nothing, so each node is appended at most once. Each visit
+to an unmarked node marks it, so at most as many visits do any work as
+there are nodes, and the search ends. Visits happen only to $o$ and,
+from inside the visit of a node, to that node's parents, so by
+induction every visited node is an ancestor of $o$. Conversely, if
+$u_0 \to u_1 \to \dots \to u_r = o$ is a path, then by induction
+downwards from $o$ each $u_i$ is visited, since every visit to an
+unmarked node visits all its parents, and a marked node has already
+been visited. Every visited node is marked, and is appended when its
+first visit ends.
+
+Now let $p$ be a parent of $u$, with $u$ in the list. During the first
+visit to $u$, the search visits $p$. If $p$ is unmarked at that
+moment, the visit to $p$ finishes, and appends $p$, before the visit
+to $u$ appends $u$. If $p$ is already marked, its first visit began
+earlier. If that visit has already finished, $p$ is already in the
+list. Otherwise the visit to $p$ is still in progress, so the visit to
+$u$ was started, directly or through a chain of visits, from inside
+it. Each visit in that chain is to a parent of the node before it, so
+there is a path from $u$ to $p$. Together with the edge $p \to u$ it
+forms a cycle, which is impossible in a DAG.
+:::
+
+Each node is marked once and each edge is followed once, so the
+search does work proportional to the number of nodes plus the number
+of edges of the part of the graph above $o$. @tarjan1972depth showed
+how depth-first search leads to efficient graph algorithms.
+
+The most direct translation of @def-rev-dfs into Python is a function
+`visit` that calls itself once for each parent. But a call that has
+started and not yet finished occupies space until it returns, and
+Python allows only about a thousand such calls at once, so a chain of
+a thousand operations would exceed the limit. The function
+`topological_order` below therefore keeps its own list of the visits
+in progress. It adds and removes entries only at the end of that list,
+which programmers call a *stack*. The last entry is the visit being
+carried out, together with the parents it has yet to visit. At each
+step that visit takes its next parent and, if the parent is unmarked,
+marks it and starts a visit to it by adding an entry. When a visit has
+no parents left, its entry is removed and its node is appended to the
+order, as @def-rev-dfs prescribes. The set `visited` holds the marked
+nodes. The function works on any objects that have an attribute
+`parents`; the small class `Node`, which holds a name and the parents
+and nothing else, is enough to try it on the graph of @exm-ab-plus-a.
+
+```{python}
+#| label: linked-dfs
+#| echo: true
+def topological_order(root):
+    """Every node that root depends on, each after all of its parents."""
+    order, visited = [], {root}
+    stack = [(root, iter(root.parents))]   # the visits in progress
+    while stack:
+        node, parents = stack[-1]
+        parent = next(parents, None)
+        if parent is None:                 # every parent of node is done
+            stack.pop()
+            order.append(node)
+        elif parent not in visited:        # start a visit to parent
+            visited.add(parent)
+            stack.append((parent, iter(parent.parents)))
+    return order
+
+
+class Node:
+    """A node of a computational graph: a name and the parents."""
+
+    def __init__(self, name, *parents):
+        self.name, self.parents = name, parents
+```
+
+```{python}
+#| echo: true
+v1, v2 = Node("v1"), Node("v2")
+v3 = Node("v3", v1, v2)
+v4 = Node("v4", v3, v1)
+print([u.name for u in topological_order(v4)])
+```
+
+```{python}
+#| include: false
+check([u.name for u in topological_order(v4)] == ["v1", "v2", "v3", "v4"], "DFS order of ab + a")
+# A chain of 5000 nodes, beyond Python's limit on nested calls.
+chain_nodes = [Node("n0")]
+for j in range(1, 5000):
+    chain_nodes.append(Node(f"n{j}", chain_nodes[-1]))
+order_chain = topological_order(chain_nodes[-1])
+check(order_chain == chain_nodes, "long chain in order, without recursion")
+# Random DAGs: every ancestor once, nothing else, parents first (thm-rev-dfs).
+for _ in range(50):
+    nn_ = int(rng.integers(2, 40))
+    nodes_ = []
+    for j in range(nn_):
+        ps = [nodes_[int(i)] for i in rng.integers(0, j, size=int(rng.integers(0, 3)))] if j else []
+        nodes_.append(Node(j, *ps))
+    order_ = topological_order(nodes_[-1])
+    anc = {nn_ - 1}
+    for j in range(nn_ - 1, -1, -1):
+        if j in anc:
+            anc |= {p.name for p in nodes_[j].parents}
+    check(sorted(u.name for u in order_) == sorted(anc), "DFS lists exactly the ancestors")
+    pos = {u.name: t for t, u in enumerate(order_)}
+    check(all(pos[p.name] < pos[u.name] for u in order_ for p in u.parents), "parents first")
+```
+
+With this list in hand, the sweep is @def-reverse-sweep with the
+positions in the list in place of line numbers. The engine takes the
+nodes from the last to the first, and each node adds its adjoint
+times each stored local partial derivative to the accumulator of the
+corresponding parent. The accumulators can be kept in the nodes
+themselves or in a table indexed by node.
+
+This is the design of systems that build a graph of linked nodes as
+the program runs. PyTorch records with each result the function that
+produced it, an entry point into a graph of such functions that it
+builds afresh at every evaluation [@pytorch2026autograd]. Two small
+examples in plain Python are micrograd [@karpathy2020micrograd] and
+the program behind the model of @sec-small-gpt
+[@karpathy2026microgptcode]. Each wraps every number in an object that
+holds its accumulator and links to its arguments, and each sorts the
+nodes by the recursive form of @def-rev-dfs before the sweep.
+
+The two designs differ in four ways, summarised in @tbl-rev-designs.
+
+| | tape | linked nodes |
+|---|---|---|
+| order for the sweep | the order of recording, free | rebuilt by depth-first search at every sweep |
+| lines swept | every line on the tape | only the ancestors of the output |
+| lifetime of the record | from start to discard, set by the program | as long as some node refers to it |
+| several computations | one tape per computation, one recording at a time | separate graphs side by side, sharing nodes freely |
+
+: Two ways to record the trace for reverse mode. {#tbl-rev-designs}
+
+The tape gets its order for nothing, but sweeps every line, including
+lines that the output does not depend on. Depth-first search costs
+work in proportion to the size of the graph above the output, about
+as much as the sweep itself, and in return skips every node that does
+not lead to the output. A tape lives until the program discards it,
+which is why the program must start and stop it; linked nodes live as
+long as something refers to them, so a node that leads nowhere
+disappears as soon as the program drops it, and the rest of the graph
+goes when the program drops the output. And because nodes carry their own links, two
+computations can build their graphs at the same time and share nodes,
+such as the parameters of a model, while the tape of this chapter
+records one computation at a time and keeps parameters as ordinary
+numbers between evaluations.
 
 ## History {#sec-rev-history}
 
@@ -998,20 +1365,47 @@ result with @exm-fwd-pass.
 :::
 
 ::: {#exr-ch4-overwrite}
-In the engine, `y = x * x` records `x` twice as a parent.
+On a tape whose first line is an input `x`, the statement `y = x * x`
+records line $2$ with the pairs $(1, x)$ and $(1, x)$.
 
-(a) Show that `backward(y)` sets `x.grad` to $2x$.
+(a) Show that `backward(tape, y.k)` sets `bar[1]` to $2x$.
 
-(b) What would it set `x.grad` to if `backward` used `=` instead of
+(b) What would it set `bar[1]` to if `backward` used `=` instead of
 `+=`? What would it give for @exm-ab-plus-a?
 :::
 
+::: {#exr-ch4-dead-lines}
+Record, with $a = 2$ and $b = 3$,
+```python
+with Tape() as tape:
+    a = tape.input(2.0, "a")
+    b = tape.input(3.0, "b")
+    u = a * b
+    w = exp(b)
+    L = u + a
+```
+
+(a) Write out the tape as in @tbl-rev-tape, and run
+`backward(tape, L.k)` by hand. Show that the sweep processes line $4$
+but that the line adds nothing, and that the gradient is still
+$(4, 2)$.
+
+(b) Run `backward(tape, u.k)`, with the output $u = ab$ on line $3$.
+Which lines have adjoint $0$, and which of them does the sweep still
+process? Compare the result with the first row of the Jacobian
+in @sec-rev-vjp.
+
+(c) The depth-first search of @sec-rev-linked starts from the node of
+the output. Which nodes does it visit for $L$, and for $u$?
+:::
+
 ::: {#exr-ch4-dfs}
-Build the function of @tbl-fwd-trace with the engine as
-`v3 = v1 ** 2`, `v4 = v3 * v2`, `v5 = v1 * v2`, `v6 = sin(v5)`,
-`v7 = v4 + v6` (assume a `sin` operation). Find the list that
-`topological_order(v7)` returns, and check that it is a topological
-order.
+Build the graph of @tbl-fwd-trace from the nodes of @sec-rev-linked as
+`v3 = Node("v3", v1)`, `v4 = Node("v4", v3, v2)`,
+`v5 = Node("v5", v1, v2)`, `v6 = Node("v6", v5)` and
+`v7 = Node("v7", v4, v6)`, with `v1 = Node("v1")` and
+`v2 = Node("v2")`. Find the list that `topological_order(v7)` returns,
+and check that it is a topological order.
 :::
 
 ::: {#exr-ch4-vjp}
@@ -1070,8 +1464,10 @@ that $K_1 = T^{2/3}$, $K_2 = T^{1/3}$ give about $3T^{1/3}$ states.
 :::
 
 ::: {#exr-ch4-tanh}
-Add an operation `tanh` to the engine, using
-$\frac{d}{dt}\tanh t = 1 - \tanh^2 t$. Prove this formula from
+Add a primitive operation `tanh` to the engine of @sec-rev-engine,
+using $\frac{d}{dt}\tanh t = 1 - \tanh^2 t$. Prove this formula from
 $\tanh t = (e^t - e^{-t})/(e^t + e^{-t})$, and use the engine to find
-the gradient of $\tanh(xy)$ at $(0.5, -1)$.
+the gradient of $\tanh(xy)$ at $(0.5, -1)$. How many lines would the
+tape of $\tanh(xy)$ have if `tanh` were derived from `exp` by the
+formula above instead, with $e^t$ and $e^{-t}$ each computed once?
 :::

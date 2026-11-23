@@ -6,7 +6,7 @@ letter at a time. It is a *transformer*, a network in which attention (@sec-atte
 positions, and an MLP then processes each position on its own. It has the shape of Andrej
 Karpathy's microgpt [@karpathy2026microgpt], a single file of Python
 that defines the model and trains it with Adam, computing each
-gradient by reverse mode. We have checked every architectural detail
+gradient by reverse mode on a graph of linked nodes (@sec-rev-linked). We have checked every architectural detail
 stated below against that source [@karpathy2026microgptcode].
 
 Two ingredients are new. Call each stage of the network that has its

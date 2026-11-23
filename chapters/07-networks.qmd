@@ -566,8 +566,9 @@ accumulation of @sec-reverse-mode on the operations of another
 program, does not test this. It stores, for each
 elementary function, a rule for the local derivative, and for the
 ReLU the rule fixes a value at $0$. TensorFlow
-[@bolte2020mathematical, sec. 1] and the small engine in the book's
-final model both use
+[@bolte2020mathematical, sec. 1] uses the rule below, and so do the
+engine of @sec-rev-engine and the program behind the book's final
+model:
 $$
 \operatorname{relu}'(x) := \begin{cases} 1 & x > 0,\\ 0 & x \le 0. \end{cases}
 $$
