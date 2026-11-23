@@ -1,13 +1,1324 @@
 # Stochastic and adaptive methods {#sec-stochastic}
 
-::: {.callout-note}
-## Not yet written
+The loss of a model is an average over its training examples:
+$$
+f(\boldsymbol{\theta}) = \frac1N\sum_{i=1}^N f_i(\boldsymbol{\theta}),
+$$ {#eq-stoch-average-loss}
+where $f_i$ measures the error on example $i$. Its gradient is the
+average of the $N$ gradients $\nabla f_i$, and computing it exactly
+means a pass through the whole training set for every step. The model
+in @sec-small-gpt instead takes each step using the gradient of the
+loss on a single name. That gradient is random, because the name is,
+but it is right on average, and the first half of this chapter makes
+"right on average" precise and shows that gradient descent still
+works with such estimates.
 
-This chapter will cover:
+The second half builds the method the model actually uses. Momentum
+smooths the zigzag of @exm-gd-zigzag by remembering past steps.
+Exponential moving averages keep a running mean of recent gradients and
+of their squares, and Adam combines the two to give each parameter its
+own step size. A learning-rate schedule then shrinks the steps as
+training goes on.
 
-- expectation and unbiased gradient estimates
-- stochastic gradient descent and its convergence
-- momentum as a recurrence relation
-- exponential moving averages, bias correction and Adam
-- learning-rate schedules
+As in @sec-gradient-descent, $f$ is the function being minimised and
+$L$ is a smoothness constant.
+
+```{python}
+#| include: false
+import itertools
+import math
+from fractions import Fraction as Fr
+
+import numpy as np
+import sympy as sp
+import matplotlib.pyplot as plt
+from checks import check, close, maxima_zero, sym_equal
+
+rng = np.random.default_rng(6)
+```
+
+## Probability on a finite set {#sec-stoch-probability}
+
+Suppose a training set has three examples, and at the current
+parameters their gradients are the numbers $-1$, $-2$ and $-6$. The
+full gradient is their average, $-3$. Pick one example at random,
+each with probability $\frac13$, and use its gradient instead. The
+result is random, but averaging its three possible values with their
+probabilities as weights gives
+$\frac13(-1) + \frac13(-2) + \frac13(-6) = -3$, the full gradient.
+That weighted average is the *expectation* of the random gradient.
+
+Now pick two examples, one after the other, each pick independent of
+the first, and average their gradients. There are $9$ equally likely
+ordered pairs, but the averages are not equally likely: the value
+$-1.5$ comes from the pairs $(1, 2)$ and $(2, 1)$ and has probability
+$\frac29$, while $-1$ comes only from $(1, 1)$ and has probability
+$\frac19$. So the definitions below allow outcomes of unequal
+probability. They also allow vector values, since gradients are
+vectors.
+
+::: {#def-finite-probability}
+## Finite probability space and expectation
+
+A *finite probability space* is a finite set $\Omega$ of *outcomes*
+together with numbers $P(\omega) \ge 0$, one for each
+$\omega \in \Omega$, that add up to $1$. An *event* is a subset
+$E \subseteq \Omega$, with probability $P(E) = \sum_{\omega\in E}P(\omega)$.
+A *random variable* is a function $X\colon\Omega\to\mathbb{R}$, and a
+*random vector* is a function $\mathbf{X}\colon\Omega\to\mathbb{R}^n$.
+For a possible value $\mathbf{x}$, $P(\mathbf{X} = \mathbf{x})$ is the
+probability of the event $\{\omega : \mathbf{X}(\omega) = \mathbf{x}\}$.
+The *expectation* of a random vector (or random variable) $\mathbf{X}$ is
+$$
+\mathbb{E}[\mathbf{X}] = \sum_{\omega\in\Omega}\mathbf{X}(\omega)\,P(\omega) .
+$$
+:::
+
+The expectation is the average of the values of $\mathbf{X}$, each
+weighted by the probability of the outcome that produces it; its
+components are the expectations of the components of $\mathbf{X}$.
+When all outcomes are equally likely, $P(\omega) = 1/|\Omega|$,
+$P(E) = |E|/|\Omega|$ is a matter of counting, and
+$\mathbb{E}[\mathbf{X}]$ is the ordinary mean of the values
+$\mathbf{X}(\omega)$. In the example, $\Omega$ is the set of $9$ ordered
+pairs, each with $P = \frac19$, and the average of the two gradients is
+a random variable on $\Omega$.
+
+::: {#thm-expectation-linear}
+## Linearity of expectation
+
+For random vectors $\mathbf{X}$, $\mathbf{Y}$ on the same space,
+real numbers $a$, $b$ and a fixed vector $\mathbf{v}$,
+$$
+\mathbb{E}[a\mathbf{X} + b\mathbf{Y}] = a\,\mathbb{E}[\mathbf{X}] + b\,\mathbb{E}[\mathbf{Y}],
+\qquad \mathbb{E}[\mathbf{v}] = \mathbf{v},
+\qquad \mathbb{E}[\mathbf{v}\cdot\mathbf{X}] = \mathbf{v}\cdot\mathbb{E}[\mathbf{X}] .
+$$
+Also $\mathbb{E}[\mathbf{X}] = \sum_{\mathbf{x}}\mathbf{x}\,P(\mathbf{X} = \mathbf{x})$,
+the sum running over the values of $\mathbf{X}$. If $X \le Y$ at every
+outcome then $\mathbb{E}[X] \le \mathbb{E}[Y]$.
+:::
+
+::: {.proof}
+The first three statements follow from the definition, because sums
+can be split and constants taken outside. For the fourth, group the
+outcomes according to the value of $\mathbf{X}$: the outcomes with
+$\mathbf{X}(\omega) = \mathbf{x}$ contribute
+$\mathbf{x}\sum_{\mathbf{X}(\omega)=\mathbf{x}}P(\omega) = \mathbf{x}\,P(\mathbf{X} = \mathbf{x})$.
+The last holds term by term, since $P(\omega) \ge 0$.
+:::
+
+Two picks made one after the other, each from all three examples, do
+not influence each other. In the example, the probability that the
+first pick is example $1$ and the second is example $2$ is
+$\frac19 = \frac13\cdot\frac13$, the product of the separate
+probabilities. That product rule is the definition of independence.
+
+::: {#def-independent-finite}
+## Independence
+
+Random vectors $\mathbf{X}$ and $\mathbf{Y}$ on the same space are
+*independent* if
+$$
+P(\mathbf{X} = \mathbf{x} \text{ and } \mathbf{Y} = \mathbf{y}) = P(\mathbf{X} = \mathbf{x})\,P(\mathbf{Y} = \mathbf{y})
+$$
+for all values $\mathbf{x}$ and $\mathbf{y}$. Random vectors
+$\mathbf{X}_1, \dots, \mathbf{X}_B$ are *pairwise independent* if
+$\mathbf{X}_i$ and $\mathbf{X}_j$ are independent whenever $i \ne j$.
+:::
+
+In words: knowing the value of $\mathbf{X}$ does not change the
+probabilities of the values of $\mathbf{Y}$.
+
+::: {#lem-independent-functions}
+If $\mathbf{X}$ and $\mathbf{Y}$ are independent, then so are
+$g(\mathbf{X})$ and $h(\mathbf{Y})$, for any functions $g$ and $h$.
+:::
+
+::: {.proof}
+The event $g(\mathbf{X}) = \mathbf{a}$ and $h(\mathbf{Y}) = \mathbf{b}$
+is made up of the events $\mathbf{X} = \mathbf{x}$ and
+$\mathbf{Y} = \mathbf{y}$ with $g(\mathbf{x}) = \mathbf{a}$ and
+$h(\mathbf{y}) = \mathbf{b}$, which do not overlap. So
+$$
+P\bigl(g(\mathbf{X}) = \mathbf{a},\ h(\mathbf{Y}) = \mathbf{b}\bigr)
+= \sum_{g(\mathbf{x}) = \mathbf{a}}\ \sum_{h(\mathbf{y}) = \mathbf{b}} P(\mathbf{X} = \mathbf{x})\,P(\mathbf{Y} = \mathbf{y})
+= P\bigl(g(\mathbf{X}) = \mathbf{a}\bigr)\,P\bigl(h(\mathbf{Y}) = \mathbf{b}\bigr) .
+$$
+:::
+
+::: {#thm-independent-product}
+If $\mathbf{X}$ and $\mathbf{Y}$ are independent random vectors in
+$\mathbb{R}^n$, then
+$\mathbb{E}[\mathbf{X}\cdot\mathbf{Y}] = \mathbb{E}[\mathbf{X}]\cdot\mathbb{E}[\mathbf{Y}]$.
+:::
+
+::: {.proof}
+Group the outcomes by the pair of values $(\mathbf{x}, \mathbf{y})$,
+as in @thm-expectation-linear, and use independence:
+$$
+\mathbb{E}[\mathbf{X}\cdot\mathbf{Y}]
+= \sum_{\mathbf{x},\mathbf{y}}(\mathbf{x}\cdot\mathbf{y})\,P(\mathbf{X} = \mathbf{x})\,P(\mathbf{Y} = \mathbf{y})
+= \Bigl(\sum_{\mathbf{x}}\mathbf{x}\,P(\mathbf{X} = \mathbf{x})\Bigr)\cdot\Bigl(\sum_{\mathbf{y}}\mathbf{y}\,P(\mathbf{Y} = \mathbf{y})\Bigr) .
+$$
+:::
+
+A random estimate that is right on average can still be far from its
+mean. The single-pick
+gradient above takes the values $-1$, $-2$ and $-6$, which differ from
+the mean $-3$ by $2$, $1$ and $-3$; the average of the squared
+differences is $\frac{4 + 1 + 9}{3} = \frac{14}{3}$. This mean squared
+deviation measures the spread of the estimate.
+
+::: {#def-variance-finite}
+## Variance
+
+The *variance* of a random vector $\mathbf{X}$ is
+$\operatorname{Var}[\mathbf{X}] = \mathbb{E}\bigl[\|\mathbf{X} - \mathbb{E}[\mathbf{X}]\|^2\bigr]$,
+the mean squared distance from the mean. For a random variable it is
+$\mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$.
+:::
+
+::: {#lem-variance-formula}
+For a random vector $\mathbf{X}$, a real number $c$ and a fixed vector
+$\mathbf{v}$,
+$$
+\operatorname{Var}[\mathbf{X}] = \mathbb{E}\bigl[\|\mathbf{X}\|^2\bigr] - \bigl\|\mathbb{E}[\mathbf{X}]\bigr\|^2,
+\qquad
+\operatorname{Var}[c\mathbf{X} + \mathbf{v}] = c^2\operatorname{Var}[\mathbf{X}] .
+$$
+:::
+
+::: {.proof}
+Write $\mathbf{m} = \mathbb{E}[\mathbf{X}]$. Expanding and using
+@thm-expectation-linear,
+$\mathbb{E}\bigl[\|\mathbf{X}\|^2 - 2\mathbf{m}\cdot\mathbf{X} + \|\mathbf{m}\|^2\bigr]
+= \mathbb{E}\bigl[\|\mathbf{X}\|^2\bigr] - 2\|\mathbf{m}\|^2 + \|\mathbf{m}\|^2$.
+For the second formula,
+$c\mathbf{X} + \mathbf{v} - \mathbb{E}[c\mathbf{X} + \mathbf{v}] = c(\mathbf{X} - \mathbf{m})$.
+:::
+
+::: {#thm-variance-sum}
+If $\mathbf{X}_1, \dots, \mathbf{X}_B$ are pairwise independent, then
+$$
+\operatorname{Var}[\mathbf{X}_1 + \dots + \mathbf{X}_B] = \operatorname{Var}[\mathbf{X}_1] + \dots + \operatorname{Var}[\mathbf{X}_B] .
+$$
+:::
+
+::: {.proof}
+Let $\mathbf{Y}_j = \mathbf{X}_j - \mathbb{E}[\mathbf{X}_j]$, so
+$\mathbb{E}[\mathbf{Y}_j] = \mathbf{0}$, and the sum minus its mean is
+$\sum_j\mathbf{Y}_j$. Expanding the square,
+$$
+\Bigl\|\sum_j\mathbf{Y}_j\Bigr\|^2 = \sum_j\|\mathbf{Y}_j\|^2 + \sum_{i\ne j}\mathbf{Y}_i\cdot\mathbf{Y}_j .
+$$
+For $i \ne j$, $\mathbf{Y}_i$ and $\mathbf{Y}_j$ are independent by
+@lem-independent-functions, so by @thm-independent-product
+$\mathbb{E}[\mathbf{Y}_i\cdot\mathbf{Y}_j] = \mathbf{0}\cdot\mathbf{0} = 0$.
+Taking expectations leaves $\sum_j\mathbb{E}\bigl[\|\mathbf{Y}_j\|^2\bigr]$.
+:::
+
+::: {#exm-die}
+Let $X$ be the score of a fair die. Then
+$\mathbb{E}[X] = \frac{1 + \dots + 6}{6} = \frac72$ and
+$\mathbb{E}[X^2] = \frac{1 + 4 + \dots + 36}{6} = \frac{91}{6}$, so
+$\operatorname{Var}[X] = \frac{91}{6} - \frac{49}{4} = \frac{35}{12}$
+by @lem-variance-formula. The mean of $B$ independent throws has
+variance $\frac{35}{12B}$, by @thm-variance-sum and
+@lem-variance-formula with $c = 1/B$: averaging shrinks the spread.
+:::
+
+```{python}
+#| include: false
+# The lead-in: gradients -1, -2, -6 of three examples.
+g3 = [Fr(-1), Fr(-2), Fr(-6)]
+check(sum(g3) / 3 == -3, "expectation of a single pick is -3")
+avg2 = [(a + b) / 2 for a, b in itertools.product(g3, repeat=2)]
+check(len(avg2) == 9 and avg2.count(Fr(-3, 2)) == 2 and avg2.count(Fr(-1)) == 1, "P(-1.5) = 2/9, P(-1) = 1/9")
+check(Fr(1, 9) == Fr(1, 3) * Fr(1, 3), "product rule for two picks")
+check(sum((v + 3)**2 for v in g3) / 3 == Fr(14, 3), "mean squared deviation 14/3")
+faces = [Fr(i) for i in range(1, 7)]
+EX = sum(faces) / 6
+EX2 = sum(f * f for f in faces) / 6
+check(EX == Fr(7, 2) and EX2 == Fr(91, 6) and EX2 - EX**2 == Fr(35, 12), "die mean and variance")
+check(sum((f - EX)**2 for f in faces) / 6 == Fr(35, 12), "variance by the definition")
+# Mean of B independent throws, by enumerating all 6^B equally likely outcomes.
+for B in (1, 2, 3):
+    means = [sum(o) / B for o in itertools.product(faces, repeat=B)]
+    mu = sum(means) / len(means)
+    check(mu == Fr(7, 2) and sum((m - mu)**2 for m in means) / len(means) == Fr(35, 12) / B,
+          "variance of the mean of B throws")
+```
+
+## Minibatch gradients {#sec-stoch-minibatch}
+
+Return to the average loss @eq-stoch-average-loss. By linearity of the
+gradient, $\nabla f = \frac1N\sum_i\nabla f_i$. Choosing an example
+uniformly at random and using its gradient gives an estimate of
+$\nabla f$; averaging the gradients of several random examples gives a
+better one. In the example that opened @sec-stoch-probability, a
+single pick has variance $\frac{14}{3}$, and the average of two
+independent picks takes nine equally likely values whose variance turns
+out to be $\frac73$, half as much (@exm-minibatch lists them). Write
+$$
+\sigma^2(\boldsymbol{\theta}) = \frac1N\sum_{i=1}^N\bigl\|\nabla f_i(\boldsymbol{\theta}) - \nabla f(\boldsymbol{\theta})\bigr\|^2
+$$
+for the spread of the individual gradients around their mean: the
+variance of the gradient of one uniformly chosen example. A random
+list of examples used for one gradient estimate is a *minibatch*, and
+the average of their gradients is the *minibatch gradient*.
+
+::: {#thm-minibatch}
+## Minibatch gradients
+
+Let $f = \frac1N\sum_{i=1}^N f_i$ with each
+$f_i\colon\mathbb{R}^n\to\mathbb{R}$ differentiable, fix
+$\boldsymbol{\theta}$, and let $\sigma^2(\boldsymbol{\theta})$ be the
+spread defined above. Fix a *batch size* $B \ge 1$. Let the outcomes
+be the $N^B$ lists $(i_1, \dots, i_B)$ of examples, all equally likely,
+let $I_j$ be the $j$th entry of the list, and let
+$$
+\mathbf{G} = \frac1B\sum_{j=1}^B\nabla f_{I_j}(\boldsymbol{\theta}) .
+$$
+Then $\mathbb{E}[\mathbf{G}] = \nabla f(\boldsymbol{\theta})$ and
+$\operatorname{Var}[\mathbf{G}] = \sigma^2(\boldsymbol{\theta})/B$.
+:::
+
+::: {.proof}
+For each $j$ and each example $a$, the lists with $i_j = a$ number
+$N^{B-1}$, so $P(I_j = a) = N^{B-1}/N^B = 1/N$: each entry is a
+uniformly chosen example. So by @thm-expectation-linear,
+$\mathbb{E}[\nabla f_{I_j}(\boldsymbol{\theta})] = \frac1N\sum_a\nabla f_a(\boldsymbol{\theta}) = \nabla f(\boldsymbol{\theta})$,
+and its variance is $\frac1N\sum_a\|\nabla f_a - \nabla f\|^2 = \sigma^2$.
+Averaging $B$ of these gives $\mathbb{E}[\mathbf{G}] = \nabla f(\boldsymbol{\theta})$.
+
+For $i \ne j$, the lists with $i_i = a$ and $i_j = b$ number $N^{B-2}$,
+so $P(I_i = a \text{ and } I_j = b) = 1/N^2 = P(I_i = a)\,P(I_j = b)$.
+The entries are pairwise independent, and so are the gradients
+$\nabla f_{I_j}(\boldsymbol{\theta})$, by @lem-independent-functions.
+By @thm-variance-sum the sum of the $B$ gradients has variance
+$B\sigma^2$, and by @lem-variance-formula dividing by $B$ divides the
+variance by $B^2$.
+:::
+
+An estimate whose expectation is the quantity it estimates is
+*unbiased*. A batch of $B$ examples costs $B$ gradient computations and
+cuts the variance by a factor of $B$, so the typical error, measured by
+the square root of the variance, falls only like $1/\sqrt B$.
+
+::: {#exm-minibatch}
+Take $N = 3$ examples with targets $y = 1, 2, 6$, one parameter
+$\theta$, and $f_i(\theta) = \frac12(\theta - y_i)^2$. Then
+$f(\theta) = \frac12(\theta - 3)^2 + \frac73$, with minimum $f^* = \frac73$
+at $\theta = 3$, the mean of the targets. The individual gradients are
+$f_i'(\theta) = \theta - y_i$, and they differ from $f'(\theta) = \theta - 3$
+by $3 - y_i = 2, 1, -3$, so $\sigma^2 = \frac{4 + 1 + 9}{3} = \frac{14}{3}$
+at every $\theta$.
+
+At $\theta = 0$, a batch of $B = 2$ is one of $9$ equally likely
+ordered pairs, and gives the estimate $-(y_a + y_b)/2$:
+
+| pair | (1,1) | (1,2) | (1,6) | (2,1) | (2,2) | (2,6) | (6,1) | (6,2) | (6,6) |
+|---|---|---|---|---|---|---|---|---|---|
+| $G$ | $-1$ | $-1.5$ | $-3.5$ | $-1.5$ | $-2$ | $-4$ | $-3.5$ | $-4$ | $-6$ |
+
+The mean of the nine values is $-27/9 = -3 = f'(0)$, and their
+variance is $21/9 = \frac73 = \sigma^2/2$, as @thm-minibatch says.
+:::
+
+```{python}
+#| include: false
+ys = [Fr(1), Fr(2), Fr(6)]
+th_ = sp.symbols("theta", real=True)
+fsum = sum(sp.Rational(1, 2) * (th_ - int(v))**2 for v in ys) / 3
+sym_equal(fsum, sp.Rational(1, 2) * (th_ - 3)**2 + sp.Rational(7, 3), "f = (theta-3)^2/2 + 7/3")
+sigma2 = sum((v - 3)**2 for v in ys) / 3
+check(sigma2 == Fr(14, 3), "sigma^2 = 14/3")
+pairs = list(itertools.product(ys, repeat=2))
+G = [-(a + b) / 2 for a, b in pairs]
+check(G == [Fr(-1), Fr(-3, 2), Fr(-7, 2), Fr(-3, 2), Fr(-2), Fr(-4), Fr(-7, 2), Fr(-4), Fr(-6)], "table")
+check(sum(G) == -27 and sum(G) / 9 == -3, "mean -3")
+check(sum((g + 3)**2 for g in G) == 21 and sum((g + 3)**2 for g in G) / 9 == sigma2 / 2, "variance 7/3")
+# thm-minibatch for random vector-valued gradients and several batch sizes, exactly.
+grads = [np.array(v) for v in rng.integers(-5, 6, size=(4, 2))]
+gbar = sum(grads) / 4
+s2 = sum((g - gbar) @ (g - gbar) for g in grads) / 4
+for B in (1, 2, 3):
+    est = [sum(grads[i] for i in idx) / B for idx in itertools.product(range(4), repeat=B)]
+    m = sum(est) / len(est)
+    close(m, gbar, "unbiased")
+    close(sum((e - m) @ (e - m) for e in est) / len(est), s2 / B, "variance sigma^2 / B")
+```
+
+The model in @sec-small-gpt uses batches of size $1$: at step $k$ it
+takes the next name from a list that was shuffled once at the start.
+Every order of the list is equally likely, so the name in any given
+position is equally likely to be each of the $N$ names, and the
+gradient at each step is unbiased. Consecutive names are drawn without
+replacement, which makes them slightly dependent; @exr-ch6-without-replacement
+shows that this only lowers the variance of a batch.
+
+## Stochastic gradient descent {#sec-stoch-sgd}
+
+Return to @exm-minibatch at $\theta = 0$, where $f'(0) = -3$. A
+gradient descent step with $\eta = 0.1$ goes to $0.3$. A step that
+uses the gradient of one randomly chosen example instead goes to
+$0.1$, $0.2$ or $0.6$, each with probability $\frac13$; on average it
+goes to $0.3$, the same place. Repeating such random steps is
+stochastic gradient descent. Each step is a fresh random choice,
+independent of the earlier ones, so the definition has to describe a
+sequence of draws.
+
+::: {#def-sgd}
+## Stochastic gradient descent
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be differentiable. A *stochastic
+gradient* for $f$ is a finite set $\Xi$ with probabilities
+$p(\xi) > 0$ adding up to $1$, and a function
+$\mathbf{g}(\boldsymbol{\theta}, \xi) \in \mathbb{R}^n$, such that for
+every $\boldsymbol{\theta}$
+$$
+\sum_{\xi\in\Xi}p(\xi)\,\mathbf{g}(\boldsymbol{\theta}, \xi) = \nabla f(\boldsymbol{\theta}) .
+$$
+*Stochastic gradient descent* (SGD) with learning rates
+$\eta_0, \eta_1, \dots > 0$ starts from a fixed $\boldsymbol{\theta}_0$
+and sets
+$$
+\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k - \eta_k\,\mathbf{g}(\boldsymbol{\theta}_k, \xi_k),
+$$
+where $\xi_0, \xi_1, \dots$ are drawn independently with probabilities
+$p$. For $K$ steps the outcomes are the lists
+$(\xi_0, \dots, \xi_{K-1})$, with
+$P(\xi_0, \dots, \xi_{K-1}) = p(\xi_0)\cdots p(\xi_{K-1})$.
+:::
+
+Minibatches fit this definition: $\Xi$ is the set of lists of $B$
+examples, all equally likely, and $\mathbf{g}$ is the batch average of
+@thm-minibatch. The iterate $\boldsymbol{\theta}_k$ is a random vector
+that depends only on the first $k$ draws $\xi_0, \dots, \xi_{k-1}$.
+The proof below averages over one draw at a time, using the following
+lemma.
+
+::: {#lem-average-last}
+Let $\Xi$ be a finite set with probabilities $p(\xi) > 0$ adding up to
+$1$, let $K \ge 1$, and give each list $(\xi_0, \dots, \xi_{K-1})$ of
+elements of $\Xi$ the probability $p(\xi_0)\cdots p(\xi_{K-1})$, as in
+@def-sgd. For $0 \le k < K$, let $F$ be a real function of the first
+$k + 1$ entries $\xi_0, \dots, \xi_k$, and let
+$$
+\bar F(\xi_0, \dots, \xi_{k-1}) = \sum_{\xi\in\Xi}p(\xi)\,F(\xi_0, \dots, \xi_{k-1}, \xi)
+$$
+be its average over the last of them. Then $\mathbb{E}[F] = \mathbb{E}[\bar F]$.
+:::
+
+::: {.proof}
+By definition,
+$\mathbb{E}[F] = \sum p(\xi_0)\cdots p(\xi_{K-1})\,F(\xi_0, \dots, \xi_k)$,
+the sum running over all lists. Sum first over $\xi_{K-1}$, then
+$\xi_{K-2}$, and so on down to $\xi_{k+1}$: $F$ does not depend on
+them, and each $\sum_\xi p(\xi)$ is $1$. What remains is
+$$
+\sum_{\xi_0,\dots,\xi_{k-1}} p(\xi_0)\cdots p(\xi_{k-1})\sum_{\xi_k}p(\xi_k)\,F(\xi_0, \dots, \xi_k)
+= \sum_{\xi_0,\dots,\xi_{k-1}} p(\xi_0)\cdots p(\xi_{k-1})\,\bar F(\xi_0, \dots, \xi_{k-1}),
+$$
+which is $\mathbb{E}[\bar F]$ by the same argument.
+:::
+
+::: {#thm-sgd-convergence}
+## Convergence of SGD
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and bounded below,
+with $f^* = \inf f$, and let $\mathbf{g}$ be a stochastic gradient for
+$f$ whose variance is at most $\sigma^2$ at every point:
+$$
+\sum_{\xi}p(\xi)\,\bigl\|\mathbf{g}(\boldsymbol{\theta}, \xi) - \nabla f(\boldsymbol{\theta})\bigr\|^2 \le \sigma^2
+\quad\text{for all } \boldsymbol{\theta} .
+$$
+Run SGD with a constant learning rate $0 < \eta \le 1/L$. Then for
+every $K \ge 1$,
+$$
+\frac1K\sum_{k=0}^{K-1}\mathbb{E}\bigl[\|\nabla f(\boldsymbol{\theta}_k)\|^2\bigr]
+\le \frac{2\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)}{\eta K} + \eta L\sigma^2 .
+$$
+:::
+
+::: {.proof}
+Fix $k$ and the first $k$ draws, so that $\boldsymbol{\theta}_k$ is a
+fixed vector. Write $\mathbf{d} = \nabla f(\boldsymbol{\theta}_k)$ and
+$\mathbf{G}(\xi) = \mathbf{g}(\boldsymbol{\theta}_k, \xi)$. By
+@lem-descent with $\mathbf{y} = \boldsymbol{\theta}_k - \eta\mathbf{G}(\xi)$,
+$$
+f\bigl(\boldsymbol{\theta}_k - \eta\mathbf{G}(\xi)\bigr)
+\le f(\boldsymbol{\theta}_k) - \eta\,\mathbf{d}\cdot\mathbf{G}(\xi) + \frac{L\eta^2}{2}\|\mathbf{G}(\xi)\|^2 .
+$$
+Average over $\xi$ with weights $p(\xi)$. The average of
+$\mathbf{G}(\xi)$ is $\mathbf{d}$, and by @lem-variance-formula on the
+space $\Xi$ the average of $\|\mathbf{G}(\xi)\|^2$ is
+$\|\mathbf{d}\|^2$ plus the variance, at most $\|\mathbf{d}\|^2 + \sigma^2$.
+So the average of $f(\boldsymbol{\theta}_{k+1})$ over the draw $\xi_k$ is at most
+$$
+f(\boldsymbol{\theta}_k) - \eta\Bigl(1 - \frac{L\eta}{2}\Bigr)\|\mathbf{d}\|^2 + \frac{L\eta^2\sigma^2}{2}
+\le f(\boldsymbol{\theta}_k) - \frac{\eta}{2}\|\nabla f(\boldsymbol{\theta}_k)\|^2 + \frac{L\eta^2\sigma^2}{2},
+$$
+using $\eta \le 1/L$. This holds for every choice of the first $k$
+draws. Take expectations: by @lem-average-last and
+@thm-expectation-linear,
+$$
+\mathbb{E}\bigl[f(\boldsymbol{\theta}_{k+1})\bigr]
+\le \mathbb{E}\bigl[f(\boldsymbol{\theta}_k)\bigr] - \frac{\eta}{2}\mathbb{E}\bigl[\|\nabla f(\boldsymbol{\theta}_k)\|^2\bigr] + \frac{L\eta^2\sigma^2}{2} .
+$$ {#eq-stoch-sgd-step}
+Add these inequalities for $k = 0, \dots, K-1$. The terms
+$\mathbb{E}[f(\boldsymbol{\theta}_k)]$ telescope, and
+$\mathbb{E}[f(\boldsymbol{\theta}_K)] \ge f^*$, so
+$$
+\frac{\eta}{2}\sum_{k=0}^{K-1}\mathbb{E}\bigl[\|\nabla f(\boldsymbol{\theta}_k)\|^2\bigr]
+\le f(\boldsymbol{\theta}_0) - f^* + \frac{KL\eta^2\sigma^2}{2} .
+$$
+Divide by $\eta K/2$.
+:::
+
+With $\sigma = 0$ this is @thm-gd-nonconvex. The noise adds the term
+$\eta L\sigma^2$, which does not shrink as $K$ grows: with a fixed
+learning rate SGD keeps bouncing around, and the bound only says that
+the average squared gradient ends up of order $\eta L\sigma^2$. A
+smaller $\eta$ lowers that floor but slows the first term. Given a
+target $\varepsilon > 0$, the choice $\eta = \min\bigl(1/L, \varepsilon/(2L\sigma^2)\bigr)$
+makes the second term at most $\varepsilon/2$, and then
+$K \ge 4\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)/(\eta\varepsilon)$
+steps make the first term at most $\varepsilon/2$ too. When $\sigma$
+is large this needs a number of steps of order $1/\varepsilon^2$,
+against $1/\varepsilon$ for full gradients, but each step costs $B$
+example gradients instead of $N$.
+
+::: {#exm-sgd-1d}
+Run SGD with batch size $1$ on @exm-minibatch: $L = 1$,
+$\sigma^2 = \frac{14}{3}$, $\theta_0 = 0$ and $\eta = 0.1$, so
+$f(\theta_0) - f^* = \frac92$. For $K = 100$ steps the bound of
+@thm-sgd-convergence is
+$$
+\frac{2\cdot\frac92}{0.1\cdot100} + 0.1\cdot\frac{14}{3} = 0.9 + 0.467 \approx 1.37 .
+$$
+Here $\|\nabla f(\theta_k)\|^2 = (\theta_k - 3)^2$, and
+@exr-ch6-sgd-floor computes its expectation exactly: the average over
+the first $100$ steps is $0.706$, and as $k \to \infty$ the expectation
+tends to $\eta\sigma^2/(2 - \eta) \approx 0.246$, which is about half
+of the term $\eta L\sigma^2 \approx 0.467$ in the bound.
+:::
+
+```{python}
+#| include: false
+# The lead-in: one step of size 0.1 from theta = 0.
+check([round(0 - 0.1 * (0 - yv), 12) for yv in (1, 2, 6)] == [0.1, 0.2, 0.6] and abs(0 - 0.1 * (0 - 3) - 0.3) < 1e-15,
+      "random step to 0.1, 0.2 or 0.6, average 0.3")
+eta_s, s2_s = 0.1, 14 / 3
+bound = 2 * 4.5 / (eta_s * 100) + eta_s * s2_s
+close(bound, 0.9 + 0.4666666, "bound value", tol=1e-6)
+check(f"{bound:.3g}" == "1.37" and f"{eta_s * s2_s:.3g}" == "0.467", "bound rounded")
+Ee2, tot = 9.0, 0.0
+for k in range(100):
+    tot += Ee2
+    Ee2 = (1 - eta_s)**2 * Ee2 + eta_s**2 * s2_s
+check(f"{tot / 100:.3g}" == "0.706" and tot / 100 <= bound, "exact average 0.706")
+limit = eta_s * s2_s / (2 - eta_s)
+check(f"{limit:.3g}" == "0.246", "limit 0.246")
+# Exact expectations by brute force over all 3^k draw sequences for small k.
+def sgd_exact(k):
+    vals = []
+    for seq in itertools.product([1, 2, 6], repeat=k):
+        t = 0.0
+        for yv in seq:
+            t -= eta_s * (t - yv)
+        vals.append((t - 3)**2)
+    return np.mean(vals)
+Ee2 = 9.0
+for k in range(1, 8):
+    Ee2 = (1 - eta_s)**2 * Ee2 + eta_s**2 * s2_s
+    close(sgd_exact(k), Ee2, "recurrence matches enumeration", tol=1e-12)
+# Monte Carlo check of the 100-step average.
+runs = rng.choice([1.0, 2.0, 6.0], size=(20000, 100))
+t = np.zeros(20000); acc = np.zeros(20000)
+for k in range(100):
+    acc += (t - 3)**2
+    t -= eta_s * (t - runs[:, k])
+close(acc.mean() / 100, tot / 100, "Monte Carlo average", tol=0.02)
+```
+
+## Momentum {#sec-stoch-momentum}
+
+In @exm-gd-zigzag consecutive steps point in nearly opposite
+directions across the valley and in the same direction along it.
+Adding a fraction of the previous step to the current one cancels part
+of the first and builds up the second. With $\eta = \frac14$ on
+$x^2 + 3y^2$, the first two steps from $(1, 1)$ are $(-0.5, -1.5)$ and
+$(-0.25, 0.75)$. Adding half of the first to the second gives
+$(-0.25, 0.75) + \frac12(-0.5, -1.5) = (-0.5, 0)$: the movement across
+the valley cancels, and the movement along it doubles. The previous
+step plays the part of a velocity, which is why the method below is
+named after a heavy ball rolling downhill.
+
+::: {#def-momentum}
+## Heavy-ball momentum
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be differentiable, $\eta > 0$ and $0 \le \beta < 1$. *Gradient
+descent with momentum* (the *heavy-ball method*) sets
+$\boldsymbol{\theta}_{-1} = \boldsymbol{\theta}_0$ and
+$$
+\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k - \eta\nabla f(\boldsymbol{\theta}_k)
+ + \beta\,(\boldsymbol{\theta}_k - \boldsymbol{\theta}_{k-1}),
+\qquad k = 0, 1, 2, \dots
+$$ {#eq-stoch-momentum}
+:::
+
+With $\beta = 0$ this is gradient descent. Each new point depends on
+the two before it, so on a quadratic the iteration is a second-order
+linear recurrence, and the reader's method for those applies. Start
+with one variable: $f(\theta) = \frac{\lambda}{2}\theta^2$ with
+$\lambda > 0$, so $f'(\theta) = \lambda\theta$ and @eq-stoch-momentum
+becomes
+$$
+\theta_{k+1} - (1 + \beta - \eta\lambda)\,\theta_k + \beta\,\theta_{k-1} = 0 .
+$$ {#eq-stoch-momentum-recurrence}
+Its characteristic equation is
+$$
+p(r) = r^2 - s\,r + \beta = 0, \qquad s = 1 + \beta - \eta\lambda .
+$$
+Recall the form of the solutions. If the roots $r_1 \ne r_2$ are real,
+$\theta_k = Ar_1^k + Br_2^k$. If there is a repeated root $r$,
+$\theta_k = (A + Bk)r^k$. If the roots are complex, they are
+$\rho e^{\pm i\phi}$ and $\theta_k = \rho^k(A\cos k\phi + B\sin k\phi)$.
+The constants $A$ and $B$ come from $\theta_{-1}$ and $\theta_0$. In
+every case the size of $\theta_k$ is governed by the largest modulus of
+a root: if it is less than $1$ then $\theta_k \to 0$, because
+$k|r|^k \to 0$ when $|r| < 1$.
+
+::: {#thm-momentum-quadratic}
+## Momentum on a one-dimensional quadratic
+
+Let $\lambda > 0$, $\eta > 0$ and $0 \le \beta < 1$.
+
+1. Every solution of @eq-stoch-momentum-recurrence tends to $0$ if and only
+   if $\eta\lambda < 2(1 + \beta)$.
+2. If $(1 - \sqrt\beta)^2 \le \eta\lambda \le (1 + \sqrt\beta)^2$, both
+   roots have modulus $\sqrt\beta$, and every solution satisfies
+   $|\theta_k| \le (C + Dk)\,\beta^{k/2}$ for constants $C$, $D$ that
+   depend on $\theta_{-1}$ and $\theta_0$.
+:::
+
+::: {.proof}
+The product of the roots is $\beta$ and their sum is $s$. Also
+$p(1) = \eta\lambda > 0$ and $p(-1) = 2(1 + \beta) - \eta\lambda$.
+
+(2) The roots are not real and distinct exactly when $s^2 \le 4\beta$,
+that is, $|1 + \beta - \eta\lambda| \le 2\sqrt\beta$, which rearranges
+to $(1 - \sqrt\beta)^2 \le \eta\lambda \le (1 + \sqrt\beta)^2$. Complex
+roots are conjugate, $r$ and $\bar r$, so $|r|^2 = r\bar r = \beta$. A
+repeated root is $s/2 = \pm\sqrt\beta$. In both cases the forms above
+give the bound, with $C = |A|$ and $D = |B|$ for a repeated root, and
+$C = |A| + |B|$, $D = 0$ for complex roots.
+
+(1) Suppose $\eta\lambda < 2(1 + \beta)$. If the roots are complex,
+they have modulus $\sqrt\beta < 1$. If they are real, $r_1 \le r_2$,
+then $p$ is negative or zero exactly on $[r_1, r_2]$, and since
+$p(1) > 0$ and $p(-1) > 0$, neither $1$ nor $-1$ lies in that interval.
+So both roots lie in one of $(-\infty, -1)$, $(-1, 1)$ and
+$(1, \infty)$. In the first and last cases $r_1r_2 > 1$, but
+$r_1r_2 = \beta < 1$. So both roots lie in $(-1, 1)$, and every
+solution tends to $0$.
+
+Conversely, suppose $\eta\lambda \ge 2(1 + \beta)$. Then
+$p(-1) \le 0$, and since $p(r) \to \infty$ as $r \to -\infty$, $p$
+has a real root $r \le -1$. The sequence $\theta_k = r^k$ (with
+$\theta_{-1} = 1/r$, $\theta_0 = 1$) is a solution with $|\theta_k| \ge 1$
+for every $k$.
+:::
+
+With $\beta = 0$ the condition is $\eta\lambda < 2$, as for gradient
+descent. Momentum allows steps up to twice as long before the
+iteration diverges, and inside the band of part 2 its rate $\sqrt\beta$
+does not depend on $\lambda$ at all. That is what helps on a function
+with many curvatures at once.
+
+::: {#thm-momentum-rate}
+## Tuned momentum on a quadratic
+
+Let $A$ be a real symmetric $n\times n$ matrix with all its eigenvalues
+in $[\mu, L]$, where $0 < \mu \le L$, and orthonormal eigenvectors
+$\mathbf{u}_1, \dots, \mathbf{u}_n$. Let $\mathbf{b} \in \mathbb{R}^n$,
+let $f$ be the quadratic @eq-gd-quadratic, with minimiser
+$\boldsymbol{\theta}^* = A^{-1}\mathbf{b}$, and let $\kappa = L/\mu$.
+Run @eq-stoch-momentum with
+$$
+\eta = \frac{4}{(\sqrt L + \sqrt\mu)^2}, \qquad
+\beta = \Bigl(\frac{\sqrt\kappa - 1}{\sqrt\kappa + 1}\Bigr)^2 .
+$$
+Then each coefficient $c_{k,i} = \mathbf{u}_i\cdot(\boldsymbol{\theta}_k - \boldsymbol{\theta}^*)$
+of the error satisfies $|c_{k,i}| \le (C_i + D_ik)\,\rho^k$ with
+$$
+\rho = \frac{\sqrt\kappa - 1}{\sqrt\kappa + 1} < \frac{\kappa - 1}{\kappa + 1} \quad\text{when } \kappa > 1 .
+$$
+:::
+
+::: {.proof}
+Let $\mathbf{e}_k = \boldsymbol{\theta}_k - \boldsymbol{\theta}^*$.
+Since $\nabla f(\boldsymbol{\theta}_k) = A\mathbf{e}_k$, subtracting
+$\boldsymbol{\theta}^*$ from @eq-stoch-momentum gives
+$\mathbf{e}_{k+1} = \mathbf{e}_k - \eta A\mathbf{e}_k + \beta(\mathbf{e}_k - \mathbf{e}_{k-1})$.
+Taking the dot product with $\mathbf{u}_i$, and using
+$\mathbf{u}_i\cdot A\mathbf{e}_k = (A\mathbf{u}_i)\cdot\mathbf{e}_k = \lambda_ic_{k,i}$
+(as $A$ is symmetric), each $c_{k,i}$ satisfies
+@eq-stoch-momentum-recurrence with $\lambda = \lambda_i$. Now
+$1 - \sqrt\beta = 2/(\sqrt\kappa + 1)$ and
+$1 + \sqrt\beta = 2\sqrt\kappa/(\sqrt\kappa + 1)$, so
+$$
+(1 - \sqrt\beta)^2 = \frac{4}{(\sqrt\kappa + 1)^2} = \eta\mu
+\le \eta\lambda_i \le \eta L = \frac{4\kappa}{(\sqrt\kappa + 1)^2} = (1 + \sqrt\beta)^2 ,
+$$
+and part 2 of @thm-momentum-quadratic applies with $\sqrt\beta = \rho$.
+For the comparison, $(\sqrt\kappa + 1)^2 = \kappa + 1 + 2\sqrt\kappa > \kappa + 1$, so
+$$
+\frac{\sqrt\kappa - 1}{\sqrt\kappa + 1} = \frac{\kappa - 1}{(\sqrt\kappa + 1)^2} < \frac{\kappa - 1}{\kappa + 1} .
+$$
+:::
+
+For $\kappa = 25$, gradient descent at its best step shrinks the error
+by $\frac{12}{13} \approx 0.923$ per step and momentum by
+$\frac{4}{6} \approx 0.667$; dividing the error by $10^6$ takes about
+$173$ steps against about $35$. For large $\kappa$ the number of steps
+grows like $\sqrt\kappa$ instead of $\kappa$.
+
+::: {#exm-momentum-bowl}
+For $f(x, y) = x^2 + 3y^2$, $\mu = 2$, $L = 6$ and $\kappa = 3$, the
+parameters of @thm-momentum-rate are
+$$
+\eta = \frac{4}{(\sqrt6 + \sqrt2)^2} = \frac{1}{2 + \sqrt3} = 2 - \sqrt3 \approx 0.268, \qquad
+\beta = (2 - \sqrt3)^2 \approx 0.0718,
+$$
+and $\rho = 2 - \sqrt3 \approx 0.268$, against $\frac12$ for gradient
+descent. Both eigenvalues sit at the ends of the band, so both
+characteristic equations have a repeated root: $2 - \sqrt3$ for the
+$x$-coordinate ($\lambda = 2$) and $-(2 - \sqrt3)$ for the
+$y$-coordinate ($\lambda = 6$). Solving for the constants from
+$\theta_{-1} = \theta_0 = 1$ gives
+$$
+x_k = \bigl(1 + (\sqrt3 - 1)k\bigr)(2 - \sqrt3)^k, \qquad
+y_k = \bigl(1 + (3 - \sqrt3)k\bigr)\bigl(-(2 - \sqrt3)\bigr)^k .
+$$
+The $y$-coordinate still changes sign at every step, but the zigzag
+dies away faster: after $10$ steps the distance to the minimum is about
+$3.05\times10^{-5}$, against $\sqrt2\cdot2^{-10} \approx 1.38\times10^{-3}$
+for gradient descent with $\eta = \frac14$. @fig-stoch-momentum compares the
+two methods on this function and on $x^2 + 25y^2$.
+:::
+
+```{python}
+#| include: false
+def heavy_ball(grad, theta0, eta, beta, steps):
+    prev = cur = np.array(theta0, dtype=float)
+    out = [cur]
+    for _ in range(steps):
+        prev, cur = cur, cur - eta * grad(cur) + beta * (cur - prev)
+        out.append(cur)
+    return np.array(out)
+
+# The lead-in: zigzag steps and half of the previous step.
+z = [np.array([1.0, 1.0])]
+for _ in range(2):
+    z.append(z[-1] - 0.25 * np.array([2 * z[-1][0], 6 * z[-1][1]]))
+st = np.diff(np.array(z), axis=0)
+close(st, [[-0.5, -1.5], [-0.25, 0.75]], "first two steps")
+close(st[1] + 0.5 * st[0], [-0.5, 0], "half the previous step cancels the y-movement")
+s3 = sp.sqrt(3)
+eta_m = 4 / (sp.sqrt(6) + sp.sqrt(2))**2
+sym_equal(eta_m, 1 / (2 + s3), "eta = 1/(2 + sqrt3)")
+sym_equal(eta_m, 2 - s3, "eta = 2 - sqrt3")
+kap = sp.Integer(3)
+beta_m = ((sp.sqrt(kap) - 1) / (sp.sqrt(kap) + 1))**2
+sym_equal(beta_m, (2 - s3)**2, "beta = (2 - sqrt3)^2")
+close([float(eta_m), float(beta_m)], [0.268, 0.0718], "numerical eta and beta", tol=1e-3)
+r_ = sp.symbols("r")
+for lam_v, root in ((2, 2 - s3), (6, -(2 - s3))):
+    poly = r_**2 - (1 + beta_m - eta_m * lam_v) * r_ + beta_m
+    sym_equal(poly, (r_ - root)**2, f"repeated root for lambda = {lam_v}")
+kk = sp.symbols("k", integer=True)
+xk = (1 + (s3 - 1) * kk) * (2 - s3)**kk
+yk = (1 + (3 - s3) * kk) * (-(2 - s3))**kk
+for expr, lam_v in ((xk, 2), (yk, 6)):
+    check(sp.simplify(expr.subs(kk, 0) - 1) == 0 and sp.simplify(expr.subs(kk, -1) - 1) == 0,
+          "initial values theta_{-1} = theta_0 = 1")
+    rec = expr.subs(kk, kk + 1) - (1 + beta_m - eta_m * lam_v) * expr + beta_m * expr.subs(kk, kk - 1)
+    for kv in range(0, 6):
+        check(abs(float(rec.subs(kk, kv))) < 1e-12, "closed form satisfies the recurrence")
+hb = heavy_ball(lambda p: np.array([2 * p[0], 6 * p[1]]), [1, 1], float(eta_m), float(beta_m), 30)
+for kv in range(31):
+    close(hb[kv], [float(xk.subs(kk, kv)), float(yk.subs(kk, kv))], "momentum iterates", tol=1e-10)
+check(all(np.sign(hb[kv, 1]) == (-1)**kv for kv in range(31)), "y changes sign every step")
+check(f"{np.linalg.norm(hb[10]):.3g}" == "3.05e-05", "distance after 10 steps")
+check(f"{np.sqrt(2) * 2.0**-10:.3g}" == "0.00138", "GD distance after 10 steps")
+# Rates and step counts for kappa = 25.
+check(f"{12 / 13:.3g}" == "0.923" and f"{4 / 6:.3g}" == "0.667", "rates for kappa = 25")
+check(math.ceil(math.log(1e6) / math.log(13 / 12)) == 173 and math.ceil(math.log(1e6) / math.log(1.5)) == 35,
+      "173 and 35 steps")
+# Comparison of rates for many kappa.
+for kv in np.linspace(1.01, 1000, 500):
+    check((np.sqrt(kv) - 1) / (np.sqrt(kv) + 1) < (kv - 1) / (kv + 1), "momentum rate is smaller")
+# thm-momentum-quadratic: the convergence region and the modulus of complex roots.
+for _ in range(400):
+    lam_v, eta_v, beta_v = rng.uniform(0.1, 3), rng.uniform(0.01, 2), rng.uniform(0, 0.99)
+    s_v = 1 + beta_v - eta_v * lam_v
+    rmax = max(abs(np.roots([1, -s_v, beta_v])))
+    check((rmax < 1) == (eta_v * lam_v < 2 * (1 + beta_v)), "roots inside iff eta lambda < 2(1 + beta)")
+    if rmax < 0.99:
+        t = heavy_ball(lambda p: lam_v * p, [1.0], eta_v, beta_v, 5000)[:, 0]
+        check(abs(t[-1]) < 1e-6, "iterates converge inside the region")
+    if s_v**2 < 4 * beta_v - 1e-9:
+        close(abs(np.roots([1, -s_v, beta_v])), [np.sqrt(beta_v)] * 2,
+              "complex roots have modulus sqrt(beta)", tol=1e-9)
+        check((1 - np.sqrt(beta_v))**2 <= eta_v * lam_v <= (1 + np.sqrt(beta_v))**2, "band")
+```
+
+```{python}
+#| label: fig-stoch-momentum
+#| fig-cap: "Distance to the minimum against the step number, on a logarithmic scale, for gradient descent with its best fixed step and for momentum with the parameters of @thm-momentum-rate, starting from $(1, 1)$. Left: $x^2 + 3y^2$ ($\\kappa = 3$). Right: $x^2 + 25y^2$ ($\\kappa = 25$). The distance under momentum can rise at first, because of the factor $C + Dk$ in @thm-momentum-quadratic."
+#| fig-width: 8
+#| fig-height: 3.2
+fig, axes = plt.subplots(1, 2, figsize=(8, 3.2))
+for ax, c2 in zip(axes, (3, 25)):
+    mu_v, L_v = 2.0, 2.0 * c2
+    kap_v = L_v / mu_v
+    grad = lambda p: np.array([2 * p[0], 2 * c2 * p[1]])
+    gd_path = heavy_ball(grad, [1, 1], 2 / (mu_v + L_v), 0.0, 60)
+    hb_path = heavy_ball(grad, [1, 1], 4 / (np.sqrt(L_v) + np.sqrt(mu_v))**2,
+                         ((np.sqrt(kap_v) - 1) / (np.sqrt(kap_v) + 1))**2, 60)
+    ax.semilogy(np.linalg.norm(gd_path, axis=1), color="0.55", label="gradient descent")
+    ax.semilogy(np.linalg.norm(hb_path, axis=1), color="black", label="momentum")
+    ax.set_title(f"$x^2 + {c2}y^2$", fontsize=10)
+    ax.set_xlabel("step $k$")
+    ax.set_ylim(1e-16, 10)
+axes[0].set_ylabel("distance to minimum")
+axes[0].legend(fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+These parameters need $\mu$ and $L$, which are rarely known, and the
+guarantee is for quadratics only. @lessard2016analysis [sec. 4.6]
+construct a one-dimensional function, $\mu$-strongly convex and
+$L$-smooth with $\kappa = 25$, on which the heavy-ball method with
+exactly these parameters never converges from some starting points:
+its iterates settle into a cycle. In practice $\beta$ is chosen by
+experiment, often close to $1$.
+
+```{python}
+#| include: false
+# The example of Lessard, Recht and Packard: gradient 25x (x < 1), x + 24 (1 <= x < 2),
+# 25x - 24 (x >= 2); mu = 1, L = 25, so eta = 1/9 and beta = 4/9.
+def g_lrp(v):
+    return 25 * v if v < 1 else (v + 24 if v < 2 else 25 * v - 24)
+check(abs(4 / (5 + 1)**2 - 1 / 9) < 1e-15 and abs(((5 - 1) / (5 + 1))**2 - 4 / 9) < 1e-15, "tuned parameters")
+xs_ = heavy_ball(lambda p: np.array([g_lrp(p[0])]), [3.3], 1 / 9, 4 / 9, 3000)[:, 0]
+check(max(abs(xs_[-300:])) > 1, "heavy ball does not converge on the counterexample")
+check(len(set(np.round(xs_[-300:], 9))) <= 10, "it settles into a cycle")
+```
+
+## Exponential moving averages {#sec-stoch-ema}
+
+Momentum keeps a memory of past gradients. Unrolling
+the velocity form of @eq-stoch-momentum (@exr-ch6-velocity) shows that the
+step is a weighted sum of all past gradients, with weights that decay
+geometrically. Adam makes that average explicit.
+
+Suppose the gradient of one parameter is $4$ at every step, and keep
+a running average that moves half way towards each new value,
+starting from $0$. It goes $2$, $3$, $3.5$, $3.75$: it approaches $4$
+but lags behind, because the starting value $0$ still has weight. The
+shortfall is predictable. After $k$ steps the average is
+$(1 - 0.5^k)\cdot4$, and dividing by $1 - 0.5^k$ recovers $4$ exactly.
+
+::: {#def-ema}
+## Exponential moving average
+
+Let $0 \le \beta < 1$ and let $g_1, g_2, \dots$ be numbers (or
+vectors). Their *exponential moving average* is
+$$
+m_0 = 0, \qquad m_k = \beta\,m_{k-1} + (1 - \beta)\,g_k \quad (k \ge 1).
+$$
+:::
+
+Each new value moves the average a fraction $1 - \beta$ of the way
+towards the latest $g_k$. With $\beta$ close to $1$ the average changes
+slowly and remembers many past values.
+
+::: {#thm-ema-closed}
+## Closed form
+
+For every $k \ge 0$,
+$$
+m_k = (1 - \beta)\sum_{j=1}^{k}\beta^{k-j}g_j .
+$$
+:::
+
+::: {.proof}
+By induction on $k$. For $k = 0$ both sides are $0$. If the formula
+holds for $k - 1$, then
+$$
+m_k = \beta(1 - \beta)\sum_{j=1}^{k-1}\beta^{k-1-j}g_j + (1 - \beta)g_k
+= (1 - \beta)\Bigl(\sum_{j=1}^{k-1}\beta^{k-j}g_j + \beta^0g_k\Bigr).
+$$
+:::
+
+So $g_k$ has weight $1 - \beta$, $g_{k-1}$ has weight
+$(1 - \beta)\beta$, and each older value has $\beta$ times the weight of
+the next. Starting from $m_0 = 0$ makes the average too small at
+first, and the next theorem measures by how much.
+
+::: {#thm-ema-bias}
+## Bias of the moving average
+
+Let $k \ge 1$.
+
+1. The weights in @thm-ema-closed add up to $1 - \beta^k$.
+2. If $g_j = g$ for every $j$, then $m_k = (1 - \beta^k)\,g$.
+3. The *bias-corrected* average $\hat m_k = m_k/(1 - \beta^k)$ is a
+   weighted average of $g_1, \dots, g_k$ with weights that add up to
+   $1$. If the $g_j$ are random with $\mathbb{E}[g_j] = g$ for every
+   $j$, then $\mathbb{E}[\hat m_k] = g$.
+:::
+
+::: {.proof}
+(1) $(1 - \beta)\sum_{j=1}^{k}\beta^{k-j} = (1 - \beta)(1 + \beta + \dots + \beta^{k-1}) = 1 - \beta^k$,
+the sum of a geometric series. (2) follows from (1) and
+@thm-ema-closed. (3) Dividing the weights by their sum makes them add
+up to $1$. By @thm-expectation-linear,
+$\mathbb{E}[\hat m_k] = \frac{1 - \beta}{1 - \beta^k}\sum_j\beta^{k-j}\,\mathbb{E}[g_j] = g$
+by (1).
+:::
+
+::: {#exm-ema}
+With $\beta = 0.85$, the first average is $m_1 = 0.15\,g_1$, and the
+correction divides by $1 - 0.85 = 0.15$ to recover $g_1$. With
+$\beta = 0.99$ the shortfall lasts much longer: after $10$ constant
+values, $m_{10} = (1 - 0.99^{10})g \approx 0.0956\,g$, less than a
+tenth of the true value. The weights halve every
+$\ln2/\ln(1/\beta)$ steps, which is about $4.3$ steps for
+$\beta = 0.85$ and $69$ steps for $\beta = 0.99$.
+:::
+
+```{python}
+#| include: false
+def ema(beta, gs):
+    m, out = 0.0, [0.0]
+    for g in gs:
+        m = beta * m + (1 - beta) * g
+        out.append(m)
+    return out
+check(ema(0.5, [4.0] * 4)[1:] == [2.0, 3.0, 3.5, 3.75], "lead-in: 2, 3, 3.5, 3.75")
+check([m / (1 - 0.5**k) for k, m in enumerate(ema(0.5, [4.0] * 4)) if k] == [4.0] * 4, "corrected to 4")
+gs = rng.normal(size=30)
+for beta in (0.0, 0.5, 0.85, 0.99):
+    ms = ema(beta, gs)
+    for k in range(31):
+        close(ms[k], (1 - beta) * sum(beta**(k - j) * gs[j - 1] for j in range(1, k + 1)), "closed form")
+        close((1 - beta) * sum(beta**(k - j) for j in range(1, k + 1)), 1 - beta**k, "weights sum")
+    close(ema(beta, [2.5] * 30)[1:], [(1 - beta**k) * 2.5 for k in range(1, 31)], "constant input")
+    if beta > 0:
+        close([m / (1 - beta**k) for k, m in enumerate(ema(beta, [2.5] * 30)) if k > 0], [2.5] * 30, "corrected")
+close(ema(0.85, [1.0])[1], 0.15, "m_1 = 0.15 g")
+check(f"{1 - 0.99**10:.3g}" == "0.0956", "1 - 0.99^10")
+check(f"{math.log(2) / math.log(1 / 0.85):.2g}" == "4.3" and round(math.log(2) / math.log(1 / 0.99)) == 69,
+      "half-lives")
+b_, k_ = sp.symbols("beta k", positive=True)
+jj = sp.symbols("j", integer=True)
+sym_equal(sp.summation((1 - b_) * b_**(k_ - jj), (jj, 1, k_)), 1 - b_**k_, "weights sum, symbolically")
+maxima_zero("ratsimp((1 - b)*sum(b^(5 - j), j, 1, 5) - (1 - b^5))", "weights sum in Maxima")
+```
+
+## Adam {#sec-stoch-adam}
+
+Adam [@kingma2015adam] keeps two exponential moving averages for every
+parameter: one of its gradient and one of the square of its gradient.
+It divides the first by the square root of the second, so that each
+parameter's step is measured against the typical size of its own
+gradient.
+
+At $(1, 1)$ on $x^2 + 3y^2$ the gradient is $(2, 6)$. Gradient descent
+moves the second coordinate three times as far as the first, which is
+what produced the zigzag. Dividing each component by its own size
+gives $(1, 1)$, and a step against that points from $(1, 1)$ straight
+at the minimum. Adam does this division with averages: each component
+of the gradient is divided by the root mean square of its recent
+values.
+
+::: {#def-adam}
+## Adam
+
+Let $0 \le \beta_1 < 1$, $0 \le \beta_2 < 1$, $\epsilon > 0$, and
+learning rates $\eta_1, \eta_2, \dots > 0$. Start from
+$\boldsymbol{\theta}_0$ with $\mathbf{m}_0 = \mathbf{v}_0 = \mathbf{0}$.
+For $k = 1, 2, \dots$, let $\mathbf{g}_k$ be a gradient (or stochastic
+gradient) at $\boldsymbol{\theta}_{k-1}$, and for every coordinate $i$
+set
+$$
+\begin{aligned}
+m_{k,i} &= \beta_1 m_{k-1,i} + (1 - \beta_1)\,g_{k,i}, &
+\hat m_{k,i} &= \frac{m_{k,i}}{1 - \beta_1^k},\\
+v_{k,i} &= \beta_2 v_{k-1,i} + (1 - \beta_2)\,g_{k,i}^2, &
+\hat v_{k,i} &= \frac{v_{k,i}}{1 - \beta_2^k},\\
+\theta_{k,i} &= \theta_{k-1,i} - \eta_k\,\frac{\hat m_{k,i}}{\sqrt{\hat v_{k,i}} + \epsilon} .
+\end{aligned}
+$$
+:::
+
+The model of @sec-small-gpt uses $\beta_1 = 0.85$, $\beta_2 = 0.99$,
+$\epsilon = 10^{-8}$, and $1000$ steps with learning rate
+$\eta_k = 0.01\bigl(1 - (k - 1)/1000\bigr)$, which decreases linearly
+from $0.01$ at the first step to $10^{-5}$ at the last. Each step uses
+the gradient of the loss on one name.
+
+```{python}
+#| include: false
+lr_k = [0.01 * (1 - (k - 1) / 1000) for k in range(1, 1001)]
+close(lr_k[0], 0.01, "first learning rate")
+close(lr_k[-1], 1e-5, "last learning rate", tol=1e-12)
+check(all(b < a for a, b in zip(lr_k, lr_k[1:])), "decreasing")
+```
+
+By @thm-ema-bias, $\hat{\mathbf{m}}_k$ and $\hat{\mathbf{v}}_k$ are
+weighted averages of the recent gradients and squared gradients, with
+weights adding up to $1$. Without the corrections both would be too
+small at the start, by different factors: the uncorrected ratio
+$m_{k,i}/\sqrt{v_{k,i}}$ is the corrected one times
+$(1 - \beta_1^k)/\sqrt{1 - \beta_2^k}$, which for the model's values
+is $0.15/0.1 = 1.5$ at the first step and drifts towards $1$ later.
+In each coordinate the ratio $\hat m_{k,i}/\sqrt{\hat v_{k,i}}$ is a
+mean of recent gradients divided by their root mean square. It has no
+units: multiplying every gradient by $c > 0$ leaves it unchanged
+(@exr-ch6-adam-scale). If a coordinate's gradient is steady, the ratio
+is close to $\pm1$ and the step is close to $\eta_k$ in size whatever
+the gradient's scale. If the gradient keeps changing sign, the mean is
+small compared with the root mean square and the step is small.
+@thm-cauchy-schwarz bounds the ratio in every case.
+
+::: {#thm-adam-step}
+## Size of an Adam step
+
+Suppose $0 \le \beta_1 < 1$, $0 < \beta_2 < 1$ and $\beta_1^2 < \beta_2$.
+Then for every $k \ge 1$ and every coordinate $i$,
+$$
+|\theta_{k,i} - \theta_{k-1,i}| \le \eta_k\,\frac{1 - \beta_1}{\sqrt{(1 - \beta_2)(1 - \beta_1^2/\beta_2)}} .
+$$
+:::
+
+::: {.proof}
+Fix $i$ and drop it from the notation. If $g_1 = \dots = g_k = 0$ the
+step is $0$. Otherwise $v_k > 0$. Put $\gamma = \beta_1^2/\beta_2 < 1$.
+By @thm-ema-closed, and writing
+$\beta_1^{k-j}g_j = \gamma^{(k-j)/2}\cdot\beta_2^{(k-j)/2}g_j$,
+@thm-cauchy-schwarz in $\mathbb{R}^k$ gives
+$$
+|m_k| = (1 - \beta_1)\Bigl|\sum_{j=1}^k\beta_1^{k-j}g_j\Bigr|
+\le (1 - \beta_1)\Bigl(\sum_{j=1}^k\gamma^{k-j}\Bigr)^{1/2}\Bigl(\sum_{j=1}^k\beta_2^{k-j}g_j^2\Bigr)^{1/2}
+= (1 - \beta_1)\sqrt{\frac{1 - \gamma^k}{1 - \gamma}}\sqrt{\frac{v_k}{1 - \beta_2}} .
+$$
+Dividing by $1 - \beta_1^k$ and by $\sqrt{\hat v_k} = \sqrt{v_k/(1 - \beta_2^k)}$,
+$$
+\frac{|\hat m_k|}{\sqrt{\hat v_k}}
+\le \frac{1 - \beta_1}{\sqrt{(1 - \beta_2)(1 - \gamma)}}\cdot\frac{\sqrt{(1 - \gamma^k)(1 - \beta_2^k)}}{1 - \beta_1^k} .
+$$
+Write $a = \gamma^k$ and $b = \beta_2^k$, so that $ab = \beta_1^{2k}$.
+Since $a + b \ge 2\sqrt{ab}$,
+$(1 - a)(1 - b) = 1 - (a + b) + ab \le 1 - 2\sqrt{ab} + ab = (1 - \beta_1^k)^2$,
+so the last fraction is at most $1$. Finally
+$|\theta_{k} - \theta_{k-1}| = \eta_k|\hat m_k|/(\sqrt{\hat v_k} + \epsilon) < \eta_k|\hat m_k|/\sqrt{\hat v_k}$.
+:::
+
+For the model's values, $\beta_1^2/\beta_2 = 0.7225/0.99$ and the bound
+is
+$$
+\frac{0.15}{\sqrt{0.01\,(1 - 0.7225/0.99)}} \approx 2.886 ,
+$$
+so no parameter ever moves by more than $2.89\,\eta_k$ in one step,
+however large or small its gradients are. The bound cannot be improved
+much: equality holds in @thm-cauchy-schwarz when
+$g_j = (\beta_1/\beta_2)^{k-j}$, gradients that grow steadily, and then
+the ratio $\hat m_k/\sqrt{\hat v_k}$ tends to the bound as $k$ grows.
+Plain gradient descent moves each parameter by $\eta$ times its
+partial derivative, which can be anything.
+
+::: {#exm-adam-bowl}
+Run Adam with the model's settings on $f(x, y) = x^2 + 3y^2$ from
+$(1, 1)$, with exact gradients. The first gradient is $(2, 6)$, and
+$\hat{\mathbf{m}}_1 = (2, 6)$, $\hat{\mathbf{v}}_1 = (4, 36)$, so the
+first step is $0.01\,(2/(2 + \epsilon), 6/(6 + \epsilon)) \approx (0.01, 0.01)$.
+It points straight at the minimum, along $-(1, 1)/\sqrt2$, where
+steepest descent pointed along $-(1, 3)/\sqrt{10}$ (@exm-steepest).
+The two coordinates see gradients $2x$ and $6y$, and dividing each by
+its own scale removes the factor $3$ that made the valley narrow. While
+$x_k = y_k$ the gradients stay in the ratio $1 : 3$, and the iterates
+stay on the line $y = x$ (up to the tiny effect of $\epsilon$). After
+$100$ steps they are at about $(0.252, 0.252)$, after $200$ at
+$(0.0213, 0.0213)$, and after $1000$ steps both coordinates are below
+$10^{-27}$.
+:::
+
+```{python}
+#| include: false
+def adam(grad, theta0, K=1000, lr=0.01, b1=0.85, b2=0.99, eps=1e-8, decay=True):
+    th = np.array(theta0, dtype=float)
+    m = np.zeros_like(th); v = np.zeros_like(th)
+    out = [th.copy()]
+    for k in range(1, K + 1):
+        g = grad(th)
+        m = b1 * m + (1 - b1) * g
+        v = b2 * v + (1 - b2) * g * g
+        mh, vh = m / (1 - b1**k), v / (1 - b2**k)
+        eta_k = lr * (1 - (k - 1) / K) if decay else lr
+        th = th - eta_k * mh / (np.sqrt(vh) + eps)
+        out.append(th.copy())
+    return np.array(out)
+grad_bowl6 = lambda p: np.array([2 * p[0], 6 * p[1]])
+close(grad_bowl6(np.array([1.0, 1.0])) / np.abs(grad_bowl6(np.array([1.0, 1.0]))), [1, 1], "lead-in: (1, 1)")
+ad = adam(grad_bowl6, [1, 1])
+close(ad[1], [1 - 0.01 * 2 / (2 + 1e-8), 1 - 0.01 * 6 / (6 + 1e-8)], "first Adam step", tol=1e-15)
+close(ad[0] - ad[1], [0.01, 0.01], "first step about (0.01, 0.01)", tol=1e-9)
+check(np.max(np.abs(ad[:, 0] - ad[:, 1])) < 1e-8, "iterates stay on y = x")
+check([f"{v:.3g}" for v in ad[100]] == ["0.252"] * 2 and [f"{v:.3g}" for v in ad[200]] == ["0.0213"] * 2,
+      "positions after 100 and 200 steps")
+check(np.all(np.abs(ad[1000]) < 1e-27), "below 1e-27 after 1000 steps")
+# The step-size bound for the model's values.
+b1, b2 = 0.85, 0.99
+bound_factor = (1 - b1) / math.sqrt((1 - b2) * (1 - b1**2 / b2))
+check(f"{bound_factor:.4g}" == "2.886" and bound_factor < 2.89, "bound 2.886")
+# Every step of every coordinate respects the bound, for random gradient sequences
+# of wildly different scales, including steadily growing ones.
+lrs = np.array([0.01 * (1 - (k - 1) / 1000) for k in range(1, 1001)])
+for trial in range(40):
+    scale = 10.0**rng.uniform(-6, 6, size=3)
+    gseq = rng.normal(size=(1000, 3)) * scale
+    if trial % 4 == 0:
+        gseq = (b1 / b2)**(-np.arange(1000.0)[:, None]) * scale * 1e-30
+    m = np.zeros(3); v = np.zeros(3)
+    for k in range(1, 1001):
+        m = b1 * m + (1 - b1) * gseq[k - 1]; v = b2 * v + (1 - b2) * gseq[k - 1]**2
+        stepk = lrs[k - 1] * (m / (1 - b1**k)) / (np.sqrt(v / (1 - b2**k)) + 1e-8)
+        check(np.all(np.abs(stepk) <= lrs[k - 1] * bound_factor * (1 + 1e-12)), "thm-adam-step")
+# Equality in Cauchy-Schwarz: ratio for g_j = (b1/b2)^(k-j) approaches the bound.
+for k in (1, 50, 1000):
+    gs_eq = (b1 / b2)**(k - np.arange(1, k + 1))
+    m = (1 - b1) * np.sum(b1**(k - np.arange(1, k + 1)) * gs_eq)
+    v = (1 - b2) * np.sum(b2**(k - np.arange(1, k + 1)) * gs_eq**2)
+    ratio = (m / (1 - b1**k)) / math.sqrt(v / (1 - b2**k))
+    gam = b1**2 / b2
+    exact = bound_factor * math.sqrt((1 - gam**k) * (1 - b2**k)) / (1 - b1**k)
+    close(ratio, exact, "equality case", tol=1e-10)
+check(exact > 2.885, "ratio tends to the bound")
+# The bias-uncorrected first step: 0.15 / sqrt(0.01) = 1.5.
+close(0.15 / math.sqrt(0.01), 1.5, "uncorrected first step factor")
+# Lean checks the inequality (1 - a)(1 - b) <= (1 - sqrt(ab))^2; spot-check it here.
+for a_, bb_ in rng.uniform(0, 1, size=(200, 2)):
+    check((1 - a_) * (1 - bb_) <= (1 - math.sqrt(a_ * bb_))**2 + 1e-15, "AM-GM step")
+```
+
+## Learning-rate schedules {#sec-stoch-schedules}
+
+@thm-sgd-convergence shows a trade-off: a large learning rate makes
+fast progress at first, and a small one lowers the noise floor
+$\eta L\sigma^2$. A *learning-rate schedule* gets some of both by
+letting $\eta_k$ depend on $k$, large early and small late. The proof
+of @thm-sgd-convergence works step by step, so it extends directly.
+
+In @exm-sgd-1d, with $\eta = 0.1$ the expected squared gradient
+$\mathbb{E}[(\theta_k - 3)^2]$ is already $0.246$ after $50$ steps,
+and stays there: that is its limit $\eta\sigma^2/(2 - \eta)$. With
+$\eta = 0.01$ it is still $3.31$ after $50$ steps, but after $1000$
+steps it reaches $0.0235$, ten times lower. A schedule aims to have
+both.
+
+::: {#thm-sgd-schedule}
+## SGD with a schedule
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and bounded below,
+with $f^* = \inf f$, and let $\mathbf{g}$ be a stochastic gradient for
+$f$ (@def-sgd) with variance at most $\sigma^2$ at every point. Run
+SGD with learning rates $0 < \eta_k \le 1/L$. Then for every $K \ge 1$,
+$$
+\sum_{k=0}^{K-1}\eta_k\,\mathbb{E}\bigl[\|\nabla f(\boldsymbol{\theta}_k)\|^2\bigr]
+\le 2\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr) + L\sigma^2\sum_{k=0}^{K-1}\eta_k^2 .
+$$
+:::
+
+::: {.proof}
+The proof of @thm-sgd-convergence, with $\eta_k$ in place of $\eta$ at
+step $k$, gives @eq-stoch-sgd-step with $\eta_k$. Multiply it by $2$, add
+for $k = 0, \dots, K-1$, and use $\mathbb{E}[f(\boldsymbol{\theta}_K)] \ge f^*$.
+:::
+
+Dividing by $\sum_k\eta_k$ bounds a weighted average of the expected
+squared gradients by
+$$
+\frac{2\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr) + L\sigma^2\sum_k\eta_k^2}{\sum_k\eta_k} .
+$$
+If $\sum_k\eta_k$ grows without bound while $\sum_k\eta_k^2$ stays
+bounded, this tends to $0$ as $K \to \infty$: the noise floor
+disappears. These are the conditions that @robbins1951stochastic
+introduced for stochastic approximation, and $\eta_k = \eta_0/(k + 1)$
+satisfies them, since the harmonic series diverges and
+$\sum 1/(k+1)^2$ converges.
+
+A run of fixed length $K$ can use a *linear decay*
+$\eta_k = \eta_0(1 - k/K)$ for $k = 0, \dots, K-1$, which falls from
+$\eta_0$ to $\eta_0/K$. Then
+$$
+\sum_{k=0}^{K-1}\eta_k = \eta_0\,\frac{K + 1}{2}, \qquad
+\sum_{k=0}^{K-1}\eta_k^2 = \eta_0^2\,\frac{(K + 1)(2K + 1)}{6K} .
+$$
+This is the schedule of the model, with $\eta_0 = 0.01$ and $K = 1000$
+(its step $k + 1$ in the numbering of @def-adam). The sums are
+$5.005$ and about $0.0334$, against $10$ and $0.1$ for the constant
+rate $0.01$. In the bound above, the noise term
+$L\sigma^2\sum\eta_k^2/\sum\eta_k$ falls from $0.01\,L\sigma^2$ to
+about $0.0067\,L\sigma^2$, and the first term doubles. The theorems of
+this chapter cover SGD, not Adam; the model's use of a decaying
+schedule with Adam rests on experience more than on a theorem.
+
+```{python}
+#| include: false
+# The lead-in: E[(theta_k - 3)^2] for eta = 0.1 and 0.01.
+def e2_after(eta_v, K_v):
+    e = 9.0
+    for _ in range(K_v):
+        e = (1 - eta_v)**2 * e + eta_v**2 * 14 / 3
+    return e
+check([f"{e2_after(0.1, 50):.3g}", f"{e2_after(0.01, 50):.3g}", f"{e2_after(0.01, 1000):.3g}"]
+      == ["0.246", "3.31", "0.0235"], "schedule lead-in values")
+close(e2_after(0.1, 1000), 0.1 * 14 / 3 / 1.9, "stays at the limit", tol=1e-10)
+K_, e0_ = sp.symbols("K eta0", positive=True)
+kq = sp.symbols("k", integer=True)
+sym_equal(sp.summation(e0_ * (1 - kq / K_), (kq, 0, K_ - 1)), e0_ * (K_ + 1) / 2, "sum of linear decay")
+sym_equal(sp.summation((e0_ * (1 - kq / K_))**2, (kq, 0, K_ - 1)), e0_**2 * (K_ + 1) * (2 * K_ + 1) / (6 * K_),
+          "sum of squares of linear decay")
+etas = np.array([0.01 * (1 - k / 1000) for k in range(1000)])
+close(etas.sum(), 5.005, "sum 5.005")
+check(f"{(etas**2).sum():.3g}" == "0.0334", "sum of squares 0.0334")
+close(etas, lr_k, "same schedule as def-adam")
+close(etas[-1], 0.01 / 1000, "last rate eta0 / K", tol=1e-12)
+check(f"{(etas**2).sum() / etas.sum():.2g}" == "0.0067", "noise factor 0.0067")
+close((2 / etas.sum()) / (2 / 10), 10 / 5.005, "first term about doubles")
+# thm-sgd-schedule on the one-dimensional example, by exact expectations.
+eta_sched = [min(1.0, 0.5 / (k + 1)) for k in range(200)]
+Ee2, lhs = 9.0, 0.0
+for k, ek in enumerate(eta_sched):
+    lhs += ek * Ee2
+    Ee2 = (1 - ek)**2 * Ee2 + ek**2 * 14 / 3
+check(lhs <= 2 * 4.5 + 14 / 3 * sum(e * e for e in eta_sched), "thm-sgd-schedule holds")
+```
+
+## Notes and further reading {#sec-stoch-notes}
+
+@bottou2018optimization survey stochastic gradient methods for machine
+learning. Their sec. 4 proves convergence results of the kind given
+here under weaker assumptions; @thm-sgd-convergence is a special case
+of their thm. 4.8, and they also treat strongly convex functions and
+decreasing learning rates. Stochastic approximation began with
+@robbins1951stochastic. The heavy-ball method is due to
+@polyak1964some; @goh2017momentum explains its behaviour on quadratics
+with interactive diagrams, and @lessard2016analysis show why its
+guarantees do not extend beyond quadratics.
+@nesterov2018lectures [ch. 2] describes accelerated methods that do
+achieve the $\sqrt\kappa$ rate on every smooth strongly convex
+function.
+
+Adam is from @kingma2015adam, whose sec. 2.1 gives an informal bound
+on the step: $\eta(1 - \beta_1)/\sqrt{1 - \beta_2}$, which is $1.5\eta$
+for the model's settings. That value is the limit when a single
+gradient is non-zero; @thm-adam-step shows that steadily growing
+gradients can exceed it, up to $2.89\eta$. @reddi2018convergence give
+a convex problem on which Adam does not converge and identify a gap in
+the original convergence proof.
+
+## Exercises {#sec-stoch-exercises}
+
+::: {#exr-ch6-dice}
+Two fair dice are thrown independently, and $S$ is the total score.
+Use @thm-expectation-linear and @thm-variance-sum to find
+$\mathbb{E}[S]$ and $\operatorname{Var}[S]$, and check the answers by
+listing the $36$ outcomes.
+:::
+
+::: {#exr-ch6-without-replacement}
+In @exm-minibatch, choose a batch of $B = 2$ *different* examples: one
+of the $6$ ordered pairs $(a, b)$ with $a \ne b$, all equally likely.
+
+(a) At $\theta = 0$, find the expectation and the variance of
+$G = -(y_a + y_b)/2$, and compare with $\frac73$.
+
+(b) In general, let $\mathbf{d}_1, \dots, \mathbf{d}_N$ be vectors
+with $\sum_a\mathbf{d}_a = \mathbf{0}$ and
+$\sigma^2 = \frac1N\sum_a\|\mathbf{d}_a\|^2$, and let $(I, J)$ be a
+uniformly chosen ordered pair of different indices. Show that
+$\mathbb{E}[\mathbf{d}_I\cdot\mathbf{d}_J] = -\sigma^2/(N - 1)$.
+
+(c) Deduce that the mean of $B$ gradients chosen without replacement
+has variance $\frac{\sigma^2}{B}\cdot\frac{N - B}{N - 1}$.
+:::
+
+::: {#exr-ch6-sgd-floor}
+In @exm-sgd-1d, let $e_k = \theta_k - 3$.
+
+(a) Show that $e_{k+1} = (1 - \eta)e_k + \eta(y_{I_k} - 3)$, where
+$I_k$ is the example drawn at step $k$.
+
+(b) Show that
+$\mathbb{E}[e_{k+1}^2] = (1 - \eta)^2\,\mathbb{E}[e_k^2] + \eta^2\sigma^2$.
+
+(c) Solve this recurrence, and show that $\mathbb{E}[e_k^2] \to \eta\sigma^2/(2 - \eta)$
+when $0 < \eta < 2$.
+:::
+
+::: {#exr-ch6-velocity}
+Let $\mathbf{w}_0 = \mathbf{0}$ and, for $k \ge 0$,
+$\mathbf{w}_{k+1} = \beta\mathbf{w}_k - \eta\nabla f(\boldsymbol{\theta}_k)$
+and $\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k + \mathbf{w}_{k+1}$.
+
+(a) Show that this produces the same points as @eq-stoch-momentum.
+
+(b) Show that
+$\mathbf{w}_{k} = -\eta\sum_{j=0}^{k-1}\beta^{k-1-j}\nabla f(\boldsymbol{\theta}_j)$,
+and compare with @thm-ema-closed.
+:::
+
+::: {#exr-ch6-momentum-range}
+Let $\lambda = 1$ and $\beta = \frac14$ in @eq-stoch-momentum-recurrence.
+
+(a) For which $\eta > 0$ does every solution tend to $0$?
+
+(b) For which $\eta$ are the roots complex? Find them, and their
+modulus, when $\eta = 1$.
+:::
+
+::: {#exr-ch6-ema-half}
+Let $\beta = 0.9$.
+
+(a) What is the smallest $k$ with $1 - \beta^k \ge 0.99$?
+
+(b) Show that the oldest half of the weights in @thm-ema-closed, those
+on $g_1, \dots, g_{k/2}$ for even $k$, add up to $\beta^{k/2}(1 - \beta^{k/2})$.
+:::
+
+::: {#exr-ch6-adam-scale}
+(a) Let $\epsilon = 0$ and $c > 0$. Show that running Adam on $cf$
+instead of $f$, from the same starting point and with exact gradients,
+gives the same iterates (as long as no $\hat v_{k,i}$ is zero, so that
+every step is defined).
+
+(b) Show that if a coordinate's gradient is the same non-zero number
+$g$ at every step, its Adam step is
+$-\eta_k\,g/(|g| + \epsilon)$ at every step.
+:::
+
+::: {#exr-ch6-linear-decay}
+Prove the two sums for linear decay in @sec-stoch-schedules, and use them to
+show that with linear decay the bound after @thm-sgd-schedule is
+$$
+\frac{4\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)}{\eta_0(K + 1)} + \frac{L\sigma^2\eta_0(2K + 1)}{3K} .
+$$
 :::
