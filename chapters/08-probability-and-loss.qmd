@@ -50,20 +50,20 @@ def H(p, q=None):
 
 ## Distributions on a finite set {#sec-prob-distributions}
 
-The book's model reads and writes text as a sequence of *tokens*,
-here the 26 letters and one boundary token that marks where a name
-starts and ends. The set of tokens is the *vocabulary* $V$, with
-$|V| = 27$ elements. At each position the model's prediction is a list
-of 27 non-negative numbers summing to $1$, one probability for each
-token that could come next. Such a list is a probability
-distribution on $V$.
+The book's model reads and writes text as a sequence of tokens, here
+the 26 letters and one boundary token that marks where a name starts
+and ends. The set of tokens is the vocabulary $V$, with $|V| = 27$
+elements; @def-vocabulary in @sec-language-models states these terms
+precisely. At each position the model's prediction is a list of 27
+non-negative numbers summing to $1$, one probability for each token
+that could come next. Such a list is a probability distribution on
+$V$.
 
-@def-finite-probability sets up probability on a finite sample space
-$\Omega$: each outcome $\omega$ has a probability $P(\omega) \ge 0$,
-these sum to $1$, and an event $A \subseteq \Omega$ has probability
-$P(A) = \sum_{\omega\in A}P(\omega)$. A *random variable* with values
-in a finite set $V$ is a function $X\colon\Omega\to V$, and
-$P(X = v)$ is the probability of the event
+Probability on a finite sample space $\Omega$ is as
+in @def-finite-probability. There a random variable takes real values,
+and the same definitions serve for a function $X\colon\Omega\to V$
+with values in any finite set $V$, which this chapter also calls a
+random variable: $P(X = v)$ is the probability of the event
 $\{\omega : X(\omega) = v\}$. For one roll of a fair die, $\Omega$ is
 $\{1, \dots, 6\}$ with each outcome of probability $\tfrac16$; the
 random variable "the roll is even", with values in
@@ -85,15 +85,16 @@ $n = 3$ it is the triangle with corners $\mathbf{e}_1$,
 $\mathbf{e}_2$ and $\mathbf{e}_3$. The *uniform* distribution has
 $p(v) = 1/|V|$ for every $v$; it describes equally likely outcomes.
 For a function $f$ on $V$, the expectation of $f(X)$ is
-$\mathbb{E}[f(X)] = \sum_{v\in V}p(v)f(v)$, as in @sec-stochastic.
+$\mathbb{E}[f(X)] = \sum_{v\in V}p(v)f(v)$, by the formula over values
+in @thm-expectation-linear.
 
 Data consist of many observations, and the model treats them as
 separate draws that do not influence each other. Roll two fair dice:
 the sample space is the set of $36$ equally likely pairs, and the
 first roll $X_1$ and the second roll $X_2$ satisfy
 $P(X_1 = 1, X_2 = 2) = \tfrac1{36} = P(X_1 = 1)\,P(X_2 = 2)$, and
-likewise for every pair of values. Random variables
-$X_1, \dots, X_N$ with values in $V$ are *independent* if
+likewise for every pair of values. As in @def-independent-finite,
+random variables $X_1, \dots, X_N$ with values in $V$ are independent if
 $$
 P(X_1 = v_1, \dots, X_N = v_N) = P(X_1 = v_1)\cdots P(X_N = v_N)
 \qquad\text{for all } v_1, \dots, v_N\in V ,
@@ -667,7 +668,7 @@ multiple of $\mathbf{1}$.
 
 The quantity in (c) has a probabilistic reading: if $I$ is a random
 index with distribution $\mathbf{p}$, then
-$\mathbf{v}^\top J\mathbf{v} = \mathbb{E}[v_I^2] - (\mathbb{E}[v_I])^2 = \operatorname{Var}(v_I)$.
+$\mathbf{v}^\top J\mathbf{v} = \mathbb{E}[v_I^2] - (\mathbb{E}[v_I])^2 = \operatorname{Var}[v_I]$.
 By @thm-prob-lse-gradient, $J$ is also the Hessian of log-sum-exp,
 the matrix of its second partial derivatives (@def-hessian), so (c) says that the Hessian of
 $\operatorname{lse}$ is positive semidefinite everywhere. Property
@@ -851,7 +852,7 @@ the matrix are independent, so the logits are independent, each with
 mean $0$ and variance $\sigma^2 \approx 0.10$. Then
 $\frac1n\sum_i(z_i - \bar z)^2 = \frac1n\sum_iz_i^2 - \bar z^2$,
 $\mathbb{E}[z_i^2] = \sigma^2$ and
-$\mathbb{E}[\bar z^2] = \operatorname{Var}(\bar z) = \sigma^2/n$, so its
+$\mathbb{E}[\bar z^2] = \operatorname{Var}[\bar z] = \sigma^2/n$, so its
 expected value is $\frac{n-1}{n}\sigma^2$. The expected loss is about
 $\ln 27 + \frac12\cdot\frac{26}{27}\cdot0.10 \approx 3.35$. Averaged
 over 2000 freshly initialised models, each run on a random sequence

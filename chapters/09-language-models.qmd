@@ -131,19 +131,16 @@ the probability that the name begins `av`, counted directly: one name
 in five. The probability of the first two letters is the probability
 of the first, times the probability of the second given the first.
 
-We work on finite probability spaces (@def-finite-probability): a
-finite set $\Omega$ of outcomes, each outcome $\omega$ with a
-probability $P(\omega) \ge 0$, these probabilities adding up to 1. An
-event is a subset $A$ of $\Omega$, and its probability $P(A)$ is the
-sum of the probabilities of its outcomes. In the example, $\Omega$ is
-the set of the five names, each with probability $1/5$, and "starts
-with $\mathtt{a}$" is the event $\{\mathtt{anna}, \mathtt{ava}, \mathtt{ada}\}$.
-A random variable is a real-valued function on the outcomes; since
-tokens are numbered, a function from the outcomes to the tokens is a
-random variable too. The first letter $X_1$ and the second letter
-$X_2$ of the chosen name are random variables of this kind. We write
-$P(X_1 = x_1, \dots, X_t = x_t)$ for the probability of the event
-$\{X_1 = x_1\}\cap\dots\cap\{X_t = x_t\}$ that all $t$ statements hold.
+We work on a finite probability space (@def-finite-probability), with
+random variables that take values in the vocabulary, as
+in @sec-prob-distributions. In the example, $\Omega$ is the set of the
+five names, each with probability $1/5$, and "starts with
+$\mathtt{a}$" is the event $\{\mathtt{anna}, \mathtt{ava},
+\mathtt{ada}\}$. The first letter $X_1$ and the second letter $X_2$ of
+the chosen name are random variables with values in the vocabulary. As
+in @def-independent-finite, $P(X_1 = x_1, \dots, X_t = x_t)$ is the
+probability of the event $\{X_1 = x_1\}\cap\dots\cap\{X_t = x_t\}$
+that all $t$ statements hold.
 
 ::: {#def-conditional-probability}
 ## Conditional probability

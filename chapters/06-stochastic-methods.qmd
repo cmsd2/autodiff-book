@@ -158,17 +158,22 @@ $$
 P(\mathbf{X} = \mathbf{x} \text{ and } \mathbf{Y} = \mathbf{y}) = P(\mathbf{X} = \mathbf{x})\,P(\mathbf{Y} = \mathbf{y})
 $$
 for all values $\mathbf{x}$ and $\mathbf{y}$. Random vectors
-$\mathbf{X}_1, \dots, \mathbf{X}_B$ are *pairwise independent* if
+$\mathbf{X}_1, \dots, \mathbf{X}_B$ on the same space are
+*independent*, or *mutually independent*, if
+$$
+P(\mathbf{X}_1 = \mathbf{x}_1, \dots, \mathbf{X}_B = \mathbf{x}_B) = P(\mathbf{X}_1 = \mathbf{x}_1)\cdots P(\mathbf{X}_B = \mathbf{x}_B)
+$$
+for all values $\mathbf{x}_1, \dots, \mathbf{x}_B$, where the commas
+on the left mean "and". They are *pairwise independent* if
 $\mathbf{X}_i$ and $\mathbf{X}_j$ are independent whenever $i \ne j$.
 :::
 
 In words: knowing the value of $\mathbf{X}$ does not change the
-probabilities of the values of $\mathbf{Y}$. For more than two random
-vectors, *mutual independence* asks for the product rule for all of
-them at once,
-$P(\mathbf{X}_1 = \mathbf{x}_1 \text{ and } \dots \text{ and } \mathbf{X}_B = \mathbf{x}_B) = P(\mathbf{X}_1 = \mathbf{x}_1)\cdots P(\mathbf{X}_B = \mathbf{x}_B)$.
-Mutual independence implies pairwise independence, and pairwise
-independence is all that the variance calculations below need.
+probabilities of the values of $\mathbf{Y}$. Mutual independence
+implies pairwise independence: summing the product rule over all the
+values of the vectors other than $\mathbf{X}_i$ and $\mathbf{X}_j$
+leaves the product rule for that pair. Pairwise independence is all
+that the variance calculations below need.
 
 ::: {#lem-independent-functions}
 If $\mathbf{X}$ and $\mathbf{Y}$ are independent, then so are
@@ -282,6 +287,15 @@ check(sum(g3) / 3 == -3, "expectation of a single pick is -3")
 avg2 = [(a + b) / 2 for a, b in itertools.product(g3, repeat=2)]
 check(len(avg2) == 9 and avg2.count(Fr(-3, 2)) == 2 and avg2.count(Fr(-1)) == 1, "P(-1.5) = 2/9, P(-1) = 1/9")
 check(Fr(1, 9) == Fr(1, 3) * Fr(1, 3), "product rule for two picks")
+# Three picks are mutually independent, and summing out the third pick leaves
+# the product rule for each pair.
+trip_ = list(itertools.product(range(3), repeat=3))
+for v_ in trip_:
+    check(Fr(trip_.count(v_), 27) == Fr(1, 27), "product rule for three picks")
+for i_, j_ in ((0, 1), (0, 2), (1, 2)):
+    for a_, b_ in itertools.product(range(3), repeat=2):
+        check(Fr(sum(1 for o in trip_ if o[i_] == a_ and o[j_] == b_), 27) == Fr(1, 9),
+              "mutual independence implies pairwise independence")
 check(sum((v + 3)**2 for v in g3) / 3 == Fr(14, 3), "mean squared deviation 14/3")
 faces = [Fr(i) for i in range(1, 7)]
 EX = sum(faces) / 6

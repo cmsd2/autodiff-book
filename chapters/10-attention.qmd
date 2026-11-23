@@ -154,25 +154,18 @@ coincidence. So the standard deviation of an unscaled score, its
 typical size, grows like $\sqrt{d_h}$, and dividing by $\sqrt{d_h}$
 undoes the growth.
 
-The proof uses the probability of @sec-stochastic, on finite
-probability spaces. The expectation $\mathbb{E}[X]$ of a random
-variable $X$ is the average of its values, each weighted by its
-probability (@def-finite-probability), and its variance is the
-expectation
-$\operatorname{Var}[X] = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$ of
-the squared deviation from the mean (@def-variance-finite). Random
-vectors $\mathbf{X}$ and $\mathbf{Y}$ are independent when
-$P(\mathbf{X} = \mathbf{x}, \mathbf{Y} = \mathbf{y}) = P(\mathbf{X} = \mathbf{x})\,P(\mathbf{Y} = \mathbf{y})$
-for all values $\mathbf{x}$ and $\mathbf{y}$ (@def-independent-finite).
-We also use four facts from that chapter.
-Expectation is linear, by @thm-expectation-linear. Functions of
-independent random vectors are independent, by @lem-independent-functions.
-The expectation of a
-product of independent random variables is the product of the
-expectations, by @thm-independent-product. Finally, by the formulas
-of @lem-variance-formula,
+The proof uses the probability of @sec-stoch-probability: random
+variables on a finite probability space with their expectations and
+variances (@def-finite-probability and @def-variance-finite), and
+independence (@def-independent-finite). It also uses four facts proved
+there. Expectation is linear by @thm-expectation-linear, and functions
+of independent random vectors are independent
+by @lem-independent-functions. The expectation of a product of
+independent random variables is the product of the expectations
+by @thm-independent-product, and
 $\operatorname{Var}[X] = \mathbb{E}[X^2] - \mathbb{E}[X]^2$ and
-$\operatorname{Var}[cX] = c^2\operatorname{Var}[X]$ for every real $c$.
+$\operatorname{Var}[cX] = c^2\operatorname{Var}[X]$ for every real $c$
+by @lem-variance-formula.
 
 ::: {#thm-attention-scale}
 ## Size of a random dot product
@@ -219,12 +212,13 @@ $c = 1/\sqrt{d_h}$, the score has mean $0$ and variance $d_h/d_h = 1$.
 The hypotheses hold in particular when all $2d_h$ components are drawn
 independently of one another, as when the entries of a model are
 initialised at random. The book proves the facts about independence
-and expectation only on finite probability spaces. They hold for
-random variables with any distributions whose variances exist,
-including the normal distributions used to initialise the book's
-model, and with them the theorem; see @billingsley1995probability
-[Theorem 20.2 and eq. (21.18)] for proofs, which use measure theory.
-The same calculation appears in a footnote of @vaswani2017attention.
+and expectation only on finite probability spaces. As @sec-nn-init
+notes, they hold for random variables with densities too, in the sense
+of @def-nn-density, including the normal distributions used to
+initialise the book's model, and with them the theorem. For any
+distributions whose variances exist, @billingsley1995probability
+[Theorem 20.2 and eq. (21.18)] proves them using measure theory. The
+same calculation appears in a footnote of @vaswani2017attention.
 
 ```{python}
 #| include: false

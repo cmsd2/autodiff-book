@@ -1044,24 +1044,22 @@ $0.747$, which exceeds $\ln 2 \approx 0.693$ by $0.053$, close to
 $a^2/2 \approx 0.054$. Random logits raise the expected loss above
 $\ln|V|$ by about half their variance.
 
-Making this precise for the model needs two facts about random
-variables that can take any real value, beyond the probability of
-finitely many outcomes; @deisenroth2020mathematics [ch. 6] develops
-both. A random variable $w$ has the *normal distribution*
-$N(\nu, \sigma^2)$, with $\sigma > 0$, if for all $a < b$ the
-probability that $a \le w \le b$ is
-$\int_a^b \varphi(w)\,dw$, where
-$\varphi(w) = e^{-(w - \nu)^2/(2\sigma^2)}/(\sqrt{2\pi}\,\sigma)$ is its
-*density*. Then $\int_{-\infty}^\infty\varphi = 1$, $w$ has mean $\nu$
-and variance $\sigma^2$, and the expectation of a function $g(w)$ is
-$\mathbb{E}[g(w)] = \int_{-\infty}^\infty g(w)\varphi(w)\,dw$ whenever
-the integral converges. microgpt draws every weight from
-$N(0, 0.08^2)$, independently of the others. The second fact is that
-the expectation of a product of independent random variables is the
-product of their expectations, when these exist. The density gives
-one formula that the proof below uses: if $w$ has distribution
-$N(0, \sigma^2)$ and $c$ is a real number, then, completing the
-square,
+Making this precise for the model needs random variables that can take
+any real value. @def-nn-density defines the normal distribution
+$N(\mu, s^2)$ through its density $\varphi$: a random variable $w$
+with this distribution has mean $\mu$ and variance $s^2$, and
+$\mathbb{E}[g(w)] = \int_{-\infty}^\infty g(t)\varphi(t)\,dt$ whenever
+$\int_{-\infty}^\infty |g(t)|\varphi(t)\,dt$ is finite. microgpt draws
+every weight from $N(0, 0.08^2)$, independently of the others. The
+proof also uses the rule that the expectation of a product of
+independent random variables is the product of their expectations,
+when these exist. @thm-independent-product proves it for two random
+variables on a finite probability space, induction on the number of
+factors extends it to more (with @lem-independent-functions), and
+as @sec-nn-init notes it holds for random variables with densities too.
+The density gives one formula that the proof below uses: if $w$ has
+distribution $N(0, \sigma^2)$ and $c$ is a real number, then,
+completing the square,
 $$
 \mathbb{E}\bigl[e^{cw}\bigr]
 = \int_{-\infty}^\infty \frac{e^{cw - w^2/(2\sigma^2)}}{\sqrt{2\pi}\,\sigma}\,dw

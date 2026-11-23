@@ -924,20 +924,15 @@ after every step. The spread of the random weights, measured by their
 standard deviation, matters too, because it sets the size of the
 pre-activations, and so of everything downstream.
 
-The computation uses expectation and variance. @def-finite-probability
-describes a finite sample space $\Omega$ in which each outcome $\omega$
-has a probability $P(\omega) \ge 0$, these probabilities summing to
-$1$. A *random variable* is a function $X$ on $\Omega$, its
-*expectation* is $\mathbb{E}[X] = \sum_\omega P(\omega)X(\omega)$, its
-*variance* is $\operatorname{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$,
-and the square root of the variance is its *standard deviation*.
-Random variables $X_1, \dots, X_k$ are *independent* if
-$P(X_1 = c_1, \dots, X_k = c_k) = P(X_1 = c_1)\cdots P(X_k = c_k)$ for
-all values $c_1, \dots, c_k$. @sec-stochastic proves the rules we
-need: expectation is linear,
-$\operatorname{Var}(cX) = c^2\operatorname{Var}(X)$, and the variance
-of a sum of independent random variables is the sum of their
-variances.
+The computation uses expectation and variance,
+which @sec-stoch-probability defines for random variables on a finite
+probability space in @def-finite-probability and @def-variance-finite,
+and independence, which it defines in @def-independent-finite. It also
+uses rules proved there. Expectation is linear,
+by @thm-expectation-linear, and $\operatorname{Var}[cX] =
+c^2\operatorname{Var}[X]$, by @lem-variance-formula. The variance of a
+sum of independent random variables is the sum of their variances,
+by @thm-variance-sum.
 
 A small case shows what to expect. Let $\mathbf{x} = (1, 2)^\top$
 and let the two weights $w_1$ and $w_2$ of a neuron be independent,
@@ -967,7 +962,7 @@ Its expectation is $\mathbb{E}[X] = \int_{-\infty}^{\infty}t f(t)\,dt$,
 when $\int_{-\infty}^{\infty}|t| f(t)\,dt$ is finite, and more
 generally $\mathbb{E}[g(X)] = \int_{-\infty}^{\infty}g(t)f(t)\,dt$ when
 $\int_{-\infty}^{\infty}|g(t)|f(t)\,dt$ is finite. Its variance is
-$\operatorname{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$.
+$\operatorname{Var}[X] = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$.
 For real $\mu$ and $s > 0$, the *normal distribution* $N(\mu, s^2)$
 is the distribution with density
 $$
@@ -1001,7 +996,7 @@ initialisation. Suppose the weights and bias of a unit in the first
 layer are independent, each with a normal distribution with mean $0$
 and positive variance, and $\mathbf{x}$ is a fixed input. Each term
 $w_jx_j$ with $x_j \ne 0$ is normal with mean $0$ and variance
-$x_j^2\operatorname{Var}(w_j)$, and a sum of independent normal random
+$x_j^2\operatorname{Var}[w_j]$, and a sum of independent normal random
 variables is again normal [@wasserman2004all, sec. 2.4]. So
 $\mathbf{w}\cdot\mathbf{x} + b$, the sum of $b$ and these terms, is
 normal with mean $0$ and positive variance, and it equals $0$ with
@@ -1012,10 +1007,10 @@ probability $0$.
 
 Let $\mathbf{x}\in\mathbb{R}^n$ be fixed, and let $W$ be an
 $m\times n$ random matrix whose entries $w_{ij}$ are independent,
-with $\mathbb{E}[w_{ij}] = 0$ and $\operatorname{Var}(w_{ij}) = s^2$.
+with $\mathbb{E}[w_{ij}] = 0$ and $\operatorname{Var}[w_{ij}] = s^2$.
 Then $\mathbf{z} = W\mathbf{x}$ satisfies, for each $i$,
 $$
-\mathbb{E}[z_i] = 0, \qquad \operatorname{Var}(z_i) = \mathbb{E}[z_i^2] = s^2\|\mathbf{x}\|^2 ,
+\mathbb{E}[z_i] = 0, \qquad \operatorname{Var}[z_i] = \mathbb{E}[z_i^2] = s^2\|\mathbf{x}\|^2 ,
 $$
 and so $\mathbb{E}\|\mathbf{z}\|^2 = ms^2\|\mathbf{x}\|^2$.
 :::
@@ -1024,14 +1019,14 @@ and so $\mathbb{E}\|\mathbf{z}\|^2 = ms^2\|\mathbf{x}\|^2$.
 $z_i = \sum_j w_{ij}x_j$, where the $x_j$ are constants. By
 linearity, $\mathbb{E}[z_i] = \sum_j x_j\mathbb{E}[w_{ij}] = 0$. The
 terms $w_{ij}x_j$ for $j = 1, \dots, n$ are independent, and
-$\operatorname{Var}(w_{ij}x_j) = x_j^2s^2$, so
-$\operatorname{Var}(z_i) = s^2\sum_jx_j^2 = s^2\|\mathbf{x}\|^2$.
-Since $\mathbb{E}[z_i] = 0$, $\operatorname{Var}(z_i) = \mathbb{E}[z_i^2]$.
+$\operatorname{Var}[w_{ij}x_j] = x_j^2s^2$, so
+$\operatorname{Var}[z_i] = s^2\sum_jx_j^2 = s^2\|\mathbf{x}\|^2$.
+Since $\mathbb{E}[z_i] = 0$, $\operatorname{Var}[z_i] = \mathbb{E}[z_i^2]$.
 Summing over $i$ gives $\mathbb{E}\|\mathbf{z}\|^2$.
 :::
 
 If the input has components of typical size $1$, so that
-$\|\mathbf{x}\|^2 \approx n$, then $\operatorname{Var}(z_i) \approx s^2n$.
+$\|\mathbf{x}\|^2 \approx n$, then $\operatorname{Var}[z_i] \approx s^2n$.
 Keeping the pre-activations at the size of the input means
 $s = 1/\sqrt{n}$: the standard deviation of the weights should shrink
 like one over the square root of the number of inputs to each unit. The same
