@@ -2,12 +2,17 @@ project:
   type: book
   output-dir: _book
   execute-dir: project
+  resources:
+    - assets/fonts/
 
 book:
   title: "From the Chain Rule to the Transformer"
   subtitle: "The mathematics of automatic differentiation and neural language models"
   author: "C. Dawes"
   date: last-modified
+  site-url: https://cmsd2.github.io/autodiff-book/
+  repo-url: https://github.com/cmsd2/autodiff-book
+  downloads: [pdf]
   chapters:
     - index.qmd
     - part: "Calculus in several variables"
@@ -46,7 +51,8 @@ jupyter: python3
 
 format:
   html:
-    theme: cosmo
+    theme: [cosmo, assets/theme.scss]
+    css: assets/book.css
     number-depth: 2
   pdf:
     documentclass: scrbook
@@ -55,3 +61,7 @@ format:
     number-depth: 2
     toc-depth: 2
     colorlinks: true
+    include-in-header:
+      # KOMA-Script sets headings in sans serif; keep them in Latin Modern Roman.
+      text: |
+        \addtokomafont{disposition}{\rmfamily}

@@ -1,0 +1,20 @@
+/*-- scss:defaults --*/
+
+// Latin Modern, the OpenType version of Computer Modern, to match the PDF.
+// The @font-face rules are in book.css.
+$font-family-sans-serif: "Latin Modern Roman", "Computer Modern Serif", Georgia, serif;
+$font-family-monospace: "Latin Modern Mono", "Computer Modern Typewriter", Menlo, monospace;
+$headings-font-family: $font-family-sans-serif;
+$headings-font-weight: 700;
+$font-size-root: 19px;
+$line-height-base: 1.5;
+
+$body-color: #1a1a1a;
+$link-color: #7a1f1f;
+
+/*-- scss:rules --*/
+
+h1.title,
+.quarto-title .title {
+  font-weight: 700;
+}

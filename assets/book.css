@@ -1,0 +1,68 @@
+@font-face {
+  font-family: "Latin Modern Roman";
+  src: url("fonts/lmroman10-regular.otf") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Latin Modern Roman";
+  src: url("fonts/lmroman10-bold.otf") format("opentype");
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Latin Modern Roman";
+  src: url("fonts/lmroman10-italic.otf") format("opentype");
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Latin Modern Roman";
+  src: url("fonts/lmroman10-bolditalic.otf") format("opentype");
+  font-weight: bold;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Latin Modern Mono";
+  src: url("fonts/lmmono10-regular.otf") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Theorem styles as in LaTeX's amsthm: italic statements for theorems,
+   lemmas and corollaries, upright text for definitions, examples and
+   exercises, with an upright bold heading on each. */
+.theorem {
+  font-style: italic;
+  margin: 1.2em 0;
+}
+
+.theorem.definition,
+.theorem.example,
+.theorem.exercise {
+  font-style: normal;
+}
+
+.theorem-title {
+  font-style: normal;
+}
+
+/* An end-of-proof square, as in the PDF. */
+.proof > p:last-child::after {
+  content: "\25A1";
+  float: right;
+  margin-left: 1em;
+}
+
+.proof {
+  margin-bottom: 1.2em;
+}

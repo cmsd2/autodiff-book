@@ -1,9 +1,10 @@
 # From the Chain Rule to the Transformer
 
+[![Read the book](https://img.shields.io/badge/read-the_book-7a1f1f)](https://cmsd2.github.io/autodiff-book/)
+
 A theory-first textbook on the mathematics behind automatic
 differentiation and small transformer language models, for readers
-who have finished a first university course in calculus and matrices
-(for example the Open University's MST124 and MST125).
+who have finished a first university course in calculus and matrices.
 
 ## Layout
 
@@ -13,6 +14,10 @@ who have finished a first university course in calculus and matrices
   against Crossref.
 - `checks/`: helpers for the hidden checks. Chapters call them from
   cells marked `include: false`, using SymPy, NumPy and Maxima.
+- `assets/`: the HTML styles, and Latin Modern fonts so the web
+  edition matches the PDF.
+- `.github/workflows/publish.yml`: renders both editions and publishes
+  them to GitHub Pages on every push to `master`.
 - `lean/`: Lean 4 proofs of selected theorems, against Mathlib
   v4.36.0. Each theorem's doc comment names the label of the result
   it checks in the text.

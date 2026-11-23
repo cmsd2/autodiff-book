@@ -1,0 +1,62 @@
+name: Publish book
+
+# Renders the HTML and PDF editions on every push to master and
+# publishes them to GitHub Pages. Rendering runs every hidden check in
+# the chapters, so a false claim fails the build and nothing is
+# published.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Maxima
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends maxima
+
+      - uses: astral-sh/setup-uv@v10.4.0
+
+      - name: Install Python packages
+        run: uv sync --frozen
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.10.19
+          tinytex: true
+
+      - name: Render HTML and PDF
+        env:
+          QUARTO_PYTHON: ${{ github.workspace }}/.venv/bin/python
+        run: quarto render
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _book
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
