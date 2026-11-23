@@ -564,7 +564,7 @@ average, which is easier to compute and to differentiate.
 
 Suppose a model makes $N$ predictions on a text and gives probability
 $p_i > 0$ to the token that actually comes next at prediction $i$. Its
-*loss* on the text is the average negative log-likelihood
+loss on the text is the average negative log-likelihood
 $$
 L = -\frac1N\sum_{i=1}^{N}\ln p_i ,
 $$ {#eq-lm-average-nll}

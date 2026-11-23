@@ -1,10 +1,12 @@
 # Functions of several variables {#sec-several-variables}
 
 The small language model in the last chapter of this book has 4192
-adjustable numbers, and training it means answering one question
-thousands of times: if every one of those numbers changes a little,
-how much does the error change? For a function of one variable the
-derivative answers that question. Near a point $a$,
+adjustable numbers, its parameters. Training it means making one
+number that measures the model's error, its loss, as small as
+possible (@sec-gradient-descent states these terms precisely), and that means
+answering one question thousands of times: if every parameter changes
+a little, how much does the loss change? For a function of one
+variable the derivative answers that question. Near a point $a$,
 $$
 f(a + h) \approx f(a) + f'(a)\,h ,
 $$

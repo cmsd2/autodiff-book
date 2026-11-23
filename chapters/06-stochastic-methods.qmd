@@ -1,13 +1,14 @@
 # Stochastic and adaptive methods {#sec-stochastic}
 
-A model learns from a list of $N$ examples, its *training set*, and
-its loss is the average of the losses on the individual examples:
+A model learns from its training data (@sec-gradient-descent), a list
+of $N$ examples, and its loss is the average of the losses on the
+individual examples:
 $$
 f(\boldsymbol{\theta}) = \frac1N\sum_{i=1}^N f_i(\boldsymbol{\theta}),
 $$ {#eq-stoch-average-loss}
 where $f_i$ measures the error on example $i$. Its gradient is the
 average of the $N$ gradients $\nabla f_i$, and computing it exactly
-means a pass through the whole training set for every step. The model
+means a pass through all the training data for every step. The model
 in @sec-small-gpt trains on a list of names, and instead takes each
 step using the gradient of the loss on a single name. That gradient is
 random, because the choice of name is, but it is right on average. The
@@ -40,7 +41,7 @@ rng = np.random.default_rng(6)
 
 ## Probability on a finite set {#sec-stoch-probability}
 
-Suppose a training set has three examples, and at the current
+Suppose the training data have three examples, and at the current
 parameters their gradients are the numbers $-1$, $-2$ and $-6$. The
 full gradient is their average, $-3$. Pick one example at random,
 each with probability $\frac13$, and use its gradient instead. The

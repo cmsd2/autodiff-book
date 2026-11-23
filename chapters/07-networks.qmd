@@ -180,7 +180,7 @@ $$
 \mathbf{a}_l = \sigma(\mathbf{z}_l) \quad (l = 1, \dots, D-1),
 $$ {#eq-nn-mlp}
 and its output is $\mathbf{z}_D$. Layers $1$ to $D-1$ are the
-*hidden* layers. The *parameters* of the network are all the entries
+*hidden* layers. The parameters (@sec-gradient-descent) of the network are all the entries
 of $W_1, \mathbf{b}_1, \dots, W_D, \mathbf{b}_D$, collected in one
 vector $\boldsymbol{\theta}\in\mathbb{R}^p$ with
 $p = \sum_{l=1}^D n_l(n_{l-1} + 1)$.
@@ -195,14 +195,16 @@ $n_0$ is the number of inputs. Layer $l$ contributes $n_ln_{l-1}$
 weights and $n_l$ biases to the count $p$.
 
 The last layer has no activation function: its output is a vector of
-real numbers that a loss function reads. Training uses a finite list
-of *training examples*, pairs $(\mathbf{x}, \mathbf{y})$ of an input
-and the output we would like the network to give for it, called the
-*target*. A *loss function* $\ell\colon\mathbb{R}^{n_D}\to\mathbb{R}$
-measures how far the output is from the target, and *training* means
-searching for parameters that make the average loss over the training
-examples small, by gradient descent or one of its variants (@sec-stochastic). When the target is a vector of real numbers (a
-*regression* problem) the loss might be
+real numbers that a loss function reads. The training data
+of @sec-gradient-descent are here a finite list of *training examples*,
+pairs $(\mathbf{x}, \mathbf{y})$ of an input and the output we would
+like the network to give for it, called the *target*. A *loss
+function* $\ell\colon\mathbb{R}^{n_D}\to\mathbb{R}$ measures how far
+the output is from the target, and training means searching for
+parameters that make the average loss over the training examples
+small, by gradient descent or one of its variants (@sec-stochastic).
+When the target is a vector of real numbers (a *regression* problem)
+the loss might be
 $\ell(\mathbf{z}) = \tfrac12\|\mathbf{z} - \mathbf{y}\|^2$. When the
 target is one of finitely many classes (a *classification* problem,
 such as predicting the next letter of a word) it is the cross-entropy
