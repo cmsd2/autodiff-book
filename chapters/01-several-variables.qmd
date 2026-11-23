@@ -4,15 +4,15 @@ The small language model in the last chapter of this book has 4192
 adjustable numbers, and training it means answering one question
 thousands of times: if every one of those numbers changes a little,
 how much does the error change? For a function of one variable the
-derivative answers that question. This chapter builds the
-corresponding idea for functions of many variables.
-
-The central idea is that a differentiable function looks, close to a
-point, like a linear map. That linear map is the derivative. Its
-matrix holds the partial derivatives, and for a function with a single
-output it can be written as a vector, the gradient, which points in
-the direction of steepest increase. The rest of the book computes
-gradients and uses them.
+derivative answers that question. Near a point $a$,
+$$
+f(a + h) \approx f(a) + f'(a)\,h ,
+$$
+so a small nudge $h$ to the input changes the output by about
+$f'(a)$ times the nudge. This chapter extends that approximation to
+functions with many inputs and many outputs. Before the definitions,
+a worked example shows what the extension looks like and why matrices
+appear in it.
 
 ```{python}
 #| include: false
@@ -21,6 +21,127 @@ import sympy as sp
 from checks import check, close, maxima_zero, sym_equal
 
 rng = np.random.default_rng(1)
+```
+
+## Nudging several inputs at once {#sec-nudging}
+
+Take $f(x, y) = x^2y$ at the point $(1, 2)$, where $f(1, 2) = 2$. Nudge
+one input at a time, holding the other fixed.
+
+- Nudge $x$ alone. With $y = 2$ held fixed, $f$ is the function
+  $2x^2$ of one variable, whose derivative at $x = 1$ is $4$. So a
+  nudge $h_1$ to $x$ changes $f$ by about $4h_1$: for $h_1 = 0.01$,
+  $f(1.01, 2) = 2.0402$, a change of $0.0402$.
+- Nudge $y$ alone. With $x = 1$ held fixed, $f$ is the function $y$,
+  whose derivative is $1$. So a nudge $h_2$ to $y$ changes $f$ by
+  $1\cdot h_2$: for $h_2 = 0.01$, $f(1, 2.01) = 2.01$, a change of
+  $0.01$.
+
+These two rates, $4$ and $1$, are the *partial derivatives* of $f$ at
+$(1, 2)$, written $\partial f/\partial x$ and $\partial f/\partial y$:
+each is an ordinary derivative, taken with the other input frozen.
+
+Now nudge both inputs together, by $h_1 = h_2 = 0.01$. The two
+separate effects predict a change of about $0.04 + 0.01 = 0.05$, and
+indeed $f(1.01, 2.01) = 2.050401$, a change of $0.050401$. The
+separate effects add up. Expanding shows why:
+$$
+f(1 + h_1, 2 + h_2) - f(1, 2)
+= \underbrace{4h_1 + h_2}_{\text{first order}}
+  + \underbrace{2h_1^2 + 2h_1h_2 + h_1^2h_2}_{\text{products of nudges}} .
+$$
+The leftover terms are products of two or more nudges. When the
+nudges are small these products are much smaller still: halving both
+nudges halves the first-order part but roughly quarters the leftover.
+So for small nudges
+$$
+f(1 + h_1, 2 + h_2) \approx f(1, 2) + 4h_1 + 1h_2 .
+$$ {#eq-nudge-one-output}
+
+The change on the right is a fixed combination $4h_1 + 1h_2$ of the
+nudges. A function of the nudges of this form, a sum of fixed
+multiples of them, is what @sec-linear-maps calls a *linear map*, and
+it is the several-variable version of "multiply the nudge by
+$f'(a)$". That linear map is the derivative of $f$ at $(1, 2)$.
+
+A model usually has several outputs, so add a second one,
+$g(x, y) = x + 3y$, and treat the pair as one function
+$F(x, y) = (x^2y,\; x + 3y)$ with values in $\mathbb{R}^2$. Each
+output gets its own approximation, and the two approximations fit
+into one matrix equation:
+$$
+F(1 + h_1, 2 + h_2) \approx F(1, 2) +
+\underbrace{\begin{pmatrix} 4 & 1\\ 1 & 3 \end{pmatrix}}_{J}
+\begin{pmatrix} h_1\\ h_2 \end{pmatrix}
+= \begin{pmatrix} 2\\ 7 \end{pmatrix} +
+\begin{pmatrix} 4h_1 + h_2\\ h_1 + 3h_2 \end{pmatrix}.
+$$
+The matrix is a table of the partial derivatives, laid out so that
+matrix multiplication does the adding up:
+
+- **row $i$** lists how output $i$ responds to each input: row 1 is
+  $(\partial f/\partial x,\ \partial f/\partial y) = (4, 1)$, and row 2
+  is $(\partial g/\partial x,\ \partial g/\partial y) = (1, 3)$;
+- **column $j$** lists how every output responds to input $j$ alone:
+  nudging only $x$ by $h_1$ multiplies column 1 by $h_1$, and changes
+  $F$ by about $(4h_1, h_1)$;
+- **entry $(i, j)$** is the rate at which output $i$ changes per unit
+  nudge of input $j$, with the other inputs frozen.
+
+Multiplying $J$ by the vector of nudges takes each column, scales it
+by its nudge, and adds the results. That is exactly the rule
+"separate effects add up". With the nudge $(0.01, 0.01)$ it predicts
+the change $(0.05, 0.04)$; the true change is $(0.050401, 0.04)$.
+
+This one example contains the whole chapter. Close to a point, a
+well-behaved function changes by approximately a linear map of the
+nudge, and that linear map is the derivative. A linear map between
+spaces of vectors is always given by a matrix (@thm-matrix-of-linear),
+and for the derivative the entries of that matrix are the partial
+derivatives (@thm-jacobian). When there is a single output the matrix
+has a single row, and standing it upright as a column vector gives
+the *gradient*, which points in the direction in which the output
+increases fastest (@thm-steepest). Gradients are what the rest of the
+book computes and uses.
+
+Two points need care before these statements can be made precise.
+"Approximately" must mean that the error is small compared with the
+nudge, as it was above, where the leftover terms were products of
+nudges. And partial derivatives alone, which look along one input at
+a time, can exist even when nudging several inputs together does not
+behave like this at all (@exm-partials-not-enough). The sections that
+follow set up the language of vectors and linear maps, and then the
+definitions that make "approximately linear" exact.
+
+```{python}
+#| include: false
+# The worked example in "Nudging several inputs at once".
+xs_, ys_, h1_, h2_ = sp.symbols("x y h1 h2", real=True)
+f_n = xs_**2 * ys_
+check(f_n.subs({xs_: 1, ys_: 2}) == 2, "f(1,2) = 2")
+check(sp.diff(f_n, xs_).subs({xs_: 1, ys_: 2}) == 4, "df/dx = 4")
+check(sp.diff(f_n, ys_).subs({xs_: 1, ys_: 2}) == 1, "df/dy = 1")
+check(sp.nsimplify(f_n.subs({xs_: sp.Rational(101, 100), ys_: 2})) == sp.Rational(20402, 10000), "f(1.01,2)")
+check(f_n.subs({xs_: 1, ys_: sp.Rational(201, 100)}) == sp.Rational(201, 100), "f(1,2.01)")
+check(f_n.subs({xs_: sp.Rational(101, 100), ys_: sp.Rational(201, 100)}) == sp.Rational(2050401, 1000000),
+      "f(1.01,2.01)")
+sym_equal(sp.expand(f_n.subs({xs_: 1 + h1_, ys_: 2 + h2_}) - 2),
+          4*h1_ + h2_ + 2*h1_**2 + 2*h1_*h2_ + h1_**2*h2_, "expansion of f(1+h1, 2+h2) - f(1,2)")
+maxima_zero("expand((1+h1)^2*(2+h2) - 2) - (4*h1 + h2 + 2*h1^2 + 2*h1*h2 + h1^2*h2)",
+            "expansion in Maxima")
+# Halving both nudges halves the first-order part and roughly quarters the rest.
+rest = lambda h: 2*h**2 + 2*h*h + h**2*h
+close(rest(0.01) / rest(0.005), 4, "leftover roughly quarters", tol=0.01)
+Fn = sp.Matrix([xs_**2 * ys_, xs_ + 3*ys_])
+check(Fn.subs({xs_: 1, ys_: 2}) == sp.Matrix([2, 7]), "F(1,2)")
+Jn = Fn.jacobian([xs_, ys_]).subs({xs_: 1, ys_: 2})
+check(Jn == sp.Matrix([[4, 1], [1, 3]]), "Jacobian of F at (1,2)")
+pred = Jn * sp.Matrix([sp.Rational(1, 100), sp.Rational(1, 100)])
+check(pred == sp.Matrix([sp.Rational(5, 100), sp.Rational(4, 100)]), "predicted change (0.05, 0.04)")
+true = Fn.subs({xs_: sp.Rational(101, 100), ys_: sp.Rational(201, 100)}) - sp.Matrix([2, 7])
+check(true == sp.Matrix([sp.Rational(50401, 1000000), sp.Rational(4, 100)]), "true change (0.050401, 0.04)")
+check(Jn[:, 0] * sp.Rational(1, 100) == sp.Matrix([sp.Rational(4, 100), sp.Rational(1, 100)]),
+      "column 1 scaled by h1")
 ```
 
 ## Vectors and lengths in $\mathbb{R}^n$ {#sec-rn}
