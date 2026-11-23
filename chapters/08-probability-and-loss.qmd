@@ -1,7 +1,7 @@
 # Probability and loss functions {#sec-probability-loss}
 
-A language model does not predict the next character; it assigns a
-probability to every possible next character. Training compares those
+A language model predicts the next character by assigning a
+probability to every character that could come next. Training compares those
 probabilities with the character that actually came next, and the
 number that measures the mismatch is the loss. This chapter derives
 that loss from one principle, maximum likelihood: choose the
@@ -10,9 +10,10 @@ logarithms turns the likelihood into a sum, and its negative average
 is the cross-entropy between the data and the model.
 
 Two pieces of mathematics carry the chapter. Gibbs' inequality says
-that the Kullback–Leibler divergence between two distributions is
-never negative, and from it follows that the best categorical model of
-a sequence of observations is the table of relative frequencies, the
+that the Kullback–Leibler divergence, a measure of how far one
+probability distribution is from another, is never negative. From it
+follows that the best model of a sequence of observations drawn from a
+fixed finite set is the table of relative frequencies, the
 result that @sec-language-models uses to build a first language
 model. The softmax function turns a vector of real scores into a
 distribution, and the gradient of the cross-entropy loss with respect
@@ -49,13 +50,30 @@ def H(p, q=None):
 
 ## Distributions on a finite set {#sec-prob-distributions}
 
-The outcomes in this book form a finite set: the 27 tokens of the
-vocabulary $V$, or the faces of a die. @def-finite-probability sets up
-probability on a finite sample space. Here we need only the
-probabilities of the outcomes themselves. A *probability
-distribution* on a finite set $V$ is a function $p\colon V\to[0, 1]$
-with $\sum_{v\in V}p(v) = 1$. If the elements of $V$ are numbered
-$1, \dots, n$, we also write $p$ as the vector
+The book's model reads and writes text as a sequence of *tokens*,
+here the 26 letters and one boundary token that marks where a name
+starts and ends. The set of tokens is the *vocabulary* $V$, with
+$|V| = 27$ elements. At each position the model's prediction is a list
+of 27 non-negative numbers summing to $1$, one probability for each
+token that could come next. Such a list is a probability
+distribution on $V$.
+
+@def-finite-probability sets up probability on a finite sample space
+$\Omega$: each outcome $\omega$ has a probability $P(\omega) \ge 0$,
+these sum to $1$, and an event $A \subseteq \Omega$ has probability
+$P(A) = \sum_{\omega\in A}P(\omega)$. A *random variable* with values
+in a finite set $V$ is a function $X\colon\Omega\to V$, and
+$P(X = v)$ is the probability of the event
+$\{\omega : X(\omega) = v\}$. For one roll of a fair die, $\Omega$ is
+$\{1, \dots, 6\}$ with each outcome of probability $\tfrac16$; the
+random variable "the roll is even", with values in
+$\{\text{yes}, \text{no}\}$, takes each value with probability
+$\tfrac12$. Often only these probabilities matter, not $\Omega$
+itself.
+
+A *probability distribution* on a finite set $V$ is a function
+$p\colon V\to[0, 1]$ with $\sum_{v\in V}p(v) = 1$. If the elements of
+$V$ are numbered $1, \dots, n$, we also write $p$ as the vector
 $\mathbf{p} = (p_1, \dots, p_n)^\top$ with $p_i = p(i)$. A random
 variable $X$ with values in $V$ has distribution $p$ if
 $P(X = v) = p(v)$ for each $v$, and we write $X \sim p$.
@@ -65,9 +83,40 @@ The set of all of them is the *probability simplex*
 $\{\mathbf{p}\in\mathbb{R}^n : p_i \ge 0,\ \sum_ip_i = 1\}$; for
 $n = 3$ it is the triangle with corners $\mathbf{e}_1$,
 $\mathbf{e}_2$ and $\mathbf{e}_3$. The *uniform* distribution has
-$p(v) = 1/|V|$ for every $v$. For a function $f$ on $V$, the
-expectation of $f(X)$ is
+$p(v) = 1/|V|$ for every $v$; it describes equally likely outcomes.
+For a function $f$ on $V$, the expectation of $f(X)$ is
 $\mathbb{E}[f(X)] = \sum_{v\in V}p(v)f(v)$, as in @sec-stochastic.
+
+Data consist of many observations, and the model treats them as
+separate draws that do not influence each other. Roll two fair dice:
+the sample space is the set of $36$ equally likely pairs, and the
+first roll $X_1$ and the second roll $X_2$ satisfy
+$P(X_1 = 1, X_2 = 2) = \tfrac1{36} = P(X_1 = 1)\,P(X_2 = 2)$, and
+likewise for every pair of values. Random variables
+$X_1, \dots, X_N$ with values in $V$ are *independent* if
+$$
+P(X_1 = v_1, \dots, X_N = v_N) = P(X_1 = v_1)\cdots P(X_N = v_N)
+\qquad\text{for all } v_1, \dots, v_N\in V ,
+$$
+where the left side is the probability that all $N$ equalities hold.
+They are *independent draws from* $p$ if in addition each $X_i$ has
+distribution $p$; then the probability of observing the sequence
+$v_1, \dots, v_N$ is $p(v_1)\cdots p(v_N)$. @def-nn-density extends
+these notions to real random variables with densities.
+
+```{python}
+#| include: false
+from itertools import product as _product
+check(sum(1 for r in range(1, 7) if r % 2 == 0) / 6 == 0.5, "even roll has probability 1/2")
+pairs = list(_product(range(1, 7), repeat=2))
+check(len(pairs) == 36, "36 pairs")
+for a_ in range(1, 7):
+    for b_ in range(1, 7):
+        joint = sum(1 for (u, v) in pairs if u == a_ and v == b_) / 36
+        m1 = sum(1 for (u, v) in pairs if u == a_) / 36; m2 = sum(1 for (u, v) in pairs if v == b_) / 36
+        close(joint, m1 * m2, "two dice are independent")
+close(1/36, (1/6) * (1/6), "1/36 = 1/6 * 1/6")
+```
 
 ## Likelihood {#sec-prob-likelihood}
 
@@ -226,7 +275,7 @@ H(\hat p, q) = -\sum_{v\in V}\frac{c_v}{N}\ln q(v) = -\frac1N\sum_{i=1}^N\ln q(x
 $$ {#eq-prob-ce-empirical}
 because $\ln q(v)$ appears once in the second sum for each
 observation equal to $v$. So the loss @eq-prob-nll is the cross-entropy
-from the empirical distribution to the model.
+of the model relative to the empirical distribution.
 
 The excess of the cross-entropy over the entropy, $1.099 - 0.950 \approx 0.148$
 in the example above, measures what the model loses by predicting
@@ -244,9 +293,8 @@ with $p(v) > 0$. Whenever it is finite,
 $D_{\mathrm{KL}}(p\,\|\,q) = H(p, q) - H(p)$.
 :::
 
-The divergence measures the extra information content from using
-$q$ when the
-data follow $p$. It is not symmetric: for $p = (0.6, 0.2, 0.2)$ and
+The divergence measures the extra average information content that
+comes from using $q$ when the data follow $p$. It is not symmetric: for $p = (0.6, 0.2, 0.2)$ and
 the uniform $u$ on three outcomes,
 $D_{\mathrm{KL}}(p\,\|\,u) \approx 0.148$ and
 $D_{\mathrm{KL}}(u\,\|\,p) \approx 0.145$. Its central property rests
@@ -379,9 +427,10 @@ $\ln$ is increasing, the same holds for $\mathcal{L}$.
 In @exm-likelihood the counts are $3, 1, 1$, so the maximum
 likelihood estimate is $\hat p = (0.6, 0.2, 0.2)$, and the largest
 possible likelihood is $0.00864 = e^{-5H(\hat p)}$. The proof uses no
-calculus: setting derivatives to zero would need a Lagrange
-multiplier for the constraint $\sum_vq(v) = 1$, and would not show on
-its own that the critical point is a maximum. @thm-bigram-mle applies
+calculus. Setting derivatives to zero would have to respect the
+constraint $\sum_vq(v) = 1$ (with a Lagrange multiplier, a method for
+constrained optimisation that the book does not use), and would not
+show on its own that the critical point is a maximum. @thm-bigram-mle applies
 the theorem once for each preceding character.
 
 ```{python}
@@ -422,7 +471,7 @@ $\operatorname{softmax}(\mathbf{z})\in\mathbb{R}^n$ with entries
 $$
 \operatorname{softmax}(\mathbf{z})_i = \frac{e^{z_i}}{\sum_{j=1}^ne^{z_j}} .
 $$
-The entries $z_i$ are called *logits*.
+The entries $z_i$ of the input are called *logits*.
 :::
 
 Every entry of $\mathbf{p} = \operatorname{softmax}(\mathbf{z})$ is
@@ -433,7 +482,9 @@ exactly when $z_i > z_j$. Every distribution with positive entries
 arises, from $z_i = \ln p_i$, because then $\sum_je^{z_j} = 1$. For
 $n = 2$, dividing numerator and denominator by $e^{z_1}$ gives
 $\operatorname{softmax}(\mathbf{z})_1 = 1/(1 + e^{-(z_1 - z_2)})$, the
-logistic function of the difference of the logits.
+logistic function of the difference of the logits. Solving for that
+difference gives $z_1 - z_2 = \ln(p_1/(1 - p_1))$, the *logit* of
+$p_1$ in statistics, which is where the name comes from.
 
 Adding the same number $c$ to every logit multiplies the numerator
 and the denominator by $e^c$, so
@@ -540,7 +591,8 @@ $0.01\,p_1(\mathbf{e}_1 - \mathbf{p})$.
 ::: {#thm-softmax-jacobian}
 ## Jacobian of softmax
 
-Softmax is differentiable on $\mathbb{R}^n$. With
+Softmax is differentiable on $\mathbb{R}^n$. For
+$\mathbf{z}\in\mathbb{R}^n$ and
 $\mathbf{p} = \operatorname{softmax}(\mathbf{z})$,
 $$
 \frac{\partial p_i}{\partial z_k} = p_i(\delta_{ik} - p_k),
@@ -557,9 +609,11 @@ singular;
 
 (c) $\mathbf{v}^\top J\mathbf{v} = \sum_ip_iv_i^2 - \bigl(\sum_ip_iv_i\bigr)^2 \ge 0$
 for every $\mathbf{v}$, with equality exactly when $\mathbf{v}$ is a
-multiple of $\mathbf{1}$. So $J$ is positive semidefinite, $0$ is an
-eigenvalue with eigenvector $\mathbf{1}$, and every other eigenvalue
-is positive.
+multiple of $\mathbf{1}$. So $J$ is *positive semidefinite* (a
+symmetric matrix $A$ with $\mathbf{v}^\top A\mathbf{v} \ge 0$ for
+every $\mathbf{v}$), its eigenvalues are real, $0$ is an eigenvalue
+whose eigenvectors are the non-zero multiples of $\mathbf{1}$, and
+every other eigenvalue is positive.
 :::
 
 Column $k$ of $J$ lists how every probability responds to an
@@ -599,17 +653,27 @@ Equality holds exactly when one of $\mathbf{a}$, $\mathbf{b}$ is a
 multiple of the other. Since $\mathbf{a} \ne \mathbf{0}$, that means
 $\mathbf{b} = c\mathbf{a}$ for some $c$, that is,
 $\sqrt{p_i}v_i = c\sqrt{p_i}$ for all $i$, and since every
-$p_i > 0$, $v_i = c$ for all $i$. For an eigenvector $\mathbf{v}$
-with eigenvalue $\lambda$, $\mathbf{v}^\top J\mathbf{v} = \lambda\|\mathbf{v}\|^2$,
-so $\lambda \ge 0$, with $\lambda = 0$ only when $\mathbf{v}$ is a
+$p_i > 0$, $v_i = c$ for all $i$.
+
+For the eigenvalues, let $J\mathbf{v} = \lambda\mathbf{v}$ with
+$\mathbf{v} \ne \mathbf{0}$, allowing complex $\lambda$ and complex
+entries in $\mathbf{v}$, and let $\bar{\mathbf{v}}$ be the vector of
+complex conjugates. The number $\bar{\mathbf{v}}^\top J\mathbf{v}$
+equals its own conjugate $\mathbf{v}^\top J\bar{\mathbf{v}}$, because
+$J$ is real and symmetric, so it is real. It also equals
+$\lambda\sum_i|v_i|^2$, so $\lambda$ is real, and then $\mathbf{v}$ can
+be taken real (the real or the imaginary part of a complex eigenvector
+is a real one). For real $\mathbf{v}$,
+$\mathbf{v}^\top J\mathbf{v} = \lambda\|\mathbf{v}\|^2$, so
+$\lambda \ge 0$, with $\lambda = 0$ only when $\mathbf{v}$ is a
 multiple of $\mathbf{1}$.
 :::
 
 The quantity in (c) has a probabilistic reading: if $I$ is a random
 index with distribution $\mathbf{p}$, then
 $\mathbf{v}^\top J\mathbf{v} = \mathbb{E}[v_I^2] - (\mathbb{E}[v_I])^2 = \operatorname{Var}(v_I)$.
-By @thm-prob-lse-gradient, $J$ is also the Hessian of log-sum-exp
-(@def-hessian), so (c) says that the Hessian of
+By @thm-prob-lse-gradient, $J$ is also the Hessian of log-sum-exp,
+the matrix of its second partial derivatives (@def-hessian), so (c) says that the Hessian of
 $\operatorname{lse}$ is positive semidefinite everywhere. Property
 (b) restates @eq-prob-softmax-shift: moving $\mathbf{z}$ along
 $\mathbf{1}$ does not change $\mathbf{p}$, so the derivative in that
@@ -656,12 +720,19 @@ check(set(sp.simplify(e) for e in J2.eigenvals()) == {0, sp.simplify(2*p1_*(1 - 
 
 ## Cross-entropy loss for a softmax model {#sec-prob-softmax-ce}
 
-A classifier, or a language model predicting the next token, computes
-logits $\mathbf{z}$, turns them into probabilities
+A *classifier* is a model that assigns an input to one of $n$
+classes, numbered $1, \dots, n$; a language model predicting the next
+token is one, with the $27$ tokens as classes. It computes logits
+$\mathbf{z}$, turns them into probabilities
 $\mathbf{p} = \operatorname{softmax}(\mathbf{z})$, and is scored on
-the observed outcome $y$ by the information content $-\ln p_y$. By
-@eq-prob-nll, the loss on a data set is the average of these numbers,
-so the gradient of the loss is the average of their gradients.
+the observed class $y$, the target, by the information content
+$-\ln p_y$. By @eq-prob-nll, the loss on a data set is the average of
+these numbers, so the gradient of the loss is the average of their
+gradients. The target $y$ corresponds to the distribution
+$\mathbf{e}_y$ that gives probability $1$ to class $y$ and $0$ to
+every other class; a vector with one entry $1$ and the others $0$ is
+called *one-hot*. In this notation $-\ln p_y = H(\mathbf{e}_y, \mathbf{p})$,
+the cross-entropy of the prediction relative to the one-hot target.
 
 With the logits $(2, 1, 0)$ and observed outcome $y = 2$, the loss is
 $-\ln0.245 \approx 1.408$. Increasing $z_2$ by $0.01$ lowers it by
@@ -703,8 +774,9 @@ $\nabla L = -\frac{1}{p_y}\nabla p_y = -\frac{1}{p_y}p_y(\mathbf{e}_y - \mathbf{
 using row $y$ of $J$. The proof above is shorter because log-sum-exp
 absorbs the quotient.
 
-The gradient is simple to read. Gradient descent changes the logits
-by $-\eta(\mathbf{p} - \mathbf{e}_y)$: it raises the logit of the
+The gradient is simple to read. A gradient descent step with learning
+rate $\eta > 0$ (@sec-gradient-descent) changes the logits by
+$-\eta(\mathbf{p} - \mathbf{e}_y)$: it raises the logit of the
 observed outcome by $\eta(1 - p_y)$ and lowers every other logit $z_i$
 by $\eta p_i$, so the outcomes that took the most probability away
 from $y$ lose the most. Every component lies strictly between $-1$
@@ -767,16 +839,28 @@ applies a $27\times16$ matrix with entries drawn from
 $N(0, 0.08^2)$ to a vector of squared norm about $16$, so by
 @thm-nn-init-variance each logit has mean $0$ and variance about
 $0.08^2\times16 \approx 0.10$, a standard deviation of about $0.32$.
-Near a constant vector $c\mathbf{1}$, the second-order Taylor
-expansion (@thm-taylor-second) of log-sum-exp, with gradient
-$\frac1n\mathbf{1}$ and Hessian
-$\frac1nI - \frac1{n^2}\mathbf{1}\mathbf{1}^\top$ there, gives
+The second-order Taylor expansion (@thm-taylor-second) approximates a
+function near a point $\mathbf{a}$ by
+$f(\mathbf{a} + \mathbf{h}) \approx f(\mathbf{a}) + \nabla f(\mathbf{a})\cdot\mathbf{h} + \tfrac12\mathbf{h}^\top\nabla^2f(\mathbf{a})\,\mathbf{h}$.
+At a constant vector $c\mathbf{1}$ the softmax is uniform, so by
+@thm-prob-lse-gradient and @thm-softmax-jacobian log-sum-exp has
+gradient $\frac1n\mathbf{1}$ and Hessian
+$\frac1nI - \frac1{n^2}\mathbf{1}\mathbf{1}^\top$ there. Taking
+$c = \bar z$, the average defined below, the expansion gives
 $$
 \operatorname{lse}(\mathbf{z}) \approx \ln n + \bar z + \frac12\cdot\frac1n\sum_i(z_i - \bar z)^2,
 \qquad \bar z = \frac1n\sum_iz_i .
 $$
-The observed logit $z_y$ has the same mean as $\bar z$, so the
-expected loss is about $\ln 27$ plus half the spread of the logits,
+The loss is $\operatorname{lse}(\mathbf{z}) - z_y$, and every logit
+has mean $0$, so $\mathbb{E}[\bar z - z_y] = 0$ and the expected loss
+is about $\ln n$ plus half the expected value of
+$\frac1n\sum_i(z_i - \bar z)^2$. For a fixed input vector the rows of
+the matrix are independent, so the logits are independent, each with
+mean $0$ and variance $\sigma^2 \approx 0.10$. Then
+$\frac1n\sum_i(z_i - \bar z)^2 = \frac1n\sum_iz_i^2 - \bar z^2$,
+$\mathbb{E}[z_i^2] = \sigma^2$ and
+$\mathbb{E}[\bar z^2] = \operatorname{Var}(\bar z) = \sigma^2/n$, so its
+expected value is $\frac{n-1}{n}\sigma^2$. The expected loss is about
 $\ln 27 + \frac12\cdot\frac{26}{27}\cdot0.10 \approx 3.35$. Averaged
 over 2000 freshly initialised models, each run on a random sequence
 of tokens, the simulated initial loss is also $3.35$.
@@ -800,6 +884,15 @@ close(np.log(27) + 0.5 * 26 / 27 * 0.1024, 3.35, "predicted initial loss 3.35", 
 losses0, sds0 = initial_losses(np.random.default_rng(2026), n_models=2000)
 close(losses0.mean(), 3.35, "simulated initial loss 3.35", tol=2e-3)
 close(sds0.mean(), 0.32, "simulated logit sd 0.32", tol=3e-3)
+# E[(1/n) sum (z_i - zbar)^2] = (n-1)/n sigma^2 for independent mean-0 logits.
+ul_rng = np.random.default_rng(81)
+zs_ul = ul_rng.normal(0, np.sqrt(0.1024), size=(200000, 27))
+close(np.mean(np.mean((zs_ul - zs_ul.mean(axis=1, keepdims=True))**2, axis=1)), 26 / 27 * 0.1024,
+      "expected spread (n-1)/n sigma^2", tol=2e-3)
+# The Taylor expansion about zbar 1: first-order term vanishes, quadratic term is the mean square deviation.
+hv = ul_rng.normal(size=27); hv -= hv.mean()
+close(np.ones(27) / 27 @ hv, 0, "gradient term vanishes at zbar")
+close(hv @ Hc @ hv, np.mean(hv**2), "h^T H h = mean square deviation")
 ```
 
 ## Where squared error comes from {#sec-prob-mse}
@@ -807,12 +900,24 @@ close(sds0.mean(), 0.32, "simulated logit sd 0.32", tol=3e-3)
 Not every loss in machine learning is a cross-entropy, but most are
 negative log-likelihoods of some model. The squared error is the
 standard example. Suppose a real-valued observation $y$ is modelled as
-$f(\mathbf{x}; \boldsymbol{\theta})$ plus noise drawn from the normal
-distribution $N(0, s^2)$, whose density is
-$\varphi(t) = (2\pi s^2)^{-1/2}e^{-t^2/(2s^2)}$. For continuous
-observations the likelihood uses the density in place of the
-probability [@wasserman2004all, sec. 9.3], so for independent
-observations $(\mathbf{x}_i, y_i)$, $i = 1, \dots, N$,
+$f(\mathbf{x}; \boldsymbol{\theta})$ plus a random error, the *noise*,
+with the normal distribution $N(0, s^2)$ of @def-nn-density, whose
+density is $\varphi(t) = (2\pi s^2)^{-1/2}e^{-t^2/(2s^2)}$. Then $y$
+has density $\varphi(t - f(\mathbf{x}; \boldsymbol{\theta}))$.
+
+The likelihood of @def-likelihood multiplies the probabilities of the
+observations, and for a variable with a density the probability of
+each exact value is $0$, so that product would be $0$ for every
+$\boldsymbol{\theta}$. The density is the right replacement. For a
+small $\varepsilon > 0$, the probability that $y$ lands within
+$\varepsilon$ of an observed value $y_i$ is
+$\int_{y_i-\varepsilon}^{y_i+\varepsilon}\varphi(t - f)\,dt \approx 2\varepsilon\,\varphi(y_i - f)$,
+so maximising the product of the densities maximises, approximately,
+the probability of landing that close to every observation; the
+factor $(2\varepsilon)^N$ does not depend on $\boldsymbol{\theta}$. For
+continuous observations the likelihood therefore uses the density in
+place of the probability [@wasserman2004all, sec. 9.3], and for
+independent observations $(\mathbf{x}_i, y_i)$, $i = 1, \dots, N$,
 $$
 -\ln\mathcal{L}(\boldsymbol{\theta})
 = \frac{1}{2s^2}\sum_{i=1}^N\bigl(y_i - f(\mathbf{x}_i; \boldsymbol{\theta})\bigr)^2 + \frac N2\ln(2\pi s^2) .
@@ -829,6 +934,12 @@ ys_, fs_, s_ = sp.symbols("y f s", positive=True)
 dens = 1 / sp.sqrt(2 * sp.pi * s_**2) * sp.exp(-(ys_ - fs_)**2 / (2 * s_**2))
 sym_equal(sp.expand_log(-sp.log(dens), force=True),
           (ys_ - fs_)**2 / (2 * s_**2) + sp.log(2 * sp.pi * s_**2) / 2, "Gaussian NLL")
+# The probability of landing within eps of y_i is about 2 eps times the density.
+t8 = sp.symbols("t8", real=True)
+dens01 = sp.exp(-t8**2 / 2) / sp.sqrt(2 * sp.pi)
+for eps_ in (1e-2, 1e-3):
+    prob_ = float(sp.integrate(dens01, (t8, 0.7 - eps_, 0.7 + eps_)))
+    close(prob_ / (2 * eps_), float(dens01.subs(t8, 0.7)), "P(|y - y_i| < eps) ~ 2 eps phi", tol=1e-4)
 ```
 
 ## Notes and further reading {#sec-prob-notes}
@@ -880,7 +991,8 @@ $\mathbf{v} = (1, 0, 0)$ and for $\mathbf{v} = (1, 1, 1)$.
 :::
 
 ::: {#exr-ch8-logistic}
-Let $\sigma(t) = 1/(1 + e^{-t})$, and for a label $y\in\{0, 1\}$ let
+Let $\sigma(t) = 1/(1 + e^{-t})$, and for an observed class
+$y\in\{0, 1\}$ (often called the *label*) let
 $L(t) = -y\ln\sigma(t) - (1 - y)\ln(1 - \sigma(t))$, the *binary
 cross-entropy*.
 

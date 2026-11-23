@@ -1,23 +1,28 @@
 # Neural networks {#sec-networks}
 
-A neural network is a composition of simple maps: an affine map,
-then a function applied to each component, then another affine map,
-and so on. Each piece has a derivative we already know from
-@sec-several-variables, and the chain rule of @sec-chain-rule
-combines them. This chapter writes that combination out for the
-multilayer perceptron, the network inside each block of the
-transformer in @sec-small-gpt, and finds that the gradient of the
-loss comes from one backward sweep of matrix–vector products. That
-sweep is reverse mode (@sec-reverse-mode) organised by layers.
+Gradient descent (@sec-gradient-descent) adjusts a vector of
+parameters to make a number, the loss, small. It needs a family of
+functions to adjust: a rule that turns an input vector and a parameter
+vector into an output vector, flexible enough to fit the data and
+simple enough to differentiate. A neural network is such a family. It
+is a composition of simple maps: an affine map, then a fixed function
+applied to each component, then another affine map, and so on. Each
+piece has a derivative we already know from @sec-several-variables,
+and the chain rule of @sec-chain-rule combines them. This chapter
+writes that combination out for the multilayer perceptron, which
+also appears inside the language model that @sec-small-gpt builds
+(a *transformer*), and finds that the gradient of the loss comes from
+one backward sweep of matrix–vector products. That sweep is reverse
+mode (@sec-reverse-mode) organised by layers.
 
 Two questions about the networks themselves come next. The first is
-what a network can represent: with one hidden layer of ReLU units it
-can approximate any continuous function of one variable on a closed
-interval as closely as we like, and the proof builds the network
-explicitly. The second is where training starts. The weights are
-drawn at random, and their spread decides whether the signals passing
-through the network keep their size or grow or shrink from layer to
-layer.
+what a network can represent: a network with a single intermediate
+layer can approximate any continuous function of one variable on a
+closed interval as closely as we like, and the proof builds the
+network explicitly. The second is where training starts. The
+parameters are drawn at random, and their spread decides whether the
+numbers passing through the network keep their size or grow or shrink
+from layer to layer.
 
 ```{python}
 #| include: false
@@ -31,8 +36,15 @@ rng = np.random.default_rng(7)
 
 ## Neurons and layers {#sec-nn-layers}
 
-Affine maps alone cannot make a useful network: composing two of them
-gives another, since
+The simplest family of maps from $\mathbb{R}^n$ to $\mathbb{R}^m$ with
+adjustable numbers in it is the family of affine maps
+$\mathbf{x}\mapsto W\mathbf{x} + \mathbf{b}$ (@exm-affine), whose
+adjustable numbers are the entries of the $m\times n$ matrix $W$ and
+of the vector $\mathbf{b}\in\mathbb{R}^m$. Affine maps alone are too
+rigid. An affine function of one variable has a straight-line graph,
+so no choice of its two numbers fits even $|x|$ (two of the neurons
+defined below do, by @exr-ch7-max). Composing affine maps
+does not help: composing two of them gives another, since
 $W_2(W_1\mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2 = (W_2W_1)\mathbf{x} + (W_2\mathbf{b}_1 + \mathbf{b}_2)$,
 so a stack of affine maps can do no more than a single one. Inserting
 a fixed function of one variable between them, applied to each
@@ -67,8 +79,10 @@ $\mathbf{x}\in\mathbb{R}^n$ and computes
 $\sigma(\mathbf{w}\cdot\mathbf{x} + b)$, where the vector
 $\mathbf{w}\in\mathbb{R}^n$ holds its *weights*, the number $b$ is its
 *bias*, and $\sigma\colon\mathbb{R}\to\mathbb{R}$ is a fixed function,
-the *activation function*. Placing $m$ neurons side by side, all
-reading the same input, gives a layer.
+the *activation function*. In the example both neurons have
+$\sigma(t) = \max(t, 0)$. Placing $m$ neurons side by side, all
+reading the same input, and stacking their weight vectors as the rows
+of a matrix gives a layer.
 
 ::: {#def-nn-layer}
 ## Layer
@@ -84,9 +98,11 @@ $\mathbf{z} = W\mathbf{x} + \mathbf{b}$ is the layer's
 *pre-activation* and $\sigma(\mathbf{z})$ its *activation*.
 :::
 
-Row $i$ of $W$ holds the weights of neuron $i$, entry $(i, j)$ is the
-weight with which neuron $i$ reads input $j$, and $(\mathbf{b})_i$ is
-the bias of neuron $i$. The activation function in the example has a
+Row $i$ of $W$ holds the weights of neuron $i$, column $j$ holds the
+weights with which the $m$ neurons read input $j$, entry
+$w_{ij}$ is the weight with which neuron $i$ reads input $j$, and
+$b_i$ is the bias of neuron $i$. The number $m$ of neurons is the
+*width* of the layer. The activation function in the example has a
 name.
 
 ::: {#def-relu}
@@ -118,10 +134,16 @@ $1/(1 + e^{-x})$ and $\tanh x$, which are differentiable everywhere.
 The ReLU is cheaper to evaluate and its derivative is $0$ or $1$; the
 book's model uses it.
 
-A layer is the affine map of @exm-affine followed by the
-componentwise map of @exm-elementwise. If $\sigma$ is differentiable
-at every component of $\mathbf{z}$, the chain rule (@thm-chain-rule)
-gives the Jacobian with respect to the input,
+A layer is the affine map $\mathbf{x}\mapsto W\mathbf{x} + \mathbf{b}$,
+whose Jacobian is $W$ at every point (@exm-affine), followed by the
+componentwise map $\mathbf{z}\mapsto\sigma(\mathbf{z})$, whose
+Jacobian at $\mathbf{z}$ is the diagonal matrix with entries
+$\sigma'(z_1), \dots, \sigma'(z_m)$ (@exm-elementwise). The chain rule
+(@thm-chain-rule) says that the Jacobian of a composition is the
+product of the Jacobians, $J_{g\circ f}(\mathbf{a}) = J_g(f(\mathbf{a}))\,J_f(\mathbf{a})$,
+when $f$ is differentiable at $\mathbf{a}$ and $g$ at $f(\mathbf{a})$.
+So if $\sigma$ is differentiable at every component of $\mathbf{z}$,
+the Jacobian of the layer with respect to its input is
 $$
 J_F(\mathbf{x}) = \operatorname{diag}\bigl(\sigma'(z_1), \dots, \sigma'(z_m)\bigr)\, W .
 $$ {#eq-nn-layer-jacobian}
@@ -168,24 +190,34 @@ $p = \sum_{l=1}^D n_l(n_{l-1} + 1)$.
 In words: $\mathbf{z}_l$ is the vector of pre-activations of layer
 $l$ and $\mathbf{a}_l$ the vector of its outputs; each layer applies
 its affine map to the previous layer's outputs and then, except for
-the last layer, the activation function. Layer $l$ contributes
-$n_ln_{l-1}$ weights and $n_l$ biases to the count $p$.
+the last layer, the activation function. The depth $D$ counts the
+layers that carry parameters, $n_l$ is the width of layer $l$, and
+$n_0$ is the number of inputs. Layer $l$ contributes $n_ln_{l-1}$
+weights and $n_l$ biases to the count $p$.
 
 The last layer has no activation function: its output is a vector of
-real numbers that a loss function reads. In a regression problem the
-loss might be $\tfrac12\|\mathbf{z}_D - \mathbf{y}\|^2$ for a target
-$\mathbf{y}$, and in a classification problem it is the cross-entropy
+real numbers that a loss function reads. Training uses a finite list
+of *training examples*, pairs $(\mathbf{x}, \mathbf{y})$ of an input
+and the output we would like the network to give for it, called the
+*target*. A *loss function* $\ell\colon\mathbb{R}^{n_D}\to\mathbb{R}$
+measures how far the output is from the target, and *training* means
+searching for parameters that make the average loss over the training
+examples small, by gradient descent or one of its variants
+(@sec-stochastic). When the target is a vector of real numbers (a
+*regression* problem) the loss might be
+$\ell(\mathbf{z}) = \tfrac12\|\mathbf{z} - \mathbf{y}\|^2$. When the
+target is one of finitely many classes (a *classification* problem,
+such as predicting the next letter of a word) it is the cross-entropy
 loss of @sec-probability-loss. Either way, for one training example
 $(\mathbf{x}, \mathbf{y})$ the loss is
 $$
 L(\boldsymbol{\theta}) = \ell(\mathbf{z}_D),
 $$
-where $\ell\colon\mathbb{R}^{n_D}\to\mathbb{R}$ is a fixed function
-that depends on $\mathbf{y}$, and $\mathbf{z}_D$ depends on
-$\boldsymbol{\theta}$ through @eq-nn-mlp.
+where $\ell$ is a fixed function that depends on $\mathbf{y}$, and
+$\mathbf{z}_D$ depends on $\boldsymbol{\theta}$ through @eq-nn-mlp.
 
-The MLP inside the transformer of @sec-small-gpt has depth 2, widths
-16, 64 and 16, and no biases, so it has
+The MLP inside the book's final model (@sec-small-gpt) has depth 2,
+widths 16, 64 and 16, and no biases, so it has
 $64\times16 + 16\times64 = 2048$ parameters.
 
 ::: {#exm-mlp}
@@ -242,10 +274,13 @@ check(np.all(np.abs(np.maximum(u, 0) - np.maximum(v, 0)) <= np.abs(u - v)), "rel
 
 ## Backpropagation {#sec-nn-backprop}
 
-Training needs the gradient of $L$ with respect to every parameter.
-The quantities that organise the computation are the partial
-derivatives of the loss with respect to the pre-activations. Work them
-out in @exm-mlp, from the output backwards.
+A step of gradient descent replaces $\boldsymbol{\theta}$ by
+$\boldsymbol{\theta} - \eta\nabla L(\boldsymbol{\theta})$ for a small
+learning rate $\eta > 0$, so training needs the partial derivative of
+$L$ with respect to every parameter. The quantities that organise the
+computation are the partial derivatives of the loss with respect to
+the pre-activations. We work them out in @exm-mlp, from the output
+backwards.
 
 - The loss is $\tfrac12(z_2 - 1)^2$, so an increment $h$ in $z_2$
   changes $L$ by about $(z_2 - 1)h = -2h$: $\partial L/\partial z_2 = -2$.
@@ -313,8 +348,9 @@ term for each neuron $k$ that reads it, and then multiplies by
 $\sigma'((\mathbf{z}_l)_i)$. In the matrix $\partial L/\partial W_l$,
 row $i$ belongs to neuron $i$ of layer $l$, column $j$ to input $j$
 of that layer, and entry $(i, j)$ is the product
-$(\boldsymbol{\delta}_l)_i(\mathbf{a}_{l-1})_j$ of the sensitivity
-of the neuron and the input that the weight multiplies.
+$(\boldsymbol{\delta}_l)_i(\mathbf{a}_{l-1})_j$: the partial
+derivative of the loss with respect to the neuron's pre-activation,
+times the input that the weight multiplies.
 
 ::: {.proof}
 (a) By downward induction on $l$. For $l = D$, $g_D = \ell$, which is
@@ -372,10 +408,14 @@ pass computes and stores every $\mathbf{z}_l$ and $\mathbf{a}_l$.
 The backward pass starts from $\boldsymbol{\delta}_D$, applies
 @eq-nn-backprop to get $\boldsymbol{\delta}_{D-1}, \dots,
 \boldsymbol{\delta}_1$ in turn, and at each layer reads off the
-parameter gradients from @eq-nn-backprop-params. The vector
-$\boldsymbol{\delta}_l$ is the adjoint $\bar{\mathbf{z}}_l$ of
-@def-adjoint, and @eq-nn-backprop is reverse accumulation
-(@thm-reverse-mode) applied to the graph of the network, with the
+parameter gradients from @eq-nn-backprop-params. @def-adjoint calls
+the partial derivative $\bar v = \partial L/\partial v$ of the final
+output with respect to an intermediate quantity $v$ the *adjoint* of
+$v$, and @thm-reverse-mode shows that reverse accumulation, one sweep
+from the output back to the inputs, computes every adjoint of an
+acyclic computational graph. The vector $\boldsymbol{\delta}_l$ is the
+vector of adjoints $\bar{\mathbf{z}}_l$, and @eq-nn-backprop is
+reverse accumulation applied to the graph of the network, with the
 scalar nodes of each layer grouped into one vector. The transpose
 $W_{l+1}^\top$ appears because reverse mode multiplies by Jacobians
 from the left: a row vector times $W_{l+1}$ is, after transposing,
@@ -395,7 +435,8 @@ $$
 multiplications, at most twice the forward pass plus a term linear in
 the widths. So one forward and one backward pass together cost about
 three forward passes, however many parameters there are, as
-@thm-cheap-gradient predicts. The price is memory: the backward pass
+@thm-cheap-gradient predicts: there, a gradient costs at most a
+constant multiple of the cost of evaluating the function. The price is memory: the backward pass
 reads every stored $\mathbf{a}_{l-1}$ and $\mathbf{z}_l$.
 
 The theorem translates line by line into code. The function below
@@ -522,7 +563,9 @@ for widths in ([2, 2, 1], [16, 64, 16], [5, 7, 3, 9]):
 @thm-backprop-matrix needs $\sigma$ to be differentiable at every
 pre-activation. For the ReLU that means no component of any
 $\mathbf{z}_l$ with $l < D$ is exactly $0$. An automatic
-differentiation engine does not test this. It stores, for each
+differentiation *engine*, a program that carries out the reverse
+accumulation of @sec-reverse-mode on the operations of another
+program, does not test this. It stores, for each
 elementary function, a rule for the local derivative, and for the
 ReLU the rule fixes a value at $0$. TensorFlow
 [@bolte2020mathematical, sec. 1] and the small engine in the book's
@@ -604,17 +647,12 @@ theorem. @cor-relu-ad is a statement about the point at which we
 compute, and in a given forward pass we can check directly whether
 any pre-activation is exactly $0$.
 
-Exact zeros are rare when the weights are random. If the weights and
-bias of a unit in the first layer are drawn independently from normal
-distributions and $\mathbf{x} \ne \mathbf{0}$, the probability that
-$\mathbf{w}\cdot\mathbf{x} + b = 0$ is $0$: fix all the weights but
-one weight $w_j$ with $x_j \ne 0$, and the event requires $w_j$ to
-equal one particular number, which a normal random variable does with
-probability $0$. In floating-point arithmetic a sum of products of
-non-zero numbers comes out as exactly $0$ only through exact
-cancellation. These are statements about random weights; once
-training has moved the weights, the book makes no probabilistic claim
-and relies on @cor-relu-ad at each step.
+Exact zeros are rare when the weights are drawn at random from a
+continuous distribution, as @sec-nn-init shows after setting up the
+probability needed to say so. In floating-point arithmetic a sum of
+products of non-zero numbers comes out as exactly $0$ only through
+exact cancellation. Once training has moved the weights, the book
+makes no probabilistic claim and relies on @cor-relu-ad at each step.
 
 Exact zeros do occur systematically in one situation. If every unit
 of a hidden layer is inactive, then $\mathbf{a}_{l-1} = \mathbf{0}$,
@@ -638,8 +676,15 @@ section shows that such functions can approximate every continuous
 function on a closed interval, and that the approximation can be
 written down explicitly.
 
-The first ingredient is a property of continuous functions on closed
-intervals.
+The plan has two steps. First, mark some points on the graph of the
+function and join neighbouring points by straight lines. For $x^2$ on
+$[0, 1]$, the broken line through $(0, 0)$, $(\tfrac12, \tfrac14)$ and
+$(1, 1)$ stays within $\tfrac1{16}$ of $x^2$, and the broken line
+through the eleven points with $x = 0, 0.1, \dots, 1$ stays within
+$\tfrac1{400}$ (@exm-relu-square). Second, write the broken line as a
+network. The first step needs a property of continuous functions on
+closed intervals, which says that the points can be chosen to make
+the error as small as we like.
 
 ::: {#lem-nn-uniform-continuity}
 ## Cantor's theorem on uniform continuity
@@ -650,39 +695,42 @@ $|f(x) - f(y)| < \varepsilon$ for all $x$ and $y$ in $[a, b]$ with
 $|x - y| < \delta$.
 :::
 
-Continuity at each point gives a $\delta$ for each point; the lemma
-says that one $\delta$ works for the whole interval. The book does
-not prove it; a proof is in @zorich2015mathematical [sec. 4.2.2,
-Theorem 4], and it uses the completeness of the real numbers. It
-fails on intervals that are not closed: $1/x$ is continuous on
-$(0, 1]$, but for every $\delta$ the points $x = \delta$ and
-$y = \delta/2$ (with $\delta < 1$) are closer than $\delta$ while
-$|1/x - 1/y| = 1/\delta > 1$.
+A function with the property in the conclusion is *uniformly
+continuous* on $[a, b]$. Continuity at each point gives a $\delta$ for
+each point; the lemma says that one $\delta$ works for the whole
+interval. The book does not prove it; a proof is in
+@zorich2015mathematical [sec. 4.2.2, Theorem 4], and it uses the
+completeness of the real numbers. It fails on intervals that are not
+closed: $1/x$ is continuous on $(0, 1]$, but for every $\delta < 1$
+the points $x = \delta$ and $y = \delta/2$ are closer than $\delta$
+while $|1/x - 1/y| = 1/\delta > 1$, so no $\delta$ works for
+$\varepsilon = 1$.
 
 ::: {#lem-nn-interpolation}
 ## Piecewise-linear interpolation
 
 Let $f\colon[a, b]\to\mathbb{R}$ be continuous, let
-$a = t_0 < t_1 < \dots < t_N = b$, and let $\ell$ be the function that
-equals $f$ at each $t_k$ and is affine on each interval
+$a = t_0 < t_1 < \dots < t_N = b$, and let $\hat f$, the
+*piecewise-linear interpolant* of $f$ at these points, be the function
+that equals $f$ at each $t_k$ and is affine on each interval
 $[t_{k-1}, t_k]$. If $\varepsilon > 0$ and
 $|f(x) - f(y)| < \varepsilon$ whenever
 $|x - y| \le \max_k(t_k - t_{k-1})$, then
-$|f(x) - \ell(x)| < \varepsilon$ for every $x$ in $[a, b]$.
+$|f(x) - \hat f(x)| < \varepsilon$ for every $x$ in $[a, b]$.
 :::
 
 ::: {.proof}
 Let $x \in [t_{k-1}, t_k]$, and write
 $x = (1 - \lambda)t_{k-1} + \lambda t_k$ with $0 \le \lambda \le 1$.
-Since $\ell$ is affine on this interval,
-$\ell(x) = (1 - \lambda)f(t_{k-1}) + \lambda f(t_k)$, and so
+Since $\hat f$ is affine on this interval,
+$\hat f(x) = (1 - \lambda)f(t_{k-1}) + \lambda f(t_k)$, and so
 $$
-f(x) - \ell(x) = (1 - \lambda)\bigl(f(x) - f(t_{k-1})\bigr) + \lambda\bigl(f(x) - f(t_k)\bigr) .
+f(x) - \hat f(x) = (1 - \lambda)\bigl(f(x) - f(t_{k-1})\bigr) + \lambda\bigl(f(x) - f(t_k)\bigr) .
 $$
 Both $|x - t_{k-1}|$ and $|x - t_k|$ are at most $t_k - t_{k-1}$, so
 both brackets are less than $\varepsilon$ in absolute value. The
 weights $1-\lambda$ and $\lambda$ are non-negative with sum $1$, so
-$|f(x) - \ell(x)| < (1 - \lambda)\varepsilon + \lambda\varepsilon = \varepsilon$.
+$|f(x) - \hat f(x)| < (1 - \lambda)\varepsilon + \lambda\varepsilon = \varepsilon$.
 :::
 
 The second ingredient converts any continuous piecewise-linear
@@ -794,10 +842,10 @@ $\max_{a\le x\le b}|f(x) - g_n(x)| \to 0$ as $n \to \infty$.
 By @lem-nn-uniform-continuity there is a $\delta > 0$ with
 $|f(x) - f(y)| < \varepsilon$ whenever $|x - y| < \delta$. Choose
 $N$ with $(b - a)/N < \delta$ and put $t_k = a + k(b - a)/N$ for
-$k = 0, \dots, N$. Let $\ell$ be the piecewise-linear interpolant of
+$k = 0, \dots, N$. Let $\hat f$ be the piecewise-linear interpolant of
 $f$ at these points. By @lem-nn-interpolation,
-$|f(x) - \ell(x)| < \varepsilon$ on $[a, b]$. By @lem-relu-sum,
-$\ell$ is a network of the stated form, with $c = f(a)$,
+$|f(x) - \hat f(x)| < \varepsilon$ on $[a, b]$. By @lem-relu-sum,
+$\hat f$ is a network of the stated form, with $c = f(a)$,
 $d_0 = m_1$ and $d_k = m_{k+1} - m_k$ for $k \ge 1$, where
 $m_k = (f(t_k) - f(t_{k-1}))/(t_k - t_{k-1})$.
 
@@ -853,6 +901,10 @@ sym_equal(xs_**2 - (tk1**2 + (2*k_ - 1)/N_ * (xs_ - tk1)), (xs_ - tk1) * (xs_ - 
 maxima_zero("x^2 - ((k-1)^2/N^2 + (2*k-1)/N*(x-(k-1)/N)) - (x-(k-1)/N)*(x-k/N)", "chord error in Maxima")
 check(1 / (4 * 50**2) >= 1e-4 and 1 / (4 * 51**2) < 1e-4, "N = 51 is the least N")
 check(2 / 1e-4 == 20000, "N > 2/eps = 20000")
+# The plan at the start of the section: errors 1/16 and 1/400 for N = 2 and N = 10.
+for N_, err_ in ((2, 1/16), (10, 1/400)):
+    xr = np.linspace(0, 1, 100001)
+    close(np.max(np.abs(xr**2 - g_sq(xr, N_))), err_, f"broken line with N = {N_}", tol=1e-6)
 ```
 
 @thm-universal-1d is an existence statement with a constructive
@@ -879,31 +931,96 @@ proof, and its reach is limited in four ways.
 
 ## Initialisation and the size of activations {#sec-nn-init}
 
-Training starts from weights drawn at random. Zero weights would not
-do: with all weights $0$, every hidden unit in a layer computes the
-same thing, receives the same gradient by @eq-nn-backprop-params, and
-stays equal to the others after every step. The spread of the random
-weights matters too, because it sets the size of the pre-activations,
-and so of everything downstream.
+Training starts from parameters drawn at random, a step called
+*initialisation*. Zero weights would not do: with all weights $0$,
+every hidden unit in a layer computes the same thing, receives the
+same gradient by @eq-nn-backprop-params, and stays equal to the others
+after every step. The spread of the random weights, measured by their
+standard deviation, matters too, because it sets the size of the
+pre-activations, and so of everything downstream.
 
-The computation uses expectation and variance. @sec-stochastic proves
-the rules we need for random variables on finite sample spaces:
-expectation is linear, $\operatorname{Var}(cX) = c^2\operatorname{Var}(X)$,
-and the variance of a sum of independent random variables is the sum
-of their variances. The same rules hold for all random variables with
-finite variance, including normally distributed ones
-[@wasserman2004all, ch. 3]; we use them in that form.
+The computation uses expectation and variance. @def-finite-probability
+describes a finite sample space $\Omega$ in which each outcome $\omega$
+has a probability $P(\omega) \ge 0$, these probabilities summing to
+$1$. A *random variable* is a function $X$ on $\Omega$, its
+*expectation* is $\mathbb{E}[X] = \sum_\omega P(\omega)X(\omega)$, its
+*variance* is $\operatorname{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$,
+and the square root of the variance is its *standard deviation*.
+Random variables $X_1, \dots, X_k$ are *independent* if
+$P(X_1 = c_1, \dots, X_k = c_k) = P(X_1 = c_1)\cdots P(X_k = c_k)$ for
+all values $c_1, \dots, c_k$. @sec-stochastic proves the rules we
+need: expectation is linear,
+$\operatorname{Var}(cX) = c^2\operatorname{Var}(X)$, and the variance
+of a sum of independent random variables is the sum of their
+variances.
 
 A small case shows what to expect. Let $\mathbf{x} = (1, 2)^\top$
 and let the two weights $w_1$ and $w_2$ of a neuron be independent,
-each equal to $s$ or $-s$ with probability $\tfrac12$, a finite
-probability space as in @def-finite-probability. The four equally
-likely outcomes give $z = w_1 + 2w_2$ the values $3s$, $-s$, $s$ and
-$-3s$. So $\mathbb{E}[z] = 0$ and
+each equal to $s$ or $-s$ with probability $\tfrac12$. The sample
+space has four equally likely outcomes, which give $z = w_1 + 2w_2$
+the values $3s$, $-s$, $s$ and $-3s$. So $\mathbb{E}[z] = 0$ and
 $\mathbb{E}[z^2] = \tfrac14(9 + 1 + 1 + 9)s^2 = 5s^2$. The number
-$5$ is $\|\mathbf{x}\|^2 = 1^2 + 2^2$: the spread of the
-pre-activation grows with the length of the input and with the spread
-of the weights.
+$5$ is $\|\mathbf{x}\|^2 = 1^2 + 2^2$: the variance of the
+pre-activation grows with the squared length of the input and with the
+variance $s^2$ of each weight.
+
+The book's model, like most networks, draws its weights from the
+normal distribution, which can take any real value. A finite sample
+space cannot describe that, and probabilities of intervals, given by
+integrals, take the place of probabilities of single outcomes.
+
+::: {#def-nn-density}
+## Density and the normal distribution
+
+A *probability density* is a function $f\colon\mathbb{R}\to[0, \infty)$
+with $\int_{-\infty}^{\infty}f(t)\,dt = 1$. A real random variable $X$
+*has density* $f$ if
+$$
+P(a \le X \le b) = \int_a^b f(t)\,dt \qquad\text{for all } a \le b .
+$$
+Its expectation is $\mathbb{E}[X] = \int_{-\infty}^{\infty}t f(t)\,dt$,
+when $\int_{-\infty}^{\infty}|t| f(t)\,dt$ is finite, and more
+generally $\mathbb{E}[g(X)] = \int_{-\infty}^{\infty}g(t)f(t)\,dt$ when
+$\int_{-\infty}^{\infty}|g(t)|f(t)\,dt$ is finite. Its variance is
+$\operatorname{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr]$.
+For real $\mu$ and $s > 0$, the *normal distribution* $N(\mu, s^2)$
+is the distribution with density
+$$
+\varphi(t) = \frac{1}{\sqrt{2\pi s^2}}\,e^{-(t - \mu)^2/(2s^2)} .
+$$
+Real random variables $X_1, \dots, X_k$ are *independent* if
+$$
+P(a_1 \le X_1 \le b_1, \dots, a_k \le X_k \le b_k)
+= P(a_1 \le X_1 \le b_1)\cdots P(a_k \le X_k \le b_k)
+$$
+for all intervals $[a_1, b_1], \dots, [a_k, b_k]$.
+:::
+
+The density plays the part of the probabilities $P(\omega)$, and
+integrals replace sums. The density $\varphi$ of $N(\mu, s^2)$ is the
+bell-shaped curve centred at $\mu$; a random variable with this
+distribution has mean $\mu$ and variance $s^2$, as the substitution
+$u = (t - \mu)/s$ and an integration by parts show. For example, a
+variable with distribution $N(0, 1)$ lies in $[-1, 1]$ with probability
+about $0.683$ and in $[-2, 2]$ with probability about $0.954$. A
+random variable with a density gives probability $0$ to each single
+number $c$, since $P(c \le X \le c) = \int_c^c f(t)\,dt = 0$. Two random
+variables have the *same distribution* if they give the same
+probability to every interval. The rules of @sec-stochastic quoted
+above hold for all random variables with finite variance, including
+those with densities and sums of them; the book uses them without
+proof, and @wasserman2004all [ch. 2 and ch. 3] proves them.
+
+This settles the claim of @sec-nn-corner that exact zeros are rare at
+initialisation. Suppose the weights and bias of a unit in the first
+layer are independent, each with a normal distribution with mean $0$
+and positive variance, and $\mathbf{x}$ is a fixed input. Each term
+$w_jx_j$ with $x_j \ne 0$ is normal with mean $0$ and variance
+$x_j^2\operatorname{Var}(w_j)$, and a sum of independent normal random
+variables is again normal [@wasserman2004all, sec. 2.4]. So
+$\mathbf{w}\cdot\mathbf{x} + b$, the sum of $b$ and these terms, is
+normal with mean $0$ and positive variance, and it equals $0$ with
+probability $0$.
 
 ::: {#thm-nn-init-variance}
 ## Variance of a random linear map
@@ -931,13 +1048,20 @@ Summing over $i$ gives $\mathbb{E}\|\mathbf{z}\|^2$.
 If the input has components of typical size $1$, so that
 $\|\mathbf{x}\|^2 \approx n$, then $\operatorname{Var}(z_i) \approx s^2n$.
 Keeping the pre-activations at the size of the input means
-$s = 1/\sqrt{n}$: the spread of the weights should shrink like one
-over the square root of the number of inputs to each unit. The same
+$s = 1/\sqrt{n}$: the standard deviation of the weights should shrink
+like one over the square root of the number of inputs to each unit. The same
 square root reappears in @thm-attention-scale.
 
 The ReLU halves the expected square, provided the pre-activation is
-as likely to be positive as negative in a precise sense. A random
-variable $z$ is *symmetric* if $-z$ has the same distribution as $z$.
+as likely to be positive as negative in a precise sense. In the
+four-outcome example, $\operatorname{relu}(z)$ takes the values $3s$,
+$0$, $s$ and $0$, so
+$\mathbb{E}[\operatorname{relu}(z)^2] = \tfrac14(9 + 1)s^2 = \tfrac52s^2$,
+half of $\mathbb{E}[z^2] = 5s^2$. The values of $z$ there come in pairs
+$\pm3s$ and $\pm s$ of equal probability, and the ReLU keeps one member
+of each pair. A random variable $z$ is *symmetric* if $-z$ has the
+same distribution as $z$, that is,
+$P(a \le z \le b) = P(-b \le z \le -a)$ for all $a \le b$.
 
 ::: {#lem-relu-second-moment}
 If $z$ is symmetric and $\mathbb{E}[z^2]$ is finite, then
@@ -954,8 +1078,10 @@ the left are equal.
 :::
 
 If the $w_{ij}$ are independent and each is symmetric, as normal
-random variables with mean $0$ are, then $-W$ has the same
-distribution as $W$, so each $z_i = (W\mathbf{x})_i$ is symmetric.
+random variables with mean $0$ are, then the variables $-w_{ij}$ are
+independent with the same distributions as the $w_{ij}$, so
+$-z_i = \sum_j(-w_{ij})x_j$ has the same distribution as
+$z_i = \sum_jw_{ij}x_j$, and each $z_i$ is symmetric.
 @thm-nn-init-variance and @lem-relu-second-moment then give, for one
 ReLU layer without bias,
 $$
@@ -964,22 +1090,28 @@ $$ {#eq-nn-relu-layer-norm}
 The expected squared length of the layer's output is the squared
 length of its input times $ms^2/2$: the number of neurons times the
 variance of one weight, halved by the ReLU.
-In a stack of such layers with independent weights, the same
-argument applied to each layer, conditioning on the output of the
-layer below, multiplies the expected squared norm by $n_ls_l^2/2$ at
-layer $l$ [@he2015delving, sec. 2.2]. A product of many factors
-grows or shrinks exponentially unless the factors are close to $1$,
-and that gives the rule $s_l^2 = 2/n_{l-1}$ for square layers of ReLU
-units proposed by @he2015delving. The earlier rule of
+In a stack of such layers with independent weights, the input of
+layer $l$ is itself random. Applying @eq-nn-relu-layer-norm with that
+input held fixed, and then averaging over it (a step that needs
+conditional expectation, which the book does not develop), shows that
+layer $l$ multiplies the expected squared norm by $n_ls_l^2/2$
+[@he2015delving, sec. 2.2]. A product of many factors grows or shrinks
+exponentially unless the factors are close to $1$. @he2015delving
+tracks the expected square of one component instead of the squared
+norm, which gives the factor $n_{l-1}s_l^2/2$ and the rule
+$s_l^2 = 2/n_{l-1}$ for ReLU layers; for layers of equal width the two
+factors agree. The earlier rule of
 @glorot2010understanding [sec. 4.2] balances the forward pass against
 the backward pass of @eq-nn-backprop and takes
 $s_l^2 = 2/(n_{l-1} + n_l)$.
 
 ::: {#exm-init-microgpt}
-The book's model draws every weight from $N(0, 0.08^2)$. Its MLP
-reads a vector $\mathbf{h}$ produced by RMS normalisation
-(@sec-small-gpt), which has $\|\mathbf{h}\|^2$ just under $16$, the
-width. The first layer has $16$ inputs, so by @thm-nn-init-variance its
+The book's model draws every weight independently from
+$N(0, 0.08^2)$. Its MLP reads a vector $\mathbf{h}\in\mathbb{R}^{16}$
+produced by RMS normalisation (@sec-small-gpt), which divides a vector
+by the root mean square of its components. So $\|\mathbf{h}\|^2$ is
+just under $16$, the width; it falls short of $16$ only because a small
+constant is added to the mean square before the division. The first layer has $16$ inputs, so by @thm-nn-init-variance its
 $64$ pre-activations have mean $0$ and variance
 $0.08^2\times16 = 0.1024$, a standard deviation of $0.32$. The rule
 $s = 1/\sqrt{16}$ would give $s = 0.25$ and standard deviation $1$;
@@ -991,8 +1123,9 @@ into $16$ outputs of variance about $0.08^2\times3.28 \approx 0.021$,
 a standard deviation of about $0.145$. The MLP adds its output to a
 vector whose components have root mean square about $1$, so at the
 start of training it changes that vector by roughly $15\%$ of its
-size. Simulating 300 freshly initialised models on random token
-sequences gives standard deviations $0.32$ for the pre-activations and $0.14$ for the outputs.
+size. Simulating 300 freshly initialised models on random input
+sequences gives standard deviations $0.32$ for the pre-activations and
+$0.14$ for the outputs.
 
 The small spread does no harm here because the model has one layer
 and normalises before each block. In a plain stack of ReLU layers of
@@ -1010,6 +1143,20 @@ s_sym = sp.symbols("s", positive=True)
 zvals = [a * s_sym + 2 * b * s_sym for a in (1, -1) for b in (1, -1)]
 check(set(zvals) == {-3*s_sym, -s_sym, s_sym, 3*s_sym}, "values 3s, -s, s, -3s")
 check(sum(zvals) == 0 and sp.expand(sum(v**2 for v in zvals) / 4) == 5 * s_sym**2, "mean 0, E z^2 = 5 s^2")
+check(sp.expand(sum(sp.Max(v, 0)**2 for v in zvals) / 4) == sp.Rational(5, 2) * s_sym**2, "E relu(z)^2 = 5/2 s^2")
+# def-nn-density: the normal density integrates to 1, with mean mu and variance s^2.
+t_, mu_ = sp.symbols("t mu", real=True)
+phi_ = sp.exp(-(t_ - mu_)**2 / (2 * s_sym**2)) / sp.sqrt(2 * sp.pi * s_sym**2)
+check(sp.simplify(sp.integrate(phi_, (t_, -sp.oo, sp.oo))) == 1, "normal density integrates to 1")
+check(sp.simplify(sp.integrate(t_ * phi_, (t_, -sp.oo, sp.oo))) == mu_, "normal mean mu")
+check(sp.simplify(sp.integrate((t_ - mu_)**2 * phi_, (t_, -sp.oo, sp.oo))) == s_sym**2, "normal variance s^2")
+phi01 = phi_.subs({mu_: 0, s_sym: 1})
+close(float(sp.integrate(phi01, (t_, -1, 1))), 0.683, "P(-1 <= Z <= 1)", tol=1e-3)
+close(float(sp.integrate(phi01, (t_, -2, 2))), 0.954, "P(-2 <= Z <= 2)", tol=1e-3)
+# A sum of independent normals with mean 0 is never exactly 0 in practice (w.x + b for x != 0).
+zrng = np.random.default_rng(71)
+zsum = zrng.normal(size=(100000, 3)) @ np.array([1.0, 0.0, -2.0]) + zrng.normal(size=100000)
+check(np.count_nonzero(zsum == 0) == 0, "no exact zeros in w.x + b")
 # thm-nn-init-variance by Monte Carlo, for a fixed x and normal and uniform weights.
 x_fixed = rng.normal(size=10); s = 0.3
 for sampler in (lambda size: rng.normal(0, s, size=size),
@@ -1129,8 +1276,8 @@ all $x$ and $y$.
 @exm-relu-square approximates $x^2$ on $[0, 1]$ with error at most
 $10^{-6}$.
 
-(b) Let $f(x) = \sqrt{x}$ on $[0, 1]$, $t_k = k/N$, and $\ell$ the
-interpolant. Show that $f(x) - \ell(x) = 1/(4\sqrt N)$ at
+(b) Let $f(x) = \sqrt{x}$ on $[0, 1]$, $t_k = k/N$, and $\hat f$ the
+interpolant. Show that $f(x) - \hat f(x) = 1/(4\sqrt N)$ at
 $x = 1/(4N)$, and find how large $N$ must be for the error to be at
 most $10^{-6}$ at that point.
 :::
