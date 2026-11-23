@@ -1031,18 +1031,18 @@ close(sm(zs - zs.max()), sm(zs), "shifted softmax")
 ### The loss before training {#sec-gpt-initial-loss}
 
 Before training, the loss tells us nothing about names, but its value
-is a useful test of an implementation: it should be close to
-$\ln 27 \approx 3.296$, the loss of a model that gives each of the 27
-tokens probability $1/27$. Every weight starts as an independent
-random sample with mean 0 and standard deviation $\sigma_w = 0.08$, so
-the logits are small and the softmax is close to uniform. Close, but
-on average slightly above, as a two-token case shows. Suppose the logits are $(a, -a)$ or $(-a, a)$ with equal
-probability and the correct token is the first. The loss is
-$\ln(1 + e^{-2a})$ in the first case and $\ln(1 + e^{2a})$ in the
-second; for $a = 0.33$ these are $0.417$ and $1.077$, with average
-$0.747$, which exceeds $\ln 2 \approx 0.693$ by $0.053$, close to
-$a^2/2 \approx 0.054$. Random logits raise the expected loss above
-$\ln|V|$ by about half their variance.
+is a useful test of an implementation, and @exm-uniform-loss estimates
+it. A model that gives each of the 27 tokens probability $1/27$ has
+loss $\ln 27 \approx 3.296$. The book's model starts close to that
+model, because every weight starts as an independent random sample
+with mean 0 and standard deviation $\sigma_w = 0.08$, so the logits
+are small. Small random logits raise the expected loss above $\ln 27$,
+and the second-order Taylor expansion of log-sum-exp in that example
+puts the excess at about
+$\frac12\cdot\frac{26}{27}\cdot0.08^2\cdot16 \approx 0.049$, for an
+expected loss of about $3.35$. The expansion comes with no bound on
+its error. The theorem below replaces it by inequalities that hold for
+the model of @def-small-gpt.
 
 Making this precise for the model needs random variables that can take
 any real value. @def-nn-density defines the normal distribution
@@ -1134,22 +1134,19 @@ name "isabella", the three terms are about 16.0, 0.06 and 0.33, so $\|\mathbf{r}
 $\sigma_w^2\|\mathbf{r}\|^2/2$ in @thm-initial-loss is about $0.052$.
 The expected initial loss therefore lies between $3.296$ and about
 $3.35$. A direct simulation, averaging the loss of @eq-gpt-document-loss over 400 random initialisations and a dozen names,
-gives $3.35$, at the top of that range; the standard deviation of a
-single document's loss is about 0.14. The microgpt post reports a
+gives $3.35$, at the top of that range and in agreement with the
+estimate of @exm-uniform-loss; the standard deviation of a single
+document's loss is about 0.14. The microgpt post reports a
 loss of 3.37 at the first step, consistent with this, and about 2.37
 after 1000 steps [@karpathy2026microgpt].
 
 ```{python}
 #| include: false
 close(math.log(27), 3.296, "ln 27", tol=2e-4)
-a2 = 0.33
-l1, l2 = math.log(1 + math.exp(-2 * a2)), math.log(1 + math.exp(2 * a2))
-close([l1, l2], [0.417, 1.077], "two-token losses", tol=1e-3)
-close((l1 + l2) / 2, 0.747, "average", tol=1e-3)
-close((l1 + l2) / 2 - math.log(2), 0.053, "excess over ln 2", tol=1e-3)
-close((l1 + l2) / 2 - math.log(2), math.log(math.cosh(a2)), "excess is ln cosh a")
-close(a2**2 / 2, 0.054, "a^2/2", tol=1e-3)
 close(math.log(2), 0.693, "ln 2", tol=1e-3)
+# The estimate of exm-uniform-loss, recalled in the lead-in.
+close(0.5 * 26 / 27 * 0.08**2 * 16, 0.049, "Taylor estimate of the excess", tol=1e-3)
+close(math.log(27) + 0.5 * 26 / 27 * 0.08**2 * 16, 3.35, "estimated initial loss 3.35", tol=2e-3)
 names = ["emma", "olivia", "ava", "isabella", "sophia", "mia", "noah", "liam",
          "jacob", "mason", "ella", "zoe"]
 rng_init = np.random.default_rng(2026)
@@ -1319,18 +1316,18 @@ for _ in range(20):
 
 ## Caching keys and values {#sec-gpt-kv-cache}
 
-Generating a name token by token seems to require running the model
-on the whole prefix $x_1, \dots, x_t$ at every step $t$. For a name
-of 16 tokens that means processing $1 + 2 + \dots + 16 = 136$
-positions, although only 16 of them are new: at step 3, for example,
-the keys and values of positions 1 and 2 are the same ones already
-computed at steps 1 and 2. The repeated work is unnecessary.
-Everything in @def-small-gpt except attention works on one position
-at a time, and attention at position $t$ needs only the query of
-position $t$ and the keys and values of positions $1$ to $t$. So a
-program can keep a *key–value cache*, a list of the key and value
-vectors of the positions seen so far, and process each new position
-once.
+Generating a name token by token seems to require running the model on
+the whole prefix $x_1, \dots, x_t$ at every step $t$. For a name of 16
+tokens that means processing $1 + 2 + \dots + 16 = 136$ positions,
+although only 16 of them are new: at step 3, for example, the keys and
+values of positions 1 and 2 are the same ones already computed at
+steps 1 and 2. The repeated work is unnecessary. Everything
+in @def-small-gpt except attention works on one position at a time, and
+by @thm-causal-cache causal attention at position $t$ needs only the
+query of position $t$ and the keys and values of positions $1$ to $t$.
+So a program can keep the key–value cache of @sec-attention-self, a
+list of the key and value vectors of the positions seen so far, and
+process each new position once.
 
 ::: {#def-kv-cache}
 ## Cached evaluation
@@ -1364,21 +1361,26 @@ In @def-small-gpt, $\mathbf{r}^{(0)}_t$, $\mathbf{u}_t$,
 $\mathbf{q}_t$, $\mathbf{k}_t$ and $\mathbf{v}_t$ are functions of
 $x_t$ and $t$ alone, and $\mathbf{r}^{(1)}_t$, $\mathbf{r}^{(2)}_t$
 and $\mathbf{z}_t$ are functions of $\mathbf{r}^{(0)}_t$ and
-$\mathbf{o}_t$ alone. Only $\mathbf{o}_t$ involves other positions,
-and by the causal mask (@def-causal-mask) it involves only
-$\mathbf{q}_t$ and the pairs $(\mathbf{k}_\tau, \mathbf{v}_\tau)$ with
-$\tau \le t$: the weights for $\tau > t$ are zero and the remaining
-weights are the softmax of the $t$ scores with $\tau \le t$. Hence
+$\mathbf{o}_t$ alone. Only $\mathbf{o}_t$ involves other positions.
+The output $\mathbf{o}^{(i)}_t$ of head $i$ is causal self-attention
+of width 4 with its own rows of $W_Q$, $W_K$ and
+$W_V$ (@def-multi-head), applied to $\mathbf{u}_1, \dots, \mathbf{u}_T$.
+By @thm-causal-cache, applied to each head, $\mathbf{o}^{(i)}_t$ is the
+unmasked attention of $\mathbf{q}^{(i)}_t$ over the pairs
+$(\mathbf{k}^{(i)}_j, \mathbf{v}^{(i)}_j)$ with $j \le t$, and it
+depends only on $\mathbf{u}_1, \dots, \mathbf{u}_t$. Hence
 $\mathbf{z}_t$ is a function of $x_1, \dots, x_t$, which proves the
 second claim.
 
 At step $t$ of the cached evaluation, after the append, $C$ holds
-exactly the $t$ pairs $(\mathbf{k}_\tau, \mathbf{v}_\tau)$ for
-$\tau = 1, \dots, t$, in order, each computed from $x_\tau$ and $\tau$
-by the same formula as in the whole-sequence computation and therefore
-equal to it. Step 1 computes the same $\mathbf{r}^{(0)}_t$ and
-$\mathbf{q}_t$. Step 2 applies the same formula to the same inputs,
-so $\hat{\mathbf{o}}_t = \mathbf{o}_t$, and step 3 then gives
+exactly the $t$ pairs $(\mathbf{k}_j, \mathbf{v}_j)$ for
+$j = 1, \dots, t$, in order, each computed from $x_j$ and $j$ by the
+same formula as in the whole-sequence computation and therefore equal
+to it. Step 1 computes the same $\mathbf{r}^{(0)}_t$ and
+$\mathbf{q}_t$. Step 2 computes, in each head, the attention of
+$\mathbf{q}^{(i)}_t$ over these $t$ pairs, which is
+$\mathbf{o}^{(i)}_t$ by the first part of the proof, so
+$\hat{\mathbf{o}}_t = \mathbf{o}_t$. Step 3 then gives
 $\hat{\mathbf{z}}_t = \mathbf{z}_t$.
 :::
 

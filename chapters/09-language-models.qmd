@@ -395,49 +395,12 @@ check(list(n_counts.sum(axis=1)) == [5, 8, 1, 2, 2, 2, 2], "row totals")
 check(list(n_counts[INDEX["a"]]) == [5, 0, 1, 0, 0, 1, 1], "what follows a")
 ```
 
-The maximiser of @eq-lm-log-likelihood comes from Gibbs' inequality,
-which @sec-probability-loss proves as @thm-gibbs: for distributions
-$p$ and $q$ on a finite set, the Kullback–Leibler divergence
-$\sum_{v} p(v)\ln\bigl(p(v)/q(v)\bigr)$, summed over the $v$ with
-$p(v) > 0$, is non-negative, and it is zero only when $q = p$. The
-next lemma is that inequality with $p$ the observed frequencies
-$c_i/N$, written in terms of counts. The proof of @thm-bigram-mle
-applies it to one row at a time, where zero counts and zero
-probabilities both occur, so we prove it directly with those cases
-explicit.
-
-::: {#lem-gibbs-counts}
-Let $c_1, \dots, c_m \ge 0$ with $N = c_1 + \dots + c_m > 0$, and let
-$p_1, \dots, p_m \ge 0$ with $p_1 + \dots + p_m = 1$. Then
-$$
-\sum_{i=1}^m c_i\ln p_i \le \sum_{i=1}^m c_i\ln\frac{c_i}{N},
-$$
-with terms where $c_i = 0$ counted as $0$ on both sides. Equality holds
-if and only if $p_i = c_i/N$ for every $i$.
-:::
-
-If outcome $i$ was observed $c_i$ times, the left side is the
-log-likelihood of the distribution $p$, and the lemma says that no
-distribution beats the observed frequencies $c_i/N$.
-
-::: {.proof}
-If $p_i = 0$ for some $i$ with $c_i > 0$, the left side is $-\infty$
-and the inequality holds strictly. Otherwise let $I$ be the set of $i$
-with $c_i > 0$; then $p_i > 0$ for $i \in I$. The tangent line to
-$\ln$ at $1$ lies above its graph: $\ln x \le x - 1$ for $x > 0$, with
-equality only at $x = 1$ (the function $x - 1 - \ln x$ has derivative
-$1 - 1/x$, so it decreases on $(0, 1]$, increases on $[1, \infty)$, and
-is $0$ at $1$). Taking $x = Np_i/c_i$,
-$$
-\sum_{i\in I} c_i\ln p_i - \sum_{i\in I} c_i\ln\frac{c_i}{N}
-= \sum_{i\in I} c_i\ln\frac{Np_i}{c_i}
-\le \sum_{i\in I} c_i\Bigl(\frac{Np_i}{c_i} - 1\Bigr)
-= N\sum_{i\in I}p_i - N \le N - N = 0 .
-$$
-Equality needs $Np_i/c_i = 1$ for every $i \in I$, so $p_i = c_i/N$
-there; these $p_i$ already sum to 1, so $p_i = 0 = c_i/N$ for
-$i \notin I$. Conversely, $p_i = c_i/N$ gives equality.
-:::
+The maximiser of @eq-lm-log-likelihood comes
+from @thm-prob-categorical-mle: for observations treated as independent
+draws from one distribution on a finite set, the likelihood is largest
+at the relative frequencies of the observations and nowhere else. A
+bigram model holds one such distribution for each current token, and
+the theorem applies to one row of the transition matrix at a time.
 
 ::: {#thm-bigram-mle}
 ## Maximum likelihood for a bigram model
@@ -452,18 +415,23 @@ $$
 Rows with $n_a = 0$ can be any probability distributions.
 :::
 
-The best transition probabilities are the *relative frequencies*: the
-fraction of the pairs starting with $a$ that continue with $b$.
+The best transition probabilities are the relative frequencies of each
+row: the fraction of the pairs starting with $a$ that continue with
+$b$.
 
 ::: {.proof}
-The log-likelihood is a sum over rows,
-$\ell(p) = \sum_a \ell_a(p)$ with
-$\ell_a(p) = \sum_b n_{ab}\ln p(b\mid a)$, and $\ell_a$ depends only
-on row $a$ of $p$. The constraints of @def-bigram also act on each row
-separately. So $p$ maximises $\ell$ exactly when each row maximises
-its own $\ell_a$. If $n_a = 0$ then $\ell_a = 0$ whatever the row is.
-If $n_a > 0$, @lem-gibbs-counts with $c_b = n_{ab}$ and $N = n_a$ says
-that $\ell_a$ is largest exactly when $p(b\mid a) = n_{ab}/n_a$.
+The log-likelihood is a sum over rows, $\ell(p) = \sum_a \ell_a(p)$
+with $\ell_a(p) = \sum_b n_{ab}\ln p(b\mid a)$, and $\ell_a$ depends
+only on row $a$ of $p$. The constraints of @def-bigram also act on
+each row separately. So $p$ maximises $\ell$ exactly when each row
+maximises its own $\ell_a$. If $n_a = 0$ then $\ell_a = 0$ whatever
+the row is. If $n_a > 0$, take as observations the $n_a$ tokens that
+follow $a$ in the corpus, of which $n_{ab}$ equal $b$. Their
+likelihood under the distribution $p(\,\cdot\mid a)$ is
+$\prod_b p(b\mid a)^{n_{ab}} = e^{\ell_a(p)}$, with $e^{-\infty} = 0$.
+By @thm-prob-categorical-mle it is largest exactly when
+$p(b\mid a) = n_{ab}/n_a$ for every $b$, and since the exponential is
+increasing, so is $\ell_a$.
 :::
 
 Fitting the model needs no optimisation, only counting. The rows sum
@@ -643,8 +611,9 @@ $L = -\frac1N\cdot N\ln(1/|V|) = \ln|V|$ and $e^L = |V|$.
 For the 27-token vocabulary of names, the uniform model has loss
 $\ln 27 \approx 3.30$. This is where training starts. The book's model
 starts from small random weights, so its first predictions are close to
-uniform, and the loss on the first training step of microgpt is about
-3.37 [@karpathy2026microgpt]. A model that has learned nothing has a
+uniform: @exm-uniform-loss estimates its expected loss at the start as
+about 3.35, and the loss on the first training step of microgpt is
+about 3.37 [@karpathy2026microgpt]. A model that has learned nothing has a
 loss near 3.30, and every improvement shows as a loss below that.
 
 ::: {#exm-bigram-perplexity}
@@ -697,6 +666,7 @@ rounds_to(loss_dana, 1.66, 2, "dana loss 1.66")
 close(ppl_dana, 4050 ** 0.2, "dana perplexity formula")
 rounds_to(ppl_dana, 5.27, 2, "dana perplexity 5.27")
 rounds_to(math.log(27), 3.30, 2, "ln 27 is about 3.30")
+rounds_to(math.log(27) + 0.5 * 26 / 27 * 0.08**2 * 16, 3.35, 2, "estimate of exm-uniform-loss")
 # The loss as an average of cross-entropies of the rows.
 for model, loss_model in ((p_mle, loss_mle), (p_add, loss_add)):
     ce_avg = 0.0

@@ -23,7 +23,8 @@ theorem mle_row_sum (n : V → V → ℕ) (a : V) (h : 0 < ∑ b, n a b) :
   have hpos : (0 : ℝ) < ∑ c, (n a c : ℝ) := by exact_mod_cast h
   exact div_self hpos.ne'
 
-/-- The inequality behind `lem-gibbs-counts`, one term at a time: for a
+/-- A per-term inequality that gives the row maximum of `thm-bigram-mle`
+(chapter 8's `thm-prob-categorical-mle`, applied to one row) directly: for a
 count `c ≥ 0`, a total `N > 0` and a probability `p > 0`,
 `c ln p - c ln (c/N) ≤ N p - c`. -/
 theorem term_bound (c N p : ℝ) (hc : 0 ≤ c) (hN : 0 < N) (hp : 0 < p) :

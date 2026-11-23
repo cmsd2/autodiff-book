@@ -387,14 +387,14 @@ and otherwise $H(p, q) - H(p) = D_{\mathrm{KL}}(p\,\|\,q)$.
 ## Maximum likelihood for a categorical distribution {#sec-prob-mle}
 
 The simplest model of a sequence of observations from $V$ treats them
-as independent draws from an unknown distribution $q$ on $V$, with
-the $|V|$ values of $q$ as parameters. In @exm-likelihood the
-candidate $(0.6, 0.2, 0.2)$, which beat the uniform distribution, is
-the list of relative frequencies $\tfrac35, \tfrac15, \tfrac15$ of
-the three outcomes. Moving towards the uniform distribution, to
-$(0.5, 0.25, 0.25)$, lowers the likelihood to
-$0.5^3\times0.25^2 \approx 0.0078$. No other candidate does better
-than the relative frequencies.
+as independent draws from an unknown distribution $q$ on $V$, with the
+$|V|$ values of $q$ as parameters. In @exm-likelihood the candidate
+$(0.6, 0.2, 0.2)$, which beat the uniform distribution, is the list of
+*relative frequencies* $\tfrac35, \tfrac15, \tfrac15$ of the three
+outcomes, the fraction of the observations equal to each. Moving
+towards the uniform distribution, to $(0.5, 0.25, 0.25)$, lowers the
+likelihood to $0.5^3\times0.25^2 \approx 0.0078$. No other candidate
+does better than the relative frequencies.
 
 ::: {#thm-prob-categorical-mle}
 ## Maximum likelihood is relative frequency
@@ -856,7 +856,9 @@ $\mathbb{E}[\bar z^2] = \operatorname{Var}[\bar z] = \sigma^2/n$, so its
 expected value is $\frac{n-1}{n}\sigma^2$. The expected loss is about
 $\ln 27 + \frac12\cdot\frac{26}{27}\cdot0.10 \approx 3.35$. Averaged
 over 2000 freshly initialised models, each run on a random sequence
-of tokens, the simulated initial loss is also $3.35$.
+of tokens, the simulated initial loss is also $3.35$. The Taylor
+expansion gives no bound on its own error, and @thm-initial-loss in
+@sec-small-gpt replaces the estimate by inequalities.
 :::
 
 ```{python}
