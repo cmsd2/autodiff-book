@@ -1,13 +1,1093 @@
 # Reverse mode and backpropagation {#sec-reverse-mode}
 
-::: {.callout-note}
-## Not yet written
+Training a model means computing the gradient of one number, the loss,
+with respect to every parameter, thousands of times over. Forward mode
+(@sec-forward-mode) gets one directional derivative per pass, so a
+gradient with respect to $n$ parameters costs $n$ passes. This chapter
+runs the chain rule the other way. After one ordinary evaluation of
+the function, a single sweep backwards through the evaluation trace
+computes the derivative of the output with respect to every variable
+in it, inputs included. The cost of the whole gradient is then a
+constant multiple of the cost of evaluating the function, whatever
+$n$ is.
 
-This chapter will cover:
+This is *reverse mode*, and applied to a neural network it goes by the
+name *backpropagation*. The chapter proves that it is correct on any
+acyclic computational graph and bounds its cost. It then builds a
+small reverse-mode engine in Python, which the rest of the book uses
+to train models.
 
-- adjoints and reverse accumulation
-- a proof that reverse accumulation computes the gradient on any acyclic graph
-- topological order and the cost of a gradient
-- memory use and checkpointing
-- a minimal scalar automatic-differentiation engine
+```{python}
+#| include: false
+import math
+
+import numpy as np
+import sympy as sp
+from checks import check, close, maxima_zero, num_grad, sym_equal
+```
+
+## Adjoints {#sec-rev-adjoints}
+
+Until @sec-rev-vjp, an evaluation trace $v_1, \dots, v_N$
+(@def-evaluation-trace) with inputs $v_1, \dots, v_n$ computes a
+function $f\colon D \to \mathbb{R}$ with a single output, and the
+output is the last variable, $L = v_N$. We fix $\mathbf{a}$ in $D$ and
+write $v_k$ also for the value of variable $k$ when
+$\mathbf{x} = \mathbf{a}$. As in @sec-forward-mode,
+$d_{ki} = \partial\varphi_k/\partial v_i$ is the local partial
+derivative of line $k$ with respect to its argument $v_i$, evaluated
+at these values.
+
+Forward mode asks how every variable responds to an increment of the
+inputs. Reverse mode asks the opposite question: how does the output
+respond to a perturbation of one variable? Take $L = ab + a$ at
+$a = 2$, $b = 3$, with the trace
+$$
+v_1 = a,\quad v_2 = b,\quad v_3 = v_1v_2,\quad v_4 = v_3 + v_1 = L,
+$$
+whose values are $2, 3, 6, 8$. Perturb one variable at a time by a small amount $t$,
+keeping the variables before it fixed and recomputing those after it.
+
+- Perturbing $v_4$ changes $L$ by $t$: rate $1$.
+- Perturbing $v_3$ to $6 + t$ gives $L = (6 + t) + 2$: rate $1$.
+- Perturbing $v_2$ to $3 + t$ gives $v_3 = 2(3 + t)$ and
+  $L = 8 + 2t$: rate $2$.
+- Perturbing $v_1$ to $2 + t$ gives $v_3 = 3(2 + t)$ and
+  $L = 3(2 + t) + (2 + t) = 8 + 4t$: rate $4$.
+
+The variable $a$ reaches $L$ by two routes, through $v_3$ and
+directly, and its rate $4$ is the sum $3 + 1$ of the two
+contributions: the local partial derivative $d_{31} = v_2 = 3$ times
+the rate $1$ of $v_3$, plus $d_{41} = 1$ times the rate $1$ of $v_4$.
+In general the rate for a variable is built from the rates of the
+later variables that use it, so the rates can be computed from the
+output backwards.
+
+The obvious candidate for "the derivative of $L$ with respect to
+$v_1$" is the partial derivative of the last line, $\partial(v_3 +
+v_1)/\partial v_1 = 1$. It holds $v_3$ fixed, and so misses the route
+through $v_3$. The right notion recomputes every later variable, and
+holds only the earlier ones fixed.
+
+::: {#def-adjoint}
+## Adjoint
+
+For $n \le k \le N$, let $L_k(w_1, \dots, w_k)$ be the value of $v_N$
+obtained by setting $v_i = w_i$ for $i \le k$ and then running lines
+$k+1, \dots, N$ of the trace. So $L_N(w_1, \dots, w_N) = w_N$ and
+$L_n = f$. The *adjoint* of the variable $v_k$ is
+$$
+\bar v_k = \frac{\partial L_k}{\partial w_k}(v_1, \dots, v_k) \quad (k > n),
+\qquad
+\bar v_k = \frac{\partial f}{\partial x_k}(\mathbf{a}) \quad (k \le n),
+$$
+and we also write $\bar v_k = \partial L/\partial v_k$.
+:::
+
+In words, $\bar v_k$ is the rate at which the output changes when
+$v_k$ alone is perturbed, with every earlier variable held fixed and
+every later variable recomputed. In the example, $L_3(w_1, w_2, w_3)
+= w_3 + w_1$ and $L_2 = f$, and the adjoints are
+$(\bar v_1, \bar v_2, \bar v_3, \bar v_4) = (4, 2, 1, 1)$. The adjoints
+of the inputs form the gradient $\nabla f(\mathbf{a})$, and
+$\bar v_N = 1$. @thm-reverse-mode shows that each partial derivative
+in the definition exists.
+
+For $n \le k < N$, lines $k+1, \dots, N$ with $v_1, \dots, v_k$ as
+inputs form a system of intermediate variables (@def-intermediate-variables)
+with the same parent sets and the same local partial derivatives, and
+$L_k$ is its last variable as a function of those inputs. This is what
+lets @thm-chain-rule-paths describe the adjoints.
+
+```{python}
+#| include: false
+a_s, b_s, t_s = sp.symbols("a b t", real=True)
+L_ab = a_s * b_s + a_s
+check(L_ab.subs({a_s: 2, b_s: 3}) == 8, "L(2, 3) = 8")
+check([sp.diff(L_ab, s).subs({a_s: 2, b_s: 3}) for s in (a_s, b_s)] == [4, 2], "gradient (4, 2)")
+maxima_zero("diff(a*b + a, a) - (b + 1)", "dL/da = b + 1 in Maxima")
+# The four perturbations: earlier variables fixed, later ones recomputed.
+check(sp.expand(((6 + t_s) + 2) - 8) == t_s, "perturb v3: rate 1")
+check(sp.expand(2 * (3 + t_s) + 2 - 8) == 2 * t_s, "perturb v2: rate 2")
+check(sp.expand(3 * (2 + t_s) + (2 + t_s) - 8) == 4 * t_s, "perturb v1: rate 4")
+w1, w2, w3 = sp.symbols("w1 w2 w3", real=True)
+L3 = w3 + w1
+check(sp.diff(L3, w3) == 1 and sp.diff(L3, w1) == 1, "L_3 = w3 + w1: last-line partial is 1")
+```
+
+## The reverse sweep {#sec-rev-sweep}
+
+In the example, the adjoint of $v_1$ was assembled from one
+contribution for each line that uses $v_1$: line $3$ contributed
+$d_{31}\bar v_3$ and line $4$ contributed $d_{41}\bar v_4$. Each
+contribution needs the adjoint of a later variable. So we process the
+lines from the last to the first, and let line $k$ hand its
+contribution $d_{ki}\bar v_k$ to each of its arguments $v_i$. Every
+line that uses $v_k$ has a number larger than $k$, so by the time the
+process reaches line $k$, all of them have handed over their
+contributions, and the adjoint of $v_k$ is complete and ready to
+pass on. A variable may receive contributions from several lines, so
+the method keeps a running total for each variable, called its
+*accumulator*, and adds each contribution to it. This is the reverse
+sweep.
+
+::: {#def-reverse-sweep}
+## Reverse sweep
+
+1. *Forward pass.* Evaluate the trace at $\mathbf{a}$ and store every
+   value $v_1, \dots, v_N$.
+2. Set the accumulator of $v_N$ to $1$ and every other accumulator
+   to $0$.
+3. For $k = N, N-1, \dots, n+1$, and for each $i \in P(k)$, add
+   $(\text{accumulator of } v_k)\cdot d_{ki}$ to the accumulator of
+   $v_i$, with $d_{ki}$ evaluated at the stored arguments of line $k$.
+4. Return the accumulators of $v_1, \dots, v_n$.
+:::
+
+The next example runs the sweep on $L = ab + a$, and shows that step 3
+must add to the accumulators rather than overwrite them.
+
+::: {#exm-ab-plus-a}
+Run the sweep on $L = ab + a$ at $a = 2$, $b = 3$. It starts with
+accumulators $(0, 0, 0, 1)$.
+
+- Line $4$, $v_4 = v_3 + v_1$, has $d_{43} = d_{41} = 1$. It adds
+  $1\cdot 1$ to the accumulators of $v_3$ and $v_1$, giving
+  $(1, 0, 1, 1)$.
+- Line $3$, $v_3 = v_1v_2$, has $d_{31} = v_2 = 3$ and
+  $d_{32} = v_1 = 2$. It adds $1\cdot3$ to the accumulator of $v_1$
+  and $1\cdot2$ to that of $v_2$, giving $(4, 2, 1, 1)$.
+
+The final accumulators are the adjoints found by perturbation above,
+and $\nabla L(2, 3) = (4, 2)$ agrees with $\partial L/\partial a =
+b + 1$ and $\partial L/\partial b = a$. A sweep that overwrote the
+accumulator of $v_1$ instead of adding to it would end with $3$, the
+contribution through the product alone.
+:::
+
+```{python}
+#| include: false
+# The sweep of exm-ab-plus-a, step by step, and the overwriting variant.
+vals = {1: 2.0, 2: 3.0}
+vals[3] = vals[1] * vals[2]
+vals[4] = vals[3] + vals[1]
+check([vals[k] for k in (1, 2, 3, 4)] == [2, 3, 6, 8], "values 2, 3, 6, 8")
+lines = {4: [(3, 1.0), (1, 1.0)], 3: [(1, vals[2]), (2, vals[1])]}
+acc = {1: 0.0, 2: 0.0, 3: 0.0, 4: 1.0}
+over = dict(acc)
+for k in (4, 3):
+    for i, d in lines[k]:
+        acc[i] += acc[k] * d
+        over[i] = over[k] * d
+    if k == 4:
+        check([acc[j] for j in (1, 2, 3, 4)] == [1, 0, 1, 1], "after line 4")
+check([acc[j] for j in (1, 2, 3, 4)] == [4, 2, 1, 1], "after line 3")
+check(over[1] == 3, "overwriting gives 3")
+```
+
+::: {#thm-reverse-mode}
+## Reverse accumulation computes the gradient
+
+Let an evaluation trace $v_1, \dots, v_N$ with inputs
+$v_1, \dots, v_n$ compute $f\colon D \to \mathbb{R}$ with output
+$v_N$, and let $\mathbf{a} \in D$. Then every function $L_k$ of
+@def-adjoint is differentiable at $(v_1, \dots, v_k)$, so every
+adjoint exists, and:
+
+(a) each adjoint $\bar v_k$ is the sum, over all paths from $k$ to
+$N$, of the product of the local partial derivatives along the path;
+
+(b) the adjoints satisfy $\bar v_N = 1$ and
+$$
+\bar v_i = \sum_{k\,:\,i \in P(k)} \bar v_k\,d_{ki}
+\qquad (i = 1, \dots, N-1);
+$$ {#eq-rev-adjoint}
+
+(c) when the reverse sweep of @def-reverse-sweep processes line $k$,
+the accumulator of $v_k$ holds $\bar v_k$, and when the sweep finishes
+the accumulator of every variable holds its adjoint. In particular the
+sweep returns $\nabla f(\mathbf{a})$.
+:::
+
+In words, @eq-rev-adjoint says that the adjoint of a variable is the
+sum, over the lines that use it, of the adjoint of that line's result
+times the local partial derivative.
+
+::: {.proof}
+(a) For $k = N$, $L_N(\mathbf{w}) = w_N$ is linear, $\bar v_N = 1$,
+and the only path from $N$ to $N$ is the empty path, with product
+$1$. For $k < N$, let $m = \max(k, n)$, so $m < N$. Lines $m+1, \dots, N$ with
+$v_1, \dots, v_m$ as inputs form a system of intermediate variables,
+and $L_m$ is its last variable as a function of the inputs. The
+argument of @lem-trace-open shows that the set on which $L_m$ is
+defined is open, and each elementary operation is differentiable at
+its arguments. By @thm-chain-rule-paths, $L_m$ is differentiable at
+$(v_1, \dots, v_m)$, and $\partial L_m/\partial w_k$ is the sum over
+paths from $k$ to $N$ of the products of the local partial
+derivatives. This partial derivative is $\bar v_k$ in both cases of
+@def-adjoint.
+
+(b) The only path from $N$ to $N$ is the empty path, with product $1$,
+so $\bar v_N = 1$. For $i < N$, every path from $i$ to $N$ starts with
+an arrow $i \to k$, which means $i \in P(k)$, followed by a path from
+$k$ to $N$. Grouping the paths by their first arrow and applying (a)
+to each $k$, the sum over paths from $i$ is
+$\sum_{k : i \in P(k)} d_{ki}\,\bar v_k$.
+
+(c) Line $k$ changes only the accumulators of its arguments, whose
+numbers are less than $k$. So once the sweep has reached line $k$, no
+later step changes the accumulator of $v_k$, and its value from then
+on is its starting value plus one contribution from each line $k'$
+with $k \in P(k')$: the accumulator of $v_{k'}$ when line $k'$ was
+processed, times $d_{k'k}$. We show by induction downwards from $N$
+that this value is $\bar v_k$. For $k = N$ no line uses $v_N$, and the
+starting value is $1 = \bar v_N$. For $k < N$ the starting value is
+$0$, and every $k'$ with $k \in P(k')$ is larger than $k$, so by the
+induction hypothesis the accumulator of $v_{k'}$ held $\bar v_{k'}$
+when line $k'$ was processed. So the accumulator of $v_k$ holds
+$\sum_{k' : k \in P(k')} \bar v_{k'}\,d_{k'k} = \bar v_k$, by
+@eq-rev-adjoint. For an input $k \le n$ this is the value when the
+sweep finishes, which is $\partial f/\partial x_k(\mathbf{a})$.
+:::
+
+The theorem applies to any acyclic computational graph with one
+output. By @thm-topological-order the graph has a topological order
+with the inputs first. Nodes from which no path leads to the output
+do not affect it; remove them, and the output has no children left, so
+some topological order numbers it last. (The removed inputs have
+adjoint $0$, which is what the sweep's starting accumulators say.)
+
+In @exm-ab-plus-a there are two paths from $a$ to $L$: $1 \to 3 \to 4$
+with product $d_{31}d_{43} = 3\cdot1$, and $1 \to 4$ with product
+$d_{41} = 1$, which add to $\bar v_1 = 4$. The number of paths can grow
+exponentially with the size of the graph (@exr-ch2-diamonds,
+@exr-ch4-paths), while the sweep handles each arrow once. It computes
+the path sums of part (a) by sharing work: the sum over all paths
+from $v_k$ to the output is computed once, as $\bar v_k$, and reused by
+every argument of line $k$.
+
+## Forward and reverse mode compute the same numbers {#sec-rev-transposition}
+
+Forward mode with seed $\mathbf{e}_i$ and reverse mode both produce
+$\partial f/\partial x_i(\mathbf{a})$, by recurrences that run in
+opposite directions. In @exm-ab-plus-a, forward mode with seed
+$\mathbf{e}_1$ gives the tangents $\dot v_1 = 1$, $\dot v_2 = 0$,
+$\dot v_3 = d_{31}\dot v_1 + d_{32}\dot v_2 = 3$ and
+$\dot v_4 = d_{43}\dot v_3 + d_{41}\dot v_1 = 4$, while reverse mode
+gives $\bar v_1 = 4$. One identity explains the agreement. Collect the
+local partial derivatives in the $N\times N$ matrix $C$ whose entry in
+row $i$ and column $k$ is
+$$
+c_{ik} = d_{ki}\ \text{ if } i \in P(k),
+\qquad c_{ik} = 0 \ \text{ otherwise}.
+$$
+Column $k$ of $C$ holds the local partial derivatives of line $k$
+with respect to its arguments, and row $i$ holds the local partial
+derivatives of the lines that use $v_i$. Since $i \in P(k)$ only when
+$i < k$, the matrix is strictly upper triangular: every entry on or
+below the diagonal is $0$. For @exm-ab-plus-a,
+$$
+C = \begin{pmatrix}
+0 & 0 & 3 & 1\\
+0 & 0 & 2 & 0\\
+0 & 0 & 0 & 1\\
+0 & 0 & 0 & 0
+\end{pmatrix}.
+$$
+Column $3$ holds $d_{31} = 3$ and $d_{32} = 2$, the local partial
+derivatives of $v_3 = v_1v_2$, and column $4$ holds $d_{41} = 1$ and
+$d_{43} = 1$, those of $v_4 = v_3 + v_1$. Row $1$ says that $v_1$ is
+used by lines $3$ and $4$. Columns $1$ and $2$ are zero because the
+inputs have no arguments, and row $4$ is zero because no line uses
+the output.
+
+The tangent recurrence @eq-fwd-tangent with seed $\mathbf{u}$ says
+$\dot{\mathbf{v}} = \mathbf{s} + C^\top\dot{\mathbf{v}}$ with
+$\mathbf{s} = (u_1, \dots, u_n, 0, \dots, 0)$, because entry $k$ of
+$C^\top\dot{\mathbf{v}}$ is $\sum_{i\in P(k)} d_{ki}\dot v_i$ and the
+inputs have no arguments. The adjoint equations @eq-rev-adjoint say
+$\bar{\mathbf{v}} = \mathbf{e}_N + C\bar{\mathbf{v}}$, because entry
+$i$ of $C\bar{\mathbf{v}}$ is $\sum_{k : i\in P(k)} d_{ki}\bar v_k$.
+So forward mode multiplies by $C^\top$, running down the columns of
+$C$, and reverse mode multiplies by $C$, running along its rows. In
+the example, $\bar{\mathbf{v}} = (4, 2, 1, 1)$ and
+$C\bar{\mathbf{v}} = (3 + 1,\; 2,\; 1,\; 0)$, so
+$\mathbf{e}_4 + C\bar{\mathbf{v}} = \bar{\mathbf{v}}$. The next theorem
+shows that two such equations, one with $C^\top$ and one with $C$,
+always produce matching numbers.
+
+::: {#thm-forward-reverse}
+## Transposition
+
+Let $C$ be any $N\times N$ matrix and $\mathbf{s}$, $\mathbf{w}$ any
+vectors in $\mathbb{R}^N$. If $\mathbf{t} \in \mathbb{R}^N$ satisfies
+$\mathbf{t} = \mathbf{s} + C^\top \mathbf{t}$ and
+$\bar{\mathbf{v}} \in \mathbb{R}^N$ satisfies
+$\bar{\mathbf{v}} = \mathbf{w} + C\bar{\mathbf{v}}$, then
+$\mathbf{w}\cdot\mathbf{t} = \bar{\mathbf{v}}\cdot\mathbf{s}$.
+:::
+
+::: {.proof}
+Using $\mathbf{w} = \bar{\mathbf{v}} - C\bar{\mathbf{v}}$ and
+$(C\bar{\mathbf{v}})\cdot\mathbf{t} = \bar{\mathbf{v}}^\top C^\top
+\mathbf{t} = \bar{\mathbf{v}}\cdot(C^\top\mathbf{t})$,
+$$
+\mathbf{w}\cdot\mathbf{t}
+= \bar{\mathbf{v}}\cdot\mathbf{t} - \bar{\mathbf{v}}\cdot(C^\top\mathbf{t})
+= \bar{\mathbf{v}}\cdot(\mathbf{t} - C^\top\mathbf{t})
+= \bar{\mathbf{v}}\cdot\mathbf{s} .
+$$
+:::
+
+With $\mathbf{w} = \mathbf{e}_N$ and the seed $\mathbf{u} =
+\mathbf{e}_i$, the left side is the tangent of the output, which is
+$\partial f/\partial x_i(\mathbf{a})$ by @thm-forward-mode, and the
+right side is $\bar v_i$. This gives a second proof that the sweep
+returns the gradient: $n$ forward passes and one reverse sweep fill in
+the same vector. The file `lean/AutodiffBook/Ch04.lean` checks the
+identity by machine.
+
+```{python}
+#| include: false
+# thm-forward-reverse on random strictly upper-triangular C, and on the
+# trace of exm-ab-plus-a.
+rng = np.random.default_rng(4)
+for N in (2, 5, 12):
+    C = np.triu(rng.normal(size=(N, N)), 1)
+    s, w = rng.normal(size=N), rng.normal(size=N)
+    t = np.linalg.solve(np.eye(N) - C.T, s)
+    vbar = np.linalg.solve(np.eye(N) - C, w)
+    close(t, s + C.T @ t, "tangent recurrence")
+    close(w @ t, vbar @ s, "transposition identity", tol=1e-10)
+C4 = np.zeros((4, 4))
+C4[0, 2], C4[1, 2], C4[2, 3], C4[0, 3] = 3.0, 2.0, 1.0, 1.0
+vb4 = np.linalg.solve(np.eye(4) - C4, np.eye(4)[3])
+close(vb4, [4, 2, 1, 1], "adjoints of exm-ab-plus-a from the matrix")
+check(np.array_equal(C4, [[0, 0, 3, 1], [0, 0, 2, 0], [0, 0, 0, 1], [0, 0, 0, 0]]), "displayed C")
+close(C4 @ np.array([4.0, 2, 1, 1]), [4, 2, 1, 0], "C vbar = (3 + 1, 2, 1, 0)")
+close(np.eye(4)[3] + C4 @ np.array([4.0, 2, 1, 1]), [4, 2, 1, 1], "e4 + C vbar = vbar")
+t41 = np.linalg.solve(np.eye(4) - C4.T, np.eye(4)[0])
+close(t41, [1, 0, 3, 4], "tangents for seed e1")
+for i in range(2):
+    t4 = np.linalg.solve(np.eye(4) - C4.T, np.eye(4)[i])
+    close(t4[3], vb4[i], "forward tangent equals adjoint")
+```
+
+## Topological order by depth-first search {#sec-rev-dfs}
+
+A program that records a computational graph as it runs, as the
+engine of @sec-rev-engine does, ends up with a set of linked nodes:
+each node knows its parents and nothing else. To run the sweep it
+needs the nodes on which the output depends, listed so that every
+node comes after its parents; reading the list backwards then
+processes every node before its arguments. The list can be built by
+following parent links from the output. In @exm-ab-plus-a, start at
+$L = v_4$. Before listing $v_4$, list its parents, $v_3$ and $v_1$.
+Before listing $v_3$, list its parents $v_1$ and $v_2$, which have no
+parents and are listed at once. So the list begins $v_1, v_2, v_3$.
+The other parent of $v_4$ is $v_1$, which is already listed, and
+finally $v_4$ is listed: the result is $v_1, v_2, v_3, v_4$.
+
+::: {#def-rev-dfs}
+## Depth-first topological sort
+
+Start with an empty list and no node marked. To *visit* a node $u$:
+if $u$ is marked, do nothing; otherwise mark $u$, visit each parent of
+$u$ in turn, and then append $u$ to the list. The *depth-first order*
+from a node $o$ is the list obtained by visiting $o$.
+:::
+
+A node $u$ is an *ancestor* of $o$ if there is a path from $u$ to $o$
+(possibly the empty path, so $o$ is an ancestor of itself).
+
+::: {#thm-rev-dfs}
+## Depth-first search gives a topological order
+
+Let $o$ be a node of a DAG. The depth-first order from $o$ contains
+every ancestor of $o$ exactly once and no other node, and each node in
+it comes after all of its parents.
+:::
+
+::: {.proof}
+A node is marked before its visit appends it, and a visit to a marked
+node does nothing, so each node is appended at most once. Each visit
+to an unmarked node marks it, so at most as many visits do any work as
+there are nodes, and the search ends. Visits happen only to $o$ and,
+from inside the visit of a node, to that node's parents, so by
+induction every visited node is an ancestor of $o$. Conversely, if
+$u_0 \to u_1 \to \dots \to u_r = o$ is a path, then by induction
+downwards from $o$ each $u_i$ is visited, since every visit to an
+unmarked node visits all its parents, and a marked node has already
+been visited. Every visited node is marked, and is appended when its
+first visit ends.
+
+Now let $p$ be a parent of $u$, with $u$ in the list. During the first
+visit to $u$, the search visits $p$. If $p$ is unmarked at that
+moment, the visit to $p$ finishes, and appends $p$, before the visit
+to $u$ appends $u$. If $p$ is already marked, its first visit began
+earlier. If that visit has already finished, $p$ is already in the
+list. Otherwise the visit to $p$ is still in progress, so the visit to
+$u$ was started, directly or through a chain of visits, from inside
+it. Each visit in that chain is to a parent of the node before it, so
+there is a path from $u$ to $p$. Together with the edge $p \to u$ it
+forms a cycle, which is impossible in a DAG.
+:::
+
+Each node is marked once and each edge is followed once, so the
+search does work proportional to the number of nodes plus the number
+of edges of the part of the graph above $o$. @tarjan1972depth showed
+how depth-first search leads to efficient graph algorithms.
+
+There is a simpler order available to an engine that records
+operations as they happen: the order of creation. An engine creates
+each node after its parents, so creation order is a topological
+order. Keeping it requires a separate list of every operation
+performed, in the order performed, often called a *tape*. Depth-first
+search needs only the parent links that the nodes already hold, and
+visits only the nodes that the output depends on.
+
+## The cost of a gradient {#sec-rev-cost}
+
+How much more does the gradient cost than the function? Count the
+work for @exm-ab-plus-a, charging one unit for each arithmetic
+operation and one for each number read or set. Evaluating $L = ab + a$ costs $4$ units: $2$ for reading the inputs and $2$
+for the operations. The sweep sets $4$ accumulators, at $4$ units. The
+local partial derivatives cost $2$ units: those of $v_3 + v_1$ are the
+constant $1$, set twice, and those of $v_1v_2$ are the stored
+arguments. Each of the $4$ arrows needs one multiplication and one
+addition, $8$ units in all. Forward pass and sweep together cost
+$4 + 4 + 2 + 8 = 18$ units, $4.5$ times the cost of $f$. The same
+count for any trace gives a bound that does not depend on the number
+of inputs.
+
+::: {#def-rev-cost-model}
+## Cost model
+
+Let a trace with inputs $v_1, \dots, v_n$ compute $f$. Give each line
+$k$ a *cost* $c_k \ge 1$: reading an input costs $c_k = 1$, and for
+$k > n$, $c_k$ is the cost of evaluating $\varphi_k$. The cost of
+evaluating $f$ is $\operatorname{cost}(f) = c_1 + \dots + c_N$. The
+*cost model* consists of three assumptions:
+
+(i) every operation has at most $r$ arguments;
+
+(ii) for each $k > n$, the local partial derivatives $d_{ki}$,
+$i \in P(k)$, can be computed from the arguments and the value of
+line $k$ at cost at most $\alpha\,c_k$, for a constant $\alpha$;
+
+(iii) each addition or multiplication costs $1$, and so does setting
+a number to a constant.
+:::
+
+For the elementary operations of @sec-forward-mode, $r = 2$. With every
+arithmetic operation and every evaluation of $\exp$, $\log$, $\sin$,
+$\cos$ or a power costing $1$, we can take $\alpha = 3$: the partial
+derivatives of $t_1 + t_2$ and $t_1 t_2$ are constants or arguments;
+the derivative of $e^t$ is the value already computed; those of
+$\log t$ and $\sin t$ take one operation each, and that of $\cos t$,
+which is $-\sin t$, takes two; that of $t^c$ is $c\,t^c/t$, two
+operations; and those of
+$t_1/t_2$ are $1/t_2$ and $-(t_1/t_2)/t_2$, three operations.
+
+::: {#thm-cheap-gradient}
+## The cheap gradient principle
+
+Let a trace with inputs $v_1, \dots, v_n$ compute
+$f\colon D \to \mathbb{R}$, with line costs $c_k \ge 1$ and
+$\operatorname{cost}(f) = c_1 + \dots + c_N$. Suppose every operation
+has at most $r$ arguments, the local partial derivatives of line $k$
+can be computed at cost at most $\alpha c_k$, and each addition,
+multiplication and assignment of a constant costs $1$. Then the
+forward pass and the reverse sweep together compute $f(\mathbf{a})$
+and $\nabla f(\mathbf{a})$ at cost at most
+$$
+(2 + \alpha + 2r)\operatorname{cost}(f),
+$$
+whatever the number of inputs $n$.
+:::
+
+::: {.proof}
+Add up the steps of @def-reverse-sweep. The forward pass costs
+$\operatorname{cost}(f)$. Setting the $N$ accumulators costs $N$, and
+$N \le \operatorname{cost}(f)$ because every $c_k \ge 1$. Computing
+the local partial derivatives of every line costs at most
+$\sum_{k>n}\alpha c_k \le \alpha\operatorname{cost}(f)$. In step 3,
+each pair $(k, i)$ with $i \in P(k)$ costs one multiplication and one
+addition, and there are $\sum_{k > n}|P(k)| \le r\sum_{k>n} 1 \le
+r\operatorname{cost}(f)$ such pairs. The total is at most
+$(1 + 1 + \alpha + 2r)\operatorname{cost}(f)$.
+:::
+
+With $\alpha = 3$ and $r = 2$ the bound is $9\operatorname{cost}(f)$,
+comfortably above the factor $4.5$ of the example. Forward mode needs
+$n$ passes for the same gradient, each costing a constant multiple of
+$\operatorname{cost}(f)$. The constant $9$ comes from a coarse count.
+@griewank2008evaluating analyse the cost of reverse mode in detail,
+and @baydin2018automatic [sec. 3.2], citing that analysis, give the
+constant as less than $6$ and typically between $2$ and $3$.
+
+```{python}
+#| include: false
+# The count for exm-ab-plus-a, and thm-cheap-gradient on random traces with
+# arity at most r and costs c_k >= 1: the four counts never exceed
+# (2 + alpha + 2r) cost(f); alpha = 3, r = 2 gives 9.
+cost_f = 2 + 1 + 1
+check(cost_f == 4 and cost_f + 4 + 2 + 2 * 4 == 18 and 18 / cost_f == 4.5, "example count 18 = 4.5 cost(f)")
+check(18 <= 9 * cost_f, "example within the bound")
+check(2 + 3 + 2 * 2 == 9, "constant 9")
+for _ in range(200):
+    n_in = int(rng.integers(1, 30))
+    n_ops = int(rng.integers(1, 60))
+    r_max, alpha = 2, 3
+    costs = [1] * n_in + list(rng.integers(1, 5, size=n_ops))
+    arity = [0] * n_in + list(rng.integers(1, r_max + 1, size=n_ops))
+    work = (sum(costs) + len(costs) + sum(alpha * c for c in costs[n_in:])
+            + 2 * sum(arity))
+    check(work <= (2 + alpha + 2 * r_max) * sum(costs), "cheap gradient bound")
+```
+
+## Vector–Jacobian products and the shape of the Jacobian {#sec-rev-vjp}
+
+Reverse mode works for functions with several outputs too. In
+@exm-ab-plus-a, treat both $y_1 = v_3 = ab$ and $y_2 = v_4 = ab + a$
+as outputs, so $f(a, b) = (ab,\; ab + a)$ with
+$$
+J_f(2, 3) = \begin{pmatrix} 3 & 2 \\ 4 & 2 \end{pmatrix},
+$$
+whose rows are the gradients of the two outputs. Run the sweep with
+the accumulators of $v_3$ and $v_4$ starting at chosen numbers $w_1$
+and $w_2$ instead of $0$ and $1$. Starting from $(w_1, w_2) = (0, 1)$
+is the sweep of @exm-ab-plus-a, which returns $(4, 2)$, the second
+row. Starting from $(1, 0)$, line $4$ contributes nothing and line $3$
+returns $(3, 2)$, the first row. Starting from $(1, 1)$, line $4$
+raises the accumulator of $v_3$ to $2$ and adds $1$ to that of $v_1$,
+and line $3$ then adds $2\cdot3$ and $2\cdot2$, returning $(7, 4)$,
+the sum of the rows. In each case the sweep returns
+$\mathbf{w}^\top J_f(2, 3)$, the combination of the rows with weights
+$w_1$, $w_2$.
+
+::: {#thm-rev-vjp}
+## Reverse mode computes vector–Jacobian products
+
+Let an evaluation trace with inputs $v_1, \dots, v_n$ compute
+$f\colon D \to \mathbb{R}^m$, with outputs $y_1, \dots, y_m$ at
+distinct variables, let $\mathbf{a} \in D$ and let $\mathbf{w} \in
+\mathbb{R}^m$. Run the reverse sweep of @def-reverse-sweep with the
+accumulator of output $y_l$ starting at $w_l$, every other
+accumulator starting at $0$, and every line from $N$ down to $n+1$
+processed. Then the sweep returns $J_f(\mathbf{a})^\top\mathbf{w}$,
+whose transpose is the *vector–Jacobian product*
+$\mathbf{w}^\top J_f(\mathbf{a})$.
+:::
+
+::: {.proof}
+Let $\tilde{\mathbf{w}} \in \mathbb{R}^N$ hold $w_l$ in the position of
+output $y_l$ and $0$ elsewhere, and let $\bar{\mathbf{v}}$ be the final
+accumulators. As in the proof of @thm-reverse-mode (c), the
+accumulator of $v_k$ does not change after line $k$ is processed. So
+the accumulator of $v_i$ ends as its starting value plus one
+contribution from each line $k$ that uses $v_i$, namely
+$\tilde w_i + \sum_{k : i \in P(k)} d_{ki}\bar v_k$, and
+$\bar{\mathbf{v}} = \tilde{\mathbf{w}} + C\bar{\mathbf{v}}$ with the
+matrix $C$ of @sec-rev-transposition. Run forward mode with seed
+$\mathbf{e}_j$, giving tangents $\mathbf{t}$ with $\mathbf{t} =
+\mathbf{e}_j + C^\top\mathbf{t}$. By @thm-forward-reverse and
+@thm-forward-mode,
+$$
+\bar v_j = \tilde{\mathbf{w}}\cdot\mathbf{t}
+= \sum_{l=1}^m w_l\,\bigl(J_f(\mathbf{a})\mathbf{e}_j\bigr)_l
+= \bigl(J_f(\mathbf{a})^\top\mathbf{w}\bigr)_j .
+$$
+:::
+
+```{python}
+#| include: false
+# The two-output example: rows (3, 2) and (4, 2), and the sweep with seeds w.
+Jab = sp.Matrix([a_s * b_s, a_s * b_s + a_s]).jacobian([a_s, b_s]).subs({a_s: 2, b_s: 3})
+check(Jab == sp.Matrix([[3, 2], [4, 2]]), "Jacobian of (ab, ab + a)")
+for wv, want_row in (((0, 1), (4, 2)), ((1, 0), (3, 2)), ((1, 1), (7, 4))):
+    acc2 = {1: 0.0, 2: 0.0, 3: float(wv[0]), 4: float(wv[1])}
+    for k in (4, 3):
+        for i, d in lines[k]:
+            acc2[i] += acc2[k] * d
+    check((acc2[1], acc2[2]) == want_row, f"sweep with seeds {wv}")
+    check(tuple(sp.Matrix([list(wv)]) * Jab) == want_row, "w^T J")
+```
+
+With $\mathbf{w} = \mathbf{e}_l$, one sweep gives row $l$ of the
+Jacobian, the gradient of output $l$. So for $f\colon\mathbb{R}^n \to
+\mathbb{R}^m$, forward mode gets the Jacobian a column at a time, in
+$n$ passes, and reverse mode gets it a row at a time, in $m$ sweeps.
+Each pass or sweep costs a constant multiple of evaluating $f$, so
+forward mode is the cheaper choice when $n < m$, and reverse mode when
+$m < n$. A loss function has $m = 1$ and $n$ in the thousands or
+more, which is why training uses reverse mode. A curve
+$\gamma\colon\mathbb{R}\to\mathbb{R}^3$ has $n = 1$, and one forward
+pass gives its velocity. For a product of Jacobians, choosing the
+order of the matrix multiplications is the same choice
+(@exr-ch4-matrix-chain).
+
+## Memory and checkpointing {#sec-rev-checkpointing}
+
+Reverse mode pays for its speed in *memory*, by which we mean the
+number of values a method must store at the same time. Line $k$ of the
+sweep needs the arguments of line $k$, so the forward pass must keep
+every value until the sweep reaches it: memory in proportion to $N$,
+the length of the computation. Forward mode, by contrast, can discard
+each value once the lines that use it have run.
+
+Take a computation that is a chain of $T$ steps,
+$\mathbf{s}_t = \Phi_t(\mathbf{s}_{t-1})$ for $t = 1, \dots, T$, such
+as the layers of a deep network, where each *state* $\mathbf{s}_t$ is
+a vector. Sweeping back through step $t$ needs its argument
+$\mathbf{s}_{t-1}$, so the plain sweep stores all the states. With
+$T = 100$ there is a cheaper way. Keep only the ten states
+$\mathbf{s}_0, \mathbf{s}_{10}, \dots, \mathbf{s}_{90}$ during the
+forward pass. To sweep back through steps $100, \dots, 91$, recompute
+$\mathbf{s}_{91}, \dots, \mathbf{s}_{99}$ from $\mathbf{s}_{90}$; once
+the sweep has passed step $91$, discard them, recompute
+$\mathbf{s}_{81}, \dots, \mathbf{s}_{89}$ from $\mathbf{s}_{80}$, and
+so on. At most $20$ states are stored at any moment, against $100$,
+and each $\Phi_t$ is evaluated at most twice.
+
+*Checkpointing* trades recomputation for memory in this way. During
+the forward pass, keep only every $K$th state $\mathbf{s}_0,
+\mathbf{s}_K, \mathbf{s}_{2K}, \dots$, about $T/K$ of them. During the
+sweep, take the segments in reverse order: recompute the states of a
+segment from its stored first state, keep these $K$ states, sweep
+back through the segment, and discard them. At any moment the method
+stores at most about $T/K + K$ states, and the recomputation adds at most
+one more forward pass. Since
+$$
+\frac TK + K - 2\sqrt T = \Bigl(\sqrt{T/K} - \sqrt K\Bigr)^2 \ge 0 ,
+$$
+the memory is smallest, about $2\sqrt T$, when $K = \sqrt T$. For
+$T = 10^6$ steps that is $2000$ stored states instead of a million.
+
+@chen2016training use this scheme for deep networks, with memory
+proportional to $\sqrt n$ for an $n$-layer network at the price of one
+extra forward pass. Applying the idea recursively inside each segment
+reduces memory further (@exr-ch4-checkpoint). @griewank1992achieving showed that checkpointing applied recursively
+makes both the memory and the
+extra computation grow only logarithmically with the length of the
+computation, relative to a single evaluation, and
+@griewank2000algorithm give schedules that are optimal for this
+trade-off.
+
+```{python}
+#| include: false
+Tn = 10**6
+Kb = int(math.isqrt(Tn))
+check(Kb == 1000 and Tn // Kb + Kb == 2000, "T = 10^6: K = 1000, 2000 states")
+check(all(Tn / K + K >= 2 * math.sqrt(Tn) - 1e-9 for K in range(1, 5000)), "T/K + K >= 2 sqrt T")
+Ts, Ks = sp.symbols("T K", positive=True)
+sym_equal((sp.sqrt(Ts / Ks) - sp.sqrt(Ks))**2, Ts / Ks + Ks - 2 * sp.sqrt(Ts), "AM-GM identity")
+maxima_zero("radcan((sqrt(T/K) - sqrt(K))^2 - (T/K + K - 2*sqrt(T)))", "AM-GM identity in Maxima")
+# Simulate the checkpointed sweep: peak memory and recomputed steps.
+def checkpoint_cost(T, K):
+    stored = list(range(0, T, K))           # checkpoint states s_0, s_K, ...
+    peak, recompute = len(stored), 0
+    for start in reversed(stored):
+        end = min(start + K, T)
+        recompute += end - start - 1        # recompute s_{start+1} .. s_{end-1}
+        peak = max(peak, len(stored) + (end - start - 1) + 1)
+    return peak, recompute
+for T, K in ((100, 10), (1000, 31), (10**4, 100)):
+    peak, rec = checkpoint_cost(T, K)
+    check(peak <= math.ceil(T / K) + K and rec <= T, f"checkpoint memory and work for T={T}")
+# The T = 100, K = 10 example of the text: ten checkpoints, at most 20 states,
+# 90 recomputed steps, so each step is evaluated at most twice.
+check(list(range(0, 100, 10)) == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90], "ten checkpoints")
+check(checkpoint_cost(100, 10) == (20, 90), f"T = 100, K = 10: {checkpoint_cost(100, 10)}")
+```
+
+## A scalar reverse-mode engine {#sec-rev-engine}
+
+The engine below implements @def-reverse-sweep for scalar functions.
+Each number is a `Value` object holding
+
+- `data`, its value $v_k$;
+- `grad`, its accumulator, which holds the adjoint $\bar v_k$ after a
+  sweep;
+- `parents`, the `Value` objects that were the arguments of the
+  operation that produced it;
+- `local`, the partial derivatives of that operation with respect to
+  each argument, evaluated when the operation runs.
+
+Each operation computes its value and its local partial derivatives
+at once, and so records one line of the trace. Running ordinary Python
+arithmetic on `Value` objects builds the computational graph as a side
+effect.
+
+```{python}
+#| label: engine-value
+#| echo: true
+import math
+
+
+class Value:
+    """A number in a computational graph, with its value and its adjoint."""
+
+    def __init__(self, data, parents=(), local=()):
+        self.data = data        # the value v_k
+        self.grad = 0.0         # the accumulator; the adjoint after backward()
+        self.parents = parents  # the arguments of the operation that made v_k
+        self.local = local      # the partial derivative of v_k by each argument
+
+    def __add__(self, other):
+        other = as_value(other)
+        return Value(self.data + other.data, (self, other), (1.0, 1.0))
+
+    def __mul__(self, other):
+        other = as_value(other)
+        return Value(self.data * other.data, (self, other), (other.data, self.data))
+
+    def __pow__(self, c):
+        """self ** c for a constant number c."""
+        return Value(self.data**c, (self,), (c * self.data ** (c - 1),))
+
+    def exp(self):
+        e = math.exp(self.data)
+        return Value(e, (self,), (e,))
+
+    def log(self):
+        return Value(math.log(self.data), (self,), (1 / self.data,))
+
+    def relu(self):
+        return Value(max(self.data, 0.0), (self,), (1.0 if self.data > 0 else 0.0,))
+
+    def __neg__(self):
+        return self * -1.0
+
+    def __sub__(self, other):
+        return self + (-as_value(other))
+
+    def __truediv__(self, other):
+        return self * as_value(other) ** -1
+
+    def __radd__(self, other):
+        return self + other
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __rsub__(self, other):
+        return as_value(other) - self
+
+    def __rtruediv__(self, other):
+        return as_value(other) / self
+
+    def __repr__(self):
+        return f"Value(data={self.data:.6g}, grad={self.grad:.6g})"
+
+
+def as_value(x):
+    """Wrap a plain number as a Value with no parents."""
+    return x if isinstance(x, Value) else Value(float(x))
+```
+
+The engine builds subtraction and division from the other operations,
+so they need no derivative rules of their own. The ReLU, $\max(t, 0)$, has no
+derivative at $0$; the engine uses $0$ there, a choice @sec-networks
+discusses. At points where no ReLU receives exactly $0$, each ReLU
+agrees with $0$ or with $t$ on an interval around its argument, so it
+is differentiable there and @thm-reverse-mode applies.
+
+The sweep itself is the depth-first search of @def-rev-dfs followed by
+step 3 of @def-reverse-sweep. The most direct translation of
+@def-rev-dfs is a function `visit` that calls itself once for each
+parent. But a call that has started and not yet finished occupies
+space until it returns, and Python allows only about a thousand such
+calls at once, so a chain of a thousand operations would exceed the
+limit. So `topological_order` keeps its own list of the visits in
+progress. It adds and removes entries only at the end of that list,
+which programmers call a *stack*. The last entry is the visit being
+carried out, together with the parents it has yet to visit. At each
+step that visit takes its next parent and, if the parent is unmarked,
+marks it and starts a visit to it by adding an entry. When a visit has
+no parents left, its entry is removed and its node is appended to the
+order, as @def-rev-dfs prescribes. The set `visited` holds the marked
+nodes.
+
+```{python}
+#| label: engine-backward
+#| echo: true
+def topological_order(root):
+    """Every node that root depends on, each listed after all of its parents."""
+    order, visited = [], {root}
+    stack = [(root, iter(root.parents))]   # the visits in progress
+    while stack:
+        node, parents = stack[-1]
+        parent = next(parents, None)
+        if parent is None:                 # every parent of node is finished
+            stack.pop()
+            order.append(node)
+        elif parent not in visited:        # start a visit to parent
+            visited.add(parent)
+            stack.append((parent, iter(parent.parents)))
+    return order
+
+
+def backward(root):
+    """Set node.grad to the adjoint of node, for every node that root depends on."""
+    order = topological_order(root)
+    for node in order:
+        node.grad = 0.0
+    root.grad = 1.0
+    for node in reversed(order):
+        for parent, d in zip(node.parents, node.local):
+            parent.grad += node.grad * d
+```
+
+The function `backward` is @def-reverse-sweep with the order from
+`topological_order` in place of the numbering. It sets every
+accumulator to $0$, which also clears the results of any earlier call,
+and the accumulator of the output to $1$. It then takes the nodes from
+last to first and adds `node.grad * d` to the accumulator of each
+parent, where `d` is the stored local partial derivative. Nodes
+without parents, the inputs and constants, contribute nothing. Running
+it on @exm-ab-plus-a gives the value $8$ and the gradient $(4, 2)$:
+
+```{python}
+#| echo: true
+a, b = Value(2.0), Value(3.0)
+L = a * b + a
+backward(L)
+print(L, a, b, sep="\n")
+```
+
+```{python}
+#| include: false
+check((L.data, a.grad, b.grad) == (8.0, 4.0, 2.0), "engine on ab + a")
+check(len(topological_order(L)) == 4, "four nodes")
+```
+
+A product `x * x` records `x` twice among its parents, with local
+derivative `x.data` each time, and the `+=` in `backward` adds the two
+contributions to give $2x$. This is @eq-rev-adjoint for the operation
+$t \mapsto t^2$, whose derivative is the sum of the partial
+derivatives of $t_1t_2$ at $t_1 = t_2 = t$.
+
+A small two-layer network, of the kind @sec-networks studies, shows
+the engine on the kind of expression the rest of the book trains. From
+the inputs $x_1 = 0.5$ and $x_2 = -1.5$, a $2\times 2$ matrix $W$ of
+weights and weights $c_1$, $c_2$, it computes
+$$
+h_i = \max(w_{i1}x_1 + w_{i2}x_2,\; 0) \quad (i = 1, 2), \qquad
+y = c_1h_1 + c_2h_2, \qquad \text{loss} = (y - 1)^2 ,
+$$
+the squared distance of $y$ from a target of $1$. The code finds the
+derivative of the loss with respect to each of the six weights.
+
+```{python}
+#| echo: true
+x = [Value(0.5), Value(-1.5)]
+W = [[Value(0.3), Value(-0.8)],
+     [Value(1.1), Value(0.4)]]
+c = [Value(0.7), Value(-1.2)]
+
+h = [(W[i][0] * x[0] + W[i][1] * x[1]).relu() for i in range(2)]
+y = c[0] * h[0] + c[1] * h[1]
+loss = (y - 1.0) ** 2
+backward(loss)
+
+print(f"loss = {loss.data:.6f}")
+print("dloss/dW =", [[round(w.grad, 6) for w in row] for row in W])
+print("dloss/dc =", [round(ci.grad, 6) for ci in c])
+```
+
+For $h_2$ the argument of the maximum is
+$1.1 \cdot 0.5 + 0.4 \cdot (-1.5) = -0.05$, so $h_2 = 0$, the ReLU
+passes back adjoint $0$, and the weights $w_{21}$, $w_{22}$ and $c_2$
+get zero derivative at this point. For $h_1$ it is $1.35$, so
+$y = 0.7 \cdot 1.35 = 0.945$ and the loss is
+$0.055^2 = 0.003025$.
+
+```{python}
+#| include: false
+# The two-layer example against SymPy (Max for the ReLU) and finite differences.
+xs = sp.symbols("x1 x2", real=True)
+Ws = sp.Matrix(2, 2, sp.symbols("w11 w12 w21 w22", real=True))
+cs = sp.symbols("c1 c2", real=True)
+hs = [sp.Max(0, Ws[i, 0] * xs[0] + Ws[i, 1] * xs[1]) for i in range(2)]
+loss_s = (cs[0] * hs[0] + cs[1] * hs[1] - 1)**2
+point = {xs[0]: 0.5, xs[1]: -1.5, Ws[0, 0]: 0.3, Ws[0, 1]: -0.8, Ws[1, 0]: 1.1, Ws[1, 1]: 0.4,
+         cs[0]: 0.7, cs[1]: -1.2}
+params = [Ws[0, 0], Ws[0, 1], Ws[1, 0], Ws[1, 1], cs[0], cs[1]]
+engine_grads = [W[0][0].grad, W[0][1].grad, W[1][0].grad, W[1][1].grad, c[0].grad, c[1].grad]
+sym_grads = [float(sp.diff(loss_s, p).subs(point)) for p in params]
+close(engine_grads, sym_grads, "two-layer gradients against SymPy", tol=1e-12)
+close(loss.data, float(loss_s.subs(point)), "two-layer loss")
+close(loss.data, 0.055**2, "loss = 0.003025", tol=1e-12)
+close([y.data, h[0].data, h[1].data], [0.945, 1.35, 0.0], "y, h1, h2", tol=1e-12)
+close(1.1 * 0.5 + 0.4 * -1.5, -0.05, "second pre-activation", tol=1e-12)
+check(engine_grads[2] == engine_grads[3] == engine_grads[5] == 0.0, "inactive unit gets zero gradient")
+def loss_np(p):
+    W_, c_ = p[:4].reshape(2, 2), p[4:]
+    hh = np.maximum(W_ @ np.array([0.5, -1.5]), 0)
+    return (c_ @ hh - 1)**2
+close(num_grad(loss_np, [0.3, -0.8, 1.1, 0.4, 0.7, -1.2]), engine_grads, "two-layer finite differences",
+      tol=1e-7)
+# x * x gives 2x.
+xv = Value(3.0)
+backward(xv * xv)
+check(xv.grad == 6.0, "x * x gives 2x")
+# Every operation of the engine, on several functions and random points,
+# against SymPy and num_grad.
+p_, q_, r_ = sp.symbols("p q r", real=True)
+cases = [
+    (lambda p, q, r: (1 + (p * q).exp()).log() + p / q - r ** 0.5,
+     sp.log(1 + sp.exp(p_ * q_)) + p_ / q_ - sp.sqrt(r_)),
+    (lambda p, q, r: (p - r) ** 3 * q.exp() / (2 + q * q) + (3 - p) / r,
+     (p_ - r_)**3 * sp.exp(q_) / (2 + q_**2) + (3 - p_) / r_),
+    (lambda p, q, r: (p * q - r).relu() * p + (q * 2.0 - 1.0).relu(),
+     sp.Max(0, p_ * q_ - r_) * p_ + sp.Max(0, 2 * q_ - 1)),
+]
+for fv, fs in cases:
+    for _ in range(6):
+        pt = rng.uniform(0.2, 1.8, size=3)
+        vs = [Value(float(u)) for u in pt]
+        out = fv(*vs)
+        backward(out)
+        sub = dict(zip((p_, q_, r_), pt))
+        close(out.data, float(fs.subs(sub)), "engine value")
+        close([v.grad for v in vs], [float(sp.diff(fs, s).subs(sub)) for s in (p_, q_, r_)],
+              "engine gradient against SymPy", tol=1e-10)
+        npf = lambda u: fv(*[Value(float(t)) for t in u]).data
+        close([v.grad for v in vs], num_grad(npf, pt), "engine gradient against num_grad", tol=1e-6)
+# Calling backward twice gives the same gradients (accumulators are reset).
+backward(loss)
+close([W[0][0].grad, c[0].grad], engine_grads[0:5:4], "backward is repeatable", tol=1e-15)
+# The sweep's multiply-adds equal the number of edges, at most 2 per operation node.
+xs_big = [Value(float(i) / 100) for i in range(1000)]
+total = xs_big[0] * xs_big[0]
+for xi in xs_big[1:]:
+    total = total + xi * xi
+order_big = topological_order(total)
+edges_big = sum(len(nd.parents) for nd in order_big)
+ops_big = sum(1 for nd in order_big if nd.parents)
+check(edges_big <= 2 * ops_big and len(order_big) == 1000 + ops_big, "edges at most twice the operations")
+backward(total)
+close([xi.grad for xi in xs_big], [2 * xi.data for xi in xs_big], "gradient of a sum of squares")
+```
+
+The source of this book checks every gradient this engine produces
+against SymPy and against central differences. The engine is
+slow, since every scalar operation creates a Python object, but it is
+complete: @sec-small-gpt trains a transformer with nothing more. Real
+systems apply the same sweep to arrays, with one node per matrix
+operation instead of one per number, which is the subject of
+@thm-backprop-matrix.
+
+## History {#sec-rev-history}
+
+@wengert1964simple described forward mode as a program in 1964. For
+reverse mode, @linnainmaa1976taylor expanded the rounding error
+accumulated by an algorithm in terms of the local rounding errors of
+its steps, a calculation of first-order sensitivities of the final
+result to each intermediate quantity; @baydin2018automatic [sec. 3.3]
+note that this work is often cited as the first published description
+of reverse mode. @rumelhart1986learning applied the method, under the name
+back-propagation, to training layered neural networks, and their paper
+brought it to wide attention. Researchers in
+several fields found the idea independently, and @baydin2018automatic [sec. 3.3]
+trace its history through optimal control and the automatic
+differentiation community.
+
+## Notes and further reading {#sec-rev-notes}
+
+@griewank2008evaluating develop reverse mode in full, including its
+cost and the checkpointing methods that reduce its memory use. @baydin2018automatic
+survey automatic differentiation for machine learning, with worked
+forward and reverse sweeps on a small example and a review of
+implementations. Topological sorting goes back to
+@kahn1962topological, and the method of @thm-rev-dfs uses the depth-first search studied by
+@tarjan1972depth.
+
+## Exercises {#sec-rev-exercises}
+
+::: {#exr-ch4-sweep}
+Run the reverse sweep by hand on the trace of @tbl-fwd-trace at
+$(2, 0.5)$, listing the adjoint of every variable, and compare the
+result with @exm-fwd-pass.
+:::
+
+::: {#exr-ch4-overwrite}
+In the engine, `y = x * x` records `x` twice as a parent.
+
+(a) Show that `backward(y)` sets `x.grad` to $2x$.
+
+(b) What would it set `x.grad` to if `backward` used `=` instead of
+`+=`? What would it give for @exm-ab-plus-a?
+:::
+
+::: {#exr-ch4-dfs}
+Build the function of @tbl-fwd-trace with the engine as
+`v3 = v1 ** 2`, `v4 = v3 * v2`, `v5 = v1 * v2`, `v6 = sin(v5)`,
+`v7 = v4 + v6` (assume a `sin` operation). Find the list that
+`topological_order(v7)` returns, and check that it is a topological
+order.
+:::
+
+::: {#exr-ch4-vjp}
+Let $f(x, y) = (xy,\; x + y,\; x^2)$ and $\mathbf{w} = (1, -1, 2)$.
+Compute $\mathbf{w}^\top J_f(1, 2)$ from the Jacobian, and again by a
+reverse sweep on a trace of $f$ with the outputs seeded by
+$\mathbf{w}$.
+:::
+
+::: {#exr-ch4-matrix-chain}
+Let $f = f_3 \circ f_2 \circ f_1$ with $f_1\colon\mathbb{R}^n \to
+\mathbb{R}^p$, $f_2\colon\mathbb{R}^p\to\mathbb{R}^p$ and
+$f_3\colon\mathbb{R}^p\to\mathbb{R}$, so that $J_f = J_3J_2J_1$ by
+@thm-chain-rule. Multiplying an $a\times b$ matrix by a $b\times c$
+matrix takes $abc$ multiplications. Count the multiplications needed
+to form $J_f$ as $J_3(J_2J_1)$ and as $(J_3J_2)J_1$, and evaluate both
+for $n = p = 1000$. Which order corresponds to forward mode, and which
+to reverse mode?
+:::
+
+::: {#exr-ch4-product}
+Let $f(\mathbf{x}) = x_1x_2\cdots x_n$, computed by the trace
+$p_2 = x_1x_2$, $p_k = p_{k-1}x_k$ for $k = 3, \dots, n$.
+
+(a) Write out the reverse sweep and show that it computes
+$\nabla f(\mathbf{x})$ with $2(n-1)$ multiplications.
+
+(b) How many multiplications does it take to compute each partial
+derivative $\prod_{j\ne i}x_j$ separately, and how many does forward
+mode take?
+:::
+
+::: {#exr-ch4-paths}
+Let $u_0 = 2x$, $w_0 = 3x$, and for $i = 1, \dots, k$ let
+$u_i = u_{i-1}w_{i-1}$ and $w_i = u_{i-1} + w_{i-1}$. Let
+$L = u_k + w_k$.
+
+(a) Show that the computational graph has $2^{k+1}$ paths from $x$ to
+$L$.
+
+(b) Show that step 3 of the reverse sweep updates an accumulator
+$4k + 4$ times, once for each edge of the graph.
+:::
+
+::: {#exr-ch4-checkpoint}
+Reverse mode differentiates a chain of $T$ steps with checkpoints
+every $K$ steps, as in @sec-rev-checkpointing.
+
+(a) For $T = 10\,000$, find the $K$ that minimises $T/K + K$ and the
+number of states stored.
+
+(b) Inside each segment of length $K_1$, store every $K_2$th state
+during the recomputation, and recompute the sub-segments from these.
+Show that the method stores at most about $T/K_1 + K_1/K_2 + K_2$
+states at once, that the recomputation adds at most two forward passes, and
+that $K_1 = T^{2/3}$, $K_2 = T^{1/3}$ give about $3T^{1/3}$ states.
+:::
+
+::: {#exr-ch4-tanh}
+Add an operation `tanh` to the engine, using
+$\frac{d}{dt}\tanh t = 1 - \tanh^2 t$. Prove this formula from
+$\tanh t = (e^t - e^{-t})/(e^t + e^{-t})$, and use the engine to find
+the gradient of $\tanh(xy)$ at $(0.5, -1)$.
 :::

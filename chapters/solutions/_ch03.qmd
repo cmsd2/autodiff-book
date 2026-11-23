@@ -1,0 +1,275 @@
+## Chapter 3 {#sec-solutions-3}
+
+```{python}
+#| include: false
+import math
+from itertools import permutations
+
+from checks import num_grad
+from checks.ch03 import load_chapter_code, tree_diff, tree_leaves
+
+# The dual-number class of chapter 3, loaded from the chapter itself.
+ch3 = load_chapter_code("03-forward-mode.qmd", "dual-")
+Dual3, exp3, jvp3 = ch3["Dual"], ch3["exp"], ch3["jvp"]
+E3 = sp.Matrix([[0, 1], [0, 0]])
+
+
+def Md3(u, v):
+    """The matrix model u I + v E of the dual number u + v eps."""
+    return u * sp.eye(2) + v * E3
+```
+
+**@exr-ch3-trace.** One trace is
+
+| variable | operation | value at $(0, 1, 2)$ |
+|---|---|---|
+| $v_1$ | $x_1$ | $0$ |
+| $v_2$ | $x_2$ | $1$ |
+| $v_3$ | $x_3$ | $2$ |
+| $v_4$ | $v_1 + v_2$ | $1$ |
+| $v_5$ | $v_2 + v_3$ | $3$ |
+| $v_6$ | $v_4 v_5$ | $3$ |
+| $v_7$ | $\exp v_1$ | $1$ |
+| $v_8$ | $v_6 v_7$ | $3$ |
+
+so $f(0, 1, 2) = 3$. The graph has the eight nodes and the edges
+$1 \to 4$, $2 \to 4$, $2 \to 5$, $3 \to 5$, $4 \to 6$, $5 \to 6$,
+$1 \to 7$, $6 \to 8$ and $7 \to 8$. The input $x_1$ has two children,
+$v_4$ and $v_7$, and so does $x_2$.
+
+```{python}
+#| include: false
+x1, x2, x3 = sp.symbols("x1:4", real=True)
+f3 = (x1 + x2) * (x2 + x3) * sp.exp(x1)
+p3 = {x1: 0, x2: 1, x3: 2}
+w = {1: x1, 2: x2, 3: x3}
+w[4] = w[1] + w[2]
+w[5] = w[2] + w[3]
+w[6] = w[4] * w[5]
+w[7] = sp.exp(w[1])
+w[8] = w[6] * w[7]
+sym_equal(w[8], f3, "trace computes f")
+check([w[k].subs(p3) for k in range(1, 9)] == [0, 1, 2, 1, 3, 3, 1, 3], "trace values")
+```
+
+**@exr-ch3-forward.** With $\dot v_1 = 1$, $\dot v_2 = -1$,
+$\dot v_3 = 2$, the tangent rules give
+$$
+\begin{aligned}
+\dot v_4 &= \dot v_1 + \dot v_2 = 0, &
+\dot v_5 &= \dot v_2 + \dot v_3 = 1, &
+\dot v_6 &= v_5\dot v_4 + v_4\dot v_5 = 1,\\
+\dot v_7 &= e^{v_1}\dot v_1 = 1, &
+\dot v_8 &= v_7\dot v_6 + v_6\dot v_7 = 1 + 3 = 4 .
+\end{aligned}
+$$
+From the formula, by the product rule,
+$\partial f/\partial x_1 = (x_2 + x_3)e^{x_1} + (x_1 + x_2)(x_2 + x_3)e^{x_1}$,
+$\partial f/\partial x_2 = (x_1 + 2x_2 + x_3)e^{x_1}$ and
+$\partial f/\partial x_3 = (x_1 + x_2)e^{x_1}$, so
+$\nabla f(0, 1, 2) = (6, 4, 1)$ and
+$\nabla f(0, 1, 2)\cdot\mathbf{u} = 6 - 4 + 2 = 4$, as
+@thm-forward-mode says.
+
+```{python}
+#| include: false
+gf3 = [sp.diff(f3, s) for s in (x1, x2, x3)]
+sym_equal(gf3[0], (x2 + x3) * sp.exp(x1) + (x1 + x2) * (x2 + x3) * sp.exp(x1), "df/dx1")
+sym_equal(gf3[1], (x1 + 2 * x2 + x3) * sp.exp(x1), "df/dx2")
+sym_equal(gf3[2], (x1 + x2) * sp.exp(x1), "df/dx3")
+check([g.subs(p3) for g in gf3] == [6, 4, 1], "gradient (6, 4, 1)")
+tangent_dots = [(w[k].diff(x1) - w[k].diff(x2) + 2 * w[k].diff(x3)).subs(p3) for k in range(1, 9)]
+check(tangent_dots == [1, -1, 2, 0, 1, 1, 1, 4], f"tangents {tangent_dots}")
+val3, dd3 = jvp3(lambda a, b, c: (a + b) * (b + c) * exp3(a), [0.0, 1.0, 2.0], [1.0, -1.0, 2.0])
+close([val3, dd3], [3, 4], "forward pass with the chapter's Dual class")
+```
+
+**@exr-ch3-orders.** The inputs $1$ and $2$ take the first two
+places, in either of $2$ orders. Node $7$ has parents $4$ and $6$, and
+the other two nodes, $3$ and $5$, must precede $4$ and $6$
+respectively, so $7$ comes last. The remaining four places hold
+$3, 4, 5, 6$. Their parents other than $3$ and $5$ are inputs, so the
+only conditions are that $3$ comes before $4$ and $5$ before $6$. An
+arrangement is fixed by choosing which $2$ of the $4$ places hold $3$
+and $4$ (in that order), with $5$ and $6$ in the other two, so there
+are $\binom42 = 6$ arrangements, and $2 \times 6 = 12$ orders in all.
+
+```{python}
+#| include: false
+e3 = [(1, 3), (1, 5), (2, 4), (2, 5), (3, 4), (5, 6), (4, 7), (6, 7)]
+orders3 = [p for p in permutations(range(1, 8)) if all(p.index(j) < p.index(k) for j, k in e3)]
+first3 = [p for p in orders3 if set(p[:2]) == {1, 2}]
+check(len(first3) == 2 * math.comb(4, 2) == 12, "12 orders with inputs first")
+check(all(p[-1] == 7 for p in first3), "node 7 is last")
+```
+
+**@exr-ch3-quotient.** (a) The inverse of $c + d\varepsilon$ is
+$1/c - (d/c^2)\varepsilon$, so
+$$
+\frac{a + b\varepsilon}{c + d\varepsilon}
+= (a + b\varepsilon)\Bigl(\frac1c - \frac{d}{c^2}\varepsilon\Bigr)
+= \frac ac + \Bigl(\frac bc - \frac{ad}{c^2}\Bigr)\varepsilon
+= \frac ac + \frac{bc - ad}{c^2}\,\varepsilon .
+$$
+This is also what @eq-dual-extension gives for the operation
+$(t_1, t_2) \mapsto t_1/t_2$, whose partial derivatives are $1/t_2$
+and $-t_1/t_2^2$.
+
+(b) By @thm-dual-numbers (a), $p(a + b\varepsilon) = p(a) +
+p'(a)b\varepsilon$ and $q(a + b\varepsilon) = q(a) +
+q'(a)b\varepsilon$, with $q(a) \ne 0$. By (a),
+$$
+\frac{p(a + b\varepsilon)}{q(a + b\varepsilon)}
+= \frac{p(a)}{q(a)} + \frac{p'(a)q(a) - p(a)q'(a)}{q(a)^2}\,b\,\varepsilon
+= r(a) + r'(a)\,b\,\varepsilon
+$$
+by the quotient rule, which is @eq-dual-extension for $g = r$.
+
+```{python}
+#| include: false
+a, b, c, d = sp.symbols("a b c d", real=True)
+check(sp.simplify(Md3(a, b) * Md3(c, d).inv() - Md3(a / c, (b * c - a * d) / c**2)) == sp.zeros(2, 2),
+      "quotient of dual numbers")
+tt = sp.symbols("t", real=True)
+pp, qq = 2 * tt**3 - tt + 5, tt**2 + 1
+rr = pp / qq
+in_dual = lambda poly: sum((cf * Md3(a, b) ** i
+                            for i, cf in enumerate(reversed(sp.Poly(poly, tt).all_coeffs()))),
+                           sp.zeros(2, 2))
+check(sp.simplify(in_dual(pp) * in_dual(qq).inv() - Md3(rr.subs(tt, a), sp.diff(rr, tt).subs(tt, a) * b))
+      == sp.zeros(2, 2), "r(a + b eps) = r(a) + r'(a) b eps for a rational function")
+d1 = Dual3(1.3, 0.7) / Dual3(-0.4, 2.1)
+close([d1.a, d1.b], [1.3 / -0.4, (0.7 * -0.4 - 1.3 * 2.1) / 0.16], "Dual class division")
+```
+
+**@exr-ch3-sqrt.** The derivative of $\sqrt t$ is $1/(2\sqrt t)$, so
+$\sqrt{a + b\varepsilon} = \sqrt a + \dfrac{b}{2\sqrt a}\,\varepsilon$.
+Squaring with @def-dual-numbers,
+$$
+\Bigl(\sqrt a + \frac{b}{2\sqrt a}\varepsilon\Bigr)^2
+= a + 2\sqrt a\cdot\frac{b}{2\sqrt a}\,\varepsilon = a + b\varepsilon .
+$$
+In particular $\sqrt{4 + \varepsilon} = 2 + \tfrac14\varepsilon$.
+
+```{python}
+#| include: false
+ap = sp.symbols("a", positive=True)
+sq = Md3(sp.sqrt(ap), b / (2 * sp.sqrt(ap)))
+check(sp.simplify(sq * sq - Md3(ap, b)) == sp.zeros(2, 2), "square of the dual square root")
+check(sq.subs({ap: 4, b: 1}) == Md3(2, sp.Rational(1, 4)), "sqrt(4 + eps) = 2 + eps/4")
+```
+
+**@exr-ch3-second.** Multiplication in $\mathbb{R}[\varepsilon]_3$ is
+multiplication of polynomials in $\varepsilon$ followed by dropping
+$\varepsilon^3$ and higher powers, so it is associative and
+commutative, and the binomial theorem holds. For $k \ge 2$,
+$$
+(a + \varepsilon)^k = \sum_{j=0}^k \binom kj a^{k-j}\varepsilon^j
+= a^k + k a^{k-1}\varepsilon + \binom k2 a^{k-2}\varepsilon^2 ,
+$$
+because every term with $j \ge 3$ contains $\varepsilon^3 = 0$. Since
+$\frac{d}{dt}t^k = kt^{k-1}$ and $\frac{d^2}{dt^2}t^k = k(k-1)t^{k-2}
+= 2\binom k2 t^{k-2}$, this is
+$t^k + (t^k)'\varepsilon + \frac12(t^k)''\varepsilon^2$ at $t = a$. The
+same formula holds for $k = 0$ and $k = 1$, where the derivatives
+that appear are $0$. Multiplying by the coefficients of $p$ and adding
+gives the result. For $p(t) = t^4 - 3t^2$,
+$$
+p(1 + \varepsilon) = (1 + 4\varepsilon + 6\varepsilon^2) - 3(1 + 2\varepsilon + \varepsilon^2)
+= -2 - 2\varepsilon + 3\varepsilon^2 ,
+$$
+so $\tfrac12 p''(1) = 3$ and $p''(1) = 6$. Directly,
+$p''(t) = 12t^2 - 6$, which is $6$ at $t = 1$.
+
+```{python}
+#| include: false
+eps = sp.symbols("epsilon")
+trunc = lambda e: sum(sp.expand(e).coeff(eps, j) * eps**j for j in range(3))
+ps = tt**4 - 3 * tt**2
+check(sp.expand(trunc(ps.subs(tt, 1 + eps)) - (-2 - 2 * eps + 3 * eps**2)) == 0, "p(1 + eps)")
+check(sp.expand(trunc((1 + eps)**4) - (1 + 4 * eps + 6 * eps**2)) == 0, "(1 + eps)^4")
+check(sp.diff(ps, tt, 2).subs(tt, 1) == 6, "p''(1) = 6")
+coeffs = sp.symbols("k0:6")
+pg = sum(ci * tt**i for i, ci in enumerate(coeffs))
+want2 = pg.subs(tt, a) + sp.diff(pg, tt).subs(tt, a) * eps + sp.diff(pg, tt, 2).subs(tt, a) / 2 * eps**2
+check(sp.expand(trunc(pg.subs(tt, a + eps)) - want2) == 0, "second-order rule for degree-5 polynomials")
+```
+
+**@exr-ch3-swell.** (a) The formula for $s_k$ contains $s_{k-1}$
+twice and one more $x$, so its count $L_k$ satisfies
+$L_k = 2L_{k-1} + 1$ with $L_0 = 1$. Then $L_k + 1 = 2(L_{k-1} + 1)$,
+so $L_k + 1 = 2^{k+1}$ and $L_k = 2^{k+1} - 1$.
+
+(b) The formula for $s_k'$ contains $s_{k-1}'$ twice and $s_{k-1}$
+twice, so $D_k = 2D_{k-1} + 2L_{k-1} = 2D_{k-1} + 2^{k+1} - 2$, with
+$D_0 = 0$. Dividing by $2^k$,
+$D_k/2^k = D_{k-1}/2^{k-1} + 2 - 2^{1-k}$, and summing from $1$ to
+$k$,
+$$
+\frac{D_k}{2^k} = 2k - \sum_{i=1}^k 2^{1-i} = 2k - 2 + 2^{1-k},
+\qquad
+D_k = (k - 1)\,2^{k+1} + 2 .
+$$
+For example $s_1' = 1\cdot x + x\cdot 1 + 1$ contains $x$ twice, and
+$D_1 = 0 + 2 = 2$.
+
+(c) Each step is two lines, $w = v^2$ and $v_{\text{new}} = w + x$,
+so the trace has $2k$ operations, and forward mode adds one tangent
+line for each, $2k$ in all.
+
+```{python}
+#| include: false
+s_tree = "x"
+for k in range(1, 12):
+    s_tree = ("+", ("*", s_tree, s_tree), "x")
+    check(tree_leaves(s_tree) == 2**(k + 1) - 1, f"L_{k}")
+    check(tree_leaves(tree_diff(s_tree)) == (k - 1) * 2**(k + 1) + 2, f"D_{k}")
+check(tree_leaves(tree_diff(("+", ("*", "x", "x"), "x"))) == 2, "D_1 = 2")
+kk3 = sp.symbols("k", integer=True, nonnegative=True)
+D3 = sp.Function("D")
+sym_equal(sp.rsolve(D3(kk3) - 2 * D3(kk3 - 1) - 2**(kk3 + 1) + 2, D3(kk3), {D3(0): 0}),
+          (kk3 - 1) * 2**(kk3 + 1) + 2, "D_k from rsolve")
+xs = sp.symbols("x", real=True)
+s_sym = xs
+for _ in range(4):
+    s_sym = s_sym**2 + xs
+
+
+def s_trace(v, k):
+    x_in = v
+    for _ in range(k):
+        w_ = v * v
+        v = w_ + x_in
+    return v
+
+
+close(s_trace(Dual3(0.3, 1.0), 4).b, float(sp.diff(s_sym, xs).subs(xs, 0.3)), "forward mode on s_4")
+```
+
+**@exr-ch3-central.** By Taylor's theorem with the Lagrange remainder,
+there are $\xi_+$ in $(a, a+h)$ and $\xi_-$ in $(a-h, a)$ with
+$$
+f(a \pm h) = f(a) \pm f'(a)h + \tfrac12 f''(a)h^2 \pm \tfrac16 f'''(\xi_\pm)h^3 .
+$$
+Subtracting, the $f(a)$ and $f''(a)$ terms cancel:
+$f(a+h) - f(a-h) = 2f'(a)h + \tfrac16\bigl(f'''(\xi_+) + f'''(\xi_-)\bigr)h^3$.
+Dividing by $2h$,
+$$
+\left|\frac{f(a+h) - f(a-h)}{2h} - f'(a)\right|
+= \frac{|f'''(\xi_+) + f'''(\xi_-)|}{12}\,h^2 \le \frac{2M}{12}h^2 = \frac{Mh^2}{6} .
+$$
+
+```{python}
+#| include: false
+# The bound for sin at a = 1 (M = 1) and exp at a = 0 (M = e^h), several h.
+for h in (0.5, 0.1, 0.01):
+    err_s = abs((math.sin(1 + h) - math.sin(1 - h)) / (2 * h) - math.cos(1))
+    check(err_s <= h**2 / 6, "central difference bound for sin")
+    err_e = abs((math.exp(h) - math.exp(-h)) / (2 * h) - 1)
+    check(err_e <= math.exp(h) * h**2 / 6, "central difference bound for exp")
+# For a polynomial of degree 4 the error is exactly f'''(a) h^2/6 (odd terms only).
+hh = sp.symbols("h", positive=True)
+q4 = sum(ci * tt**i for i, ci in enumerate(coeffs[:5]))
+err4 = sp.expand((q4.subs(tt, a + hh) - q4.subs(tt, a - hh)) / (2 * hh) - sp.diff(q4, tt).subs(tt, a))
+sym_equal(err4, sp.diff(q4, tt, 3).subs(tt, a) * hh**2 / 6, "central error for quartics")
+```
