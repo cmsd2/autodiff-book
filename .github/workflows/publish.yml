@@ -28,7 +28,7 @@ jobs:
       - name: Install Maxima
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends maxima
+          sudo apt-get install -y --no-install-recommends maxima maxima-share
 
       - uses: astral-sh/setup-uv@v10.4.0
 
