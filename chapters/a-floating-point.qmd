@@ -1,11 +1,715 @@
 # Floating-point arithmetic {#sec-floating-point}
 
-::: {.callout-note}
-## Not yet written
+Every number in this book's computations, from a gradient checked by
+finite differences to the 4192 parameters of the model in
+@sec-small-gpt, lives in the computer as a floating-point number: a binary
+fraction with a fixed number of significant bits, scaled by a power of
+2. Arithmetic on such numbers rounds after every operation. This
+appendix states the rounding model that arithmetic following the IEEE
+754 standard satisfies, and uses it to explain two things the main
+text relies on: why finite differences need a carefully chosen step,
+and why programs compute the softmax, and the logarithm of a sum of
+exponentials, after subtracting the largest input.
 
-This chapter will cover:
+```{python}
+#| include: false
+import math
+import struct
+import sys
+from fractions import Fraction
 
-- how real numbers are represented and rounded
-- cancellation and the error of finite differences
-- stable evaluation of softmax and log-sum-exp
+import matplotlib.pyplot as plt
+import numpy as np
+import sympy as sp
+from checks import check, close, sym_equal
+
+u = 2.0**-53
+```
+
+## Binary floating-point numbers {#sec-fp-numbers}
+
+A computer has to store numbers as large as $10^{300}$ and as small as
+$10^{-300}$ in a fixed number of bits, with the same relative
+precision across that range. Scientific notation does this in base
+10; floating point does it in base 2. For example,
+$$
+5.75 = 4 + 1 + \tfrac12 + \tfrac14 = (101.11)_2 = (1.0111)_2\times2^2
+= \Bigl(1 + \frac{7}{16}\Bigr)2^2 :
+$$
+a *significand* between 1 and 2, written in binary, times a power of
+2. Storing a number then means storing the exponent (here 2) and the
+binary digits after the point (here 0111), together with a sign. The format that
+this book's computations use keeps 52 such digits.
+
+::: {#def-fp-binary64}
+## Binary64 numbers
+
+The finite *binary64* numbers (the "double precision" numbers of
+IEEE 754) are $0$ and the numbers
+$$
+\pm\Bigl(1 + \frac{f}{2^{52}}\Bigr)2^{e}
+\quad (0 \le f < 2^{52},\; -1022 \le e \le 1023),
+\qquad
+\pm\frac{f}{2^{52}}\,2^{-1022}
+\quad (0 < f < 2^{52}),
+$$
+with $f$ and $e$ integers. Those of the first kind are *normal*, and
+those of the second kind are *subnormal*. A number occupies 64 bits:
+one for the sign, 11 for the exponent (stored as $e + 1023$,
+with the values $0$ and $2047$ reserved for zero and subnormals, and
+for infinities and NaN, "not a number") and 52 for $f$.
+:::
+
+For $5.75$, $e = 2$ and $f = (7/16)2^{52} = 7\times2^{48}$. The
+significand $1 + f/2^{52}$ has 53 significant bits, the leading
+1 being implicit. Between $2^e$ and $2^{e+1}$ the normal numbers are
+equally spaced, $2^{e-52}$ apart, so the spacing doubles from one
+power of 2 to the next and the *relative* spacing stays between
+$2^{-53}$ and $2^{-52}$. The spacing just above $1$ is
+$2^{-52} \approx 2.22\times10^{-16}$, often called *machine epsilon*.
+
+The largest finite number is
+$(2 - 2^{-52})\,2^{1023} \approx 1.798\times10^{308}$, the smallest
+positive normal number is $2^{-1022} \approx 2.225\times10^{-308}$, and
+the smallest positive subnormal is $2^{-1074} \approx 4.94\times10^{-324}$.
+Results too large to represent *overflow* to $\pm\infty$, and results
+too small *underflow* to a subnormal or to $0$. For the exponential
+function this happens at moderate arguments: $e^x$ overflows for
+$x > \ln\bigl((2 - 2^{-52})2^{1023}\bigr) \approx 709.78$, and rounds to $0$ for
+$x < \ln 2^{-1075} \approx -745.13$.
+
+Subnormal numbers fill the gap between $0$ and the smallest positive
+normal number $2^{-1022}$. Without them, the next number above $0$
+would be $2^{-1022}$, while the normal numbers just above $2^{-1022}$
+are only $2^{-1074}$ apart; two such numbers could then differ by an
+amount that is not representable, and their computed difference
+would be $0$ although they are not equal. The subnormal numbers are
+the multiples of $2^{-1074}$ below $2^{-1022}$, the same spacing as
+the normal numbers in $[2^{-1022}, 2^{-1021})$, and with them the
+difference of two distinct binary64 numbers is never computed as $0$
+[@goldberg1991what]. @lem-fp-sterbenz below relies on them.
+
+```{python}
+#| include: false
+fi = sys.float_info
+check(fi.mant_dig == 53 and fi.max_exp == 1024 and fi.min_exp == -1021, "binary64 parameters")
+check(fi.max == (2 - 2.0**-52) * 2.0**1023, "largest finite number")
+close(fi.max, 1.798e308, "largest about 1.798e308", tol=1e-3)
+check(fi.min == 2.0**-1022, "smallest normal")
+close(fi.min, 2.225e-308, "smallest normal about 2.225e-308", tol=1e-3)
+check(math.ulp(0.0) == 2.0**-1074 and 2.0**-1074 > 0 and 2.0**-1074 / 2 == 0.0, "smallest subnormal")
+close(2.0**-1074, 4.94e-324, "smallest subnormal about 4.94e-324", tol=1e-3)
+check(fi.epsilon == 2.0**-52 and math.ulp(1.0) == 2.0**-52, "spacing above 1")
+close(2.0**-52, 2.22e-16, "machine epsilon about 2.22e-16", tol=1e-3)
+# Spacing 2^(e-52) in [2^e, 2^(e+1)), for several e including the extremes.
+for e in (-1022, -1, 0, 1, 9, 52, 1023):
+    check(math.ulp(2.0**e) == 2.0**(e - 52) and math.ulp(1.999 * 2.0**e) == 2.0**(e - 52),
+          f"spacing in binade {e}")
+# The bit layout: sign, biased exponent, fraction.
+bits = lambda x: struct.unpack(">Q", struct.pack(">d", x))[0]
+check(bits(1.0) == 0x3FF0000000000000, "1.0 has biased exponent 1023 and fraction 0")
+check(bits(-2.0) >> 63 == 1 and (bits(-2.0) >> 52) & 0x7FF == 1024, "-2.0: sign 1, exponent 1+1023")
+check((bits(fi.max) >> 52) & 0x7FF == 2046 and bits(fi.max) & (2**52 - 1) == 2**52 - 1, "largest")
+check((bits(2.0**-1074) >> 52) & 0x7FF == 0 and bits(2.0**-1074) & (2**52 - 1) == 1, "subnormal")
+check((bits(math.inf) >> 52) & 0x7FF == 2047, "infinity uses exponent field 2047")
+# Overflow and underflow thresholds of exp.
+close(math.log(fi.max), 709.78, "ln of the largest number", tol=1e-5)
+close(-1075 * math.log(2), -745.13, "ln 2^-1075", tol=1e-5)
+check(math.isfinite(math.exp(709.78)), "exp(709.78) is finite")
+with np.errstate(over="ignore", under="ignore"):
+    check(np.isinf(np.exp(709.79)), "exp(709.79) overflows")
+    check(np.exp(-745.13) == 2.0**-1074 and np.exp(-745.14) == 0.0, "exp underflows below -745.13")
+# Subnormals: multiples of 2^-1074 below 2^-1022, the spacing of the normals just above 2^-1022.
+check(math.ulp(2.0**-1022) == 2.0**-1074 and math.ulp(2.0**-1023) == 2.0**-1074
+      and math.ulp(1.5 * 2.0**-1060) == 2.0**-1074, "subnormal spacing 2^-1074")
+check(2.0**-1022 - math.ulp(2.0**-1023) == (2**52 - 1) * 2.0**-1074, "largest subnormal")
+xa_, ya_ = 2.0**-1022 + 2.0**-1074, 2.0**-1022
+check(xa_ != ya_ and xa_ - ya_ == 2.0**-1074 and 2.0**-1074 < 2.0**-1022,
+      "difference of neighbours above 2^-1022 is 2^-1074, below the smallest normal")
+rng_sub = np.random.default_rng(3)
+for _ in range(2000):
+    p1 = float(rng_sub.uniform(1, 2)) * 2.0 ** int(rng_sub.integers(-1074, -1018))
+    q1 = float(np.nextafter(p1, np.inf)) if rng_sub.random() < 0.5 else float(rng_sub.uniform(1, 2)) * p1
+    check(p1 == q1 or p1 - q1 != 0.0, "distinct numbers have a non-zero computed difference")
+```
+
+Most real numbers are not binary64 numbers. Even $0.1$ is not, because
+$1/10$ is not a fraction with a power of 2 as denominator
+(@exr-a-tenth). The computer stores a real number $x$ in range as
+$\operatorname{fl}(x)$, the binary64 number nearest to $x$ (with ties
+going to the one whose integer $f$ is even); this is *rounding to
+nearest*. The stored value of $0.1$ is
+$0.1000000000000000055511\ldots$, wrong by about
+$5.55\times10^{-18}$, a relative error of $5.55\times10^{-17}$. Near
+$0.1$ the binary64 numbers are $2^{-56}$ apart and near $1000$ they
+are $2^{-43}$ apart, so the absolute error of rounding grows with
+$|x|$, but the relative error stays below one bound.
+
+::: {#thm-fp-rounding}
+## Rounding error
+
+Let $u = 2^{-53}$, the *unit roundoff*. If $x$ is real and
+$2^{-1022} \le |x| \le (2 - 2^{-52})2^{1023}$, then
+$$
+\operatorname{fl}(x) = x(1 + \delta) \quad\text{for some } |\delta| \le u .
+$$
+:::
+
+::: {.proof}
+It is enough to treat $x > 0$. Let $e$ be the integer with
+$2^e \le x < 2^{e+1}$; then $-1022 \le e \le 1023$. The binary64
+numbers $2^e(1 + f/2^{52})$, $f = 0, \dots, 2^{52}$, lie $2^{e-52}$
+apart and run from $2^e$ to $2^{e+1}$ (the last of them is
+the first number of the next range, or, for $e = 1023$, lies beyond
+the largest finite number, which $x$ does not exceed). So $x$ lies
+between two consecutive binary64 numbers that are $2^{e-52}$ apart,
+and the nearer of them is within half that distance:
+$|\operatorname{fl}(x) - x| \le 2^{e-53} \le 2^{-53}x$. Put
+$\delta = (\operatorname{fl}(x) - x)/x$.
+:::
+
+IEEE 754 requires the basic operations $+$, $-$, $\times$, $\div$ and
+$\sqrt{\phantom{x}}$ to be *correctly rounded*: the computed result is
+$\operatorname{fl}$ of the exact result [@ieee754-2019]. By
+@thm-fp-rounding, for binary64 numbers $x$ and $y$ and any of these
+operations $\circ$,
+$$
+\operatorname{fl}(x\circ y) = (x\circ y)(1 + \delta), \qquad |\delta| \le u,
+$$ {#eq-fp-standard-model}
+as long as the exact result lies in the normal range. This *standard
+model* is the starting point of rounding-error analysis
+[@higham2002accuracy, ch. 2; @stoer2002introduction, sec. 1.2]. The
+standard does not require correct rounding of $\exp$ and $\log$, and
+library implementations of them typically guarantee an error of about
+one *unit in the last place* (the spacing between consecutive binary64
+numbers at the size of the result), a relative error of a small
+multiple of $u$.
+
+```{python}
+#| include: false
+check(5.75 == (1 + 7 / 16) * 2**2 and (bits(5.75) >> 52) & 0x7FF == 2 + 1023
+      and bits(5.75) & (2**52 - 1) == 7 * 2**48, "5.75: e = 2, f = 7 * 2^48")
+close(float(Fraction(0.1) - Fraction(1, 10)), 5.55e-18, "error of fl(0.1)", tol=1e-20)
+close(float((Fraction(0.1) - Fraction(1, 10)) * 10), 5.55e-17, "relative error of fl(0.1)", tol=1e-19)
+check(math.ulp(0.1) == 2.0**-56 and math.ulp(1000.0) == 2.0**-43, "spacings near 0.1 and 1000")
+# Correct rounding of + - * / and sqrt, checked exactly with fractions.
+rng_a = np.random.default_rng(7)
+for _ in range(2000):
+    a, b = (float(v) for v in rng_a.normal(size=2) * 10.0**rng_a.integers(-5, 6, size=2))
+    for op, exact in ((a + b, Fraction(a) + Fraction(b)), (a * b, Fraction(a) * Fraction(b)),
+                      (a / b, Fraction(a) / Fraction(b)), (a - b, Fraction(a) - Fraction(b))):
+        if exact != 0:
+            check(abs(Fraction(op) - exact) <= Fraction(1, 2**53) * abs(exact), "standard model")
+    x = abs(a)
+    check(abs(Fraction(math.sqrt(x))**2 - Fraction(x)) <= 2 * Fraction(1, 2**53) * Fraction(x) * 1.0001,
+          "sqrt rounding")
+# Theorem: rounding a real number (here a rational) to nearest has relative error at most u.
+for _ in range(2000):
+    p, q = int(rng_a.integers(1, 10**12)), int(rng_a.integers(1, 10**12))
+    xr = Fraction(p, q) * Fraction(2) ** int(rng_a.integers(-1000, 1000))
+    check(abs(Fraction(float(xr)) - xr) <= Fraction(1, 2**53) * xr, "fl(x) = x(1 + delta), |delta| <= u")
+close(u, 1.11e-16, "u about 1.11e-16", tol=1e-3)
+```
+
+## Cancellation {#sec-fp-cancellation}
+
+Subtracting two nearby binary64 numbers introduces no new rounding
+error (@lem-fp-sterbenz below), but the two numbers usually carry
+errors from earlier steps, and the subtraction can make those errors
+large compared with the result.
+
+::: {#exm-fp-cancellation}
+For small $x$, $1 - \cos x \approx x^2/2$. Computed directly, the
+result is poor: the computed $\cos x$ is a number near 1 with an error
+of up to about $u$, and that error is not small compared with
+$x^2/2$. For $x = 10^{-7}$ the direct computation gives
+$4.996\times10^{-15}$ against the true $5.000\times10^{-15}$, a
+relative error of $8\times10^{-4}$. For $x = 10^{-8}$, $\cos x$ rounds
+to exactly $1$ and the computed $1 - \cos x$ is $0$, against the true
+value $5\times10^{-17}$. Rewriting with the identity
+$1 - \cos x = 2\sin^2(x/2)$ removes the subtraction, and gives
+$5.000\times10^{-15}$ and $5.000\times10^{-17}$, correct to the
+precision shown.
+:::
+
+```{python}
+#| include: false
+for xv, direct_val, rel in ((1e-7, 4.996e-15, 8e-4), (1e-8, 0.0, 1.0)):
+    direct = 1 - math.cos(xv)
+    good = 2 * math.sin(xv / 2) ** 2
+    true = float(sp.N(2 * sp.sin(sp.Float(xv, 50) / 2) ** 2, 30))
+    close(direct, direct_val, f"direct 1 - cos({xv})", tol=1e-18)
+    close(abs(direct - true) / true, rel, f"relative error at {xv}", tol=0.05 * rel)
+    close(good, true, f"2 sin^2(x/2) at {xv}", tol=1e-15 * true)
+check(math.cos(1e-8) == 1.0, "cos(1e-8) rounds to 1")
+close(2 * math.sin(0.5e-7) ** 2, 5.000e-15, "5.000e-15", tol=1e-19)
+close(2 * math.sin(0.5e-8) ** 2, 5.000e-17, "5.000e-17", tol=1e-21)
+# The lemma's bound, for this example: a = 1, b = cos x with relative error at most u.
+xv = 1e-7
+bound = u * (1 + math.cos(xv)) / (1 - math.cos(xv))
+check(abs(1 - math.cos(xv) - 2 * math.sin(xv / 2) ** 2) / (2 * math.sin(xv / 2) ** 2) <= bound,
+      "cancellation lemma bound")
+```
+
+In the example, the computed $\cos x$ is the true value times
+$1 + \delta$ with $|\delta|$ of the order of $u$, and the subtraction
+itself is exact. The general situation is two numbers known only through
+approximations with relative errors at most $u$, as
+@thm-fp-rounding provides.
+
+::: {#lem-fp-cancellation}
+## Cancellation
+
+Let $a$ and $b$ be real numbers with $a \ne b$, let $u = 2^{-53}$,
+and let $\hat a = a(1 + \delta_a)$ and $\hat b = b(1 + \delta_b)$
+with $|\delta_a|, |\delta_b| \le u$. Then
+$$
+\frac{|(\hat a - \hat b) - (a - b)|}{|a - b|} \le u\,\frac{|a| + |b|}{|a - b|} .
+$$
+:::
+
+::: {.proof}
+$(\hat a - \hat b) - (a - b) = a\delta_a - b\delta_b$, whose absolute
+value is at most $u(|a| + |b|)$ by the triangle inequality.
+:::
+
+When $a$ and $b$ are close, the factor $(|a| + |b|)/|a - b|$ is
+large, and the relative error of the difference can be far larger
+than $u$, even though the subtraction itself adds no error. The
+digits that agree cancel, and what remains is mostly the earlier
+rounding error. This is *cancellation*. In @exm-fp-cancellation,
+$a = 1$ and $b = \cos x \approx 1 - x^2/2$, so the factor is about
+$4/x^2$, which is $4\times10^{14}$ for $x = 10^{-7}$.
+
+The same effect appears in a difference quotient, where
+$f(x + h)$ and $f(x)$ agree in more and more digits as $h$ shrinks.
+One more fact lets the analysis below ignore the subtraction itself.
+The stored values of $0.3$ and $0.2$ are binary64 numbers within a
+factor 2 of each other, and their difference
+$0.09999999999999997779\ldots$ is computed exactly: it is itself a
+binary64 number. It differs from the stored value of $0.1$ only because
+storing $0.3$ and $0.2$ rounded them.
+
+::: {#lem-fp-sterbenz}
+## Sterbenz's lemma
+
+If $a$ and $b$ are binary64 numbers with $b/2 \le a \le 2b$, then
+$a - b$ is a binary64 number, so floating-point subtraction computes it
+exactly.
+:::
+
+::: {.proof}
+If $b = 0$ then $a = 0$. Otherwise both numbers are positive, and
+swapping them changes only the sign of the difference, so suppose
+$b \le a \le 2b$. Let $e$ be the exponent
+of $b$ (with $e = -1022$ if $b$ is subnormal). Every binary64 number
+at least $2^e$ is an integer multiple of $2^{e-52}$, and so are $b$
+and $a \ge b$. Hence $a - b = D\,2^{e-52}$ for an integer $D$ with
+$0 \le D \le b/2^{e-52} < 2^{53}$, because $a - b \le b$. If
+$D\,2^{e-52} \ge 2^{-1022}$, let $e' \le e$ be its exponent; then
+$D\,2^{e-52} = (D\,2^{e-e'})\,2^{e'-52}$ with
+$2^{52} \le D\,2^{e-e'} < 2^{53}$, a normal number. Otherwise it is
+an integer multiple of $2^{-1074}$ below $2^{-1022}$, a subnormal
+number or $0$.
+:::
+
+```{python}
+#| include: false
+check(Fraction(0.3) - Fraction(0.2) == Fraction(0.3 - 0.2) and 0.3 - 0.2 != 0.1, "0.3 - 0.2 is exact")
+close(0.3 - 0.2, 0.09999999999999997779, "value of 0.3 - 0.2", tol=1e-19)
+close(4 / 1e-14, 4e14, "factor 4/x^2")
+check(abs(u * 2 / (1 - math.cos(1e-7)) - u * 4 / 1e-14) / (u * 4 / 1e-14) < 2e-3, "factor about 4/x^2")
+for _ in range(5000):
+    bb = float(rng_a.uniform(0.1, 10)) * 2.0 ** int(rng_a.integers(-1070, 1000))
+    aa = bb * float(rng_a.uniform(0.5, 2.0))
+    check(Fraction(aa - bb) == Fraction(aa) - Fraction(bb), "Sterbenz: exact subtraction")
+```
+
+## The error of finite differences {#sec-fp-fd-error}
+
+The forward difference $(f(x + h) - f(x))/h$ estimates the derivative
+$f'(x)$, and the hidden checks in this book use such estimates to test
+gradients. How small should $h$ be? In exact arithmetic the error
+falls as $h$ falls. In floating point it does not. For $f(y) = 1/y$ at
+$x = 3$, where $f'(3) = -1/9$, the computed forward difference with
+$h = 2^{-10}$ is wrong by $3.6\times10^{-5}$; with $h = 2^{-27}$ by
+$8.3\times10^{-10}$; and with $h = 2^{-40}$ by $2.7\times10^{-5}$
+again. The function values carry rounding errors, the difference
+cancels their leading digits, and the division by $h$ magnifies what
+is left. The total error has two parts that pull in opposite
+directions: the *truncation error*, the error of the exact difference
+quotient, which comes from cutting off the Taylor series of $f$ and
+shrinks with $h$; and the *rounding error*, which comes from the
+computed values of $f$ and grows as $h$ shrinks.
+
+::: {#thm-fd-error}
+## Error of finite differences
+
+Let $u = 2^{-53}$, $h > 0$, and let $M_0 > 0$ bound $|f|$ at the points where the
+computation evaluates $f$. Suppose the computed values $\hat f(y)$
+satisfy
+$|\hat f(y) - f(y)| \le uM_0$ at those points, and that the
+subtraction and the division by $h$ (or $2h$) are exact.
+
+(a) If $f$ is twice differentiable on an open interval containing
+$[x, x + h]$ and $|f''| \le M_2$ on $[x, x + h]$, with $M_2 > 0$, then
+$$
+\Bigl|\frac{\hat f(x + h) - \hat f(x)}{h} - f'(x)\Bigr|
+\le \frac{M_2h}{2} + \frac{2uM_0}{h} .
+$$
+The bound is smallest at $h^* = 2\sqrt{uM_0/M_2}$, where it equals
+$2\sqrt{uM_0M_2}$.
+
+(b) If $f$ is three times differentiable on an open interval
+containing $[x - h, x + h]$ and $|f'''| \le M_3$ there, with
+$M_3 > 0$, then
+$$
+\Bigl|\frac{\hat f(x + h) - \hat f(x - h)}{2h} - f'(x)\Bigr|
+\le \frac{M_3h^2}{6} + \frac{uM_0}{h} .
+$$
+The bound is smallest at $h^* = (3uM_0/M_3)^{1/3}$, where it equals
+$M_3(h^*)^2/2$.
+:::
+
+::: {.proof}
+(a) By Taylor's theorem with the Lagrange form of the remainder,
+$f(x + h) = f(x) + hf'(x) + \frac{h^2}{2}f''(\xi)$ for some $\xi$
+between $x$ and $x + h$, so the exact difference quotient satisfies
+$$
+\Bigl|\frac{f(x+h) - f(x)}{h} - f'(x)\Bigr| = \frac h2|f''(\xi)| \le \frac{M_2h}{2} .
+$$
+The computed quotient differs from the exact one by
+$\bigl((\hat f(x+h) - f(x+h)) - (\hat f(x) - f(x))\bigr)/h$, whose
+absolute value is at most $2uM_0/h$. The triangle inequality adds
+the two bounds.
+
+The function $g(h) = M_2h/2 + 2uM_0/h$ has
+$g'(h) = M_2/2 - 2uM_0/h^2$, which is negative for $h < h^*$ and
+positive for $h > h^*$, so $h^*$ gives the minimum, and
+$g(h^*) = \sqrt{uM_0M_2} + \sqrt{uM_0M_2}$.
+
+(b) Taylor's theorem to third order at $x + h$ and at $x - h$ gives
+$$
+f(x \pm h) = f(x) \pm hf'(x) + \frac{h^2}{2}f''(x) \pm
+\frac{h^3}{6}f'''(\xi_\pm),
+$$
+with $\xi_+$ between $x$ and $x + h$ and $\xi_-$ between $x - h$ and
+$x$. Subtracting, the terms in $f(x)$ and $f''(x)$ cancel:
+$$
+\frac{f(x+h) - f(x-h)}{2h} - f'(x) = \frac{h^2}{12}\bigl(f'''(\xi_+) + f'''(\xi_-)\bigr),
+$$
+of absolute value at most $M_3h^2/6$. The rounding errors contribute
+at most $2uM_0/(2h) = uM_0/h$. The function
+$g(h) = M_3h^2/6 + uM_0/h$ has $g'(h) = M_3h/3 - uM_0/h^2$, which
+changes sign from negative to positive at $h^*$ with
+$(h^*)^3 = 3uM_0/M_3$. There $uM_0/h^* = M_3(h^*)^2/3$, so
+$g(h^*) = M_3(h^*)^2/6 + M_3(h^*)^2/3 = M_3(h^*)^2/2$.
+:::
+
+So the best step for a forward difference is of order $\sqrt u
+\approx 10^{-8}$ and gives about 8 correct digits, and the best step
+for a central difference is of order $u^{1/3} \approx 5\times10^{-6}$
+and gives about 11. Taking $h$ smaller than the best step makes the
+estimate worse, not better. This is why the hidden checks in this
+book use central differences with steps near $10^{-6}$ when they
+compare a gradient with finite differences, and why exact derivatives
+computed by automatic differentiation (@sec-forward-mode,
+@sec-reverse-mode) are preferable to finite differences whenever they
+are available.
+
+The hypotheses of @thm-fd-error hold exactly for $f(y) = 1/y$ at
+$x = 3$ with $h = 2^{-k}$: $3 \pm h$ is a binary64 number for
+$k \le 51$; each value $1/(3 \pm h)$ is a single correctly rounded
+division, so its error is at most $u|f| \le uM_0$; the two values
+differ by less than a factor of 2, so by @lem-fp-sterbenz their
+difference is exact; and dividing by a power of 2 is exact. Here
+$f'(3) = -1/9$. For the forward difference $M_0 = 1/3$ and
+$M_2 = 2/27$, since $|f''(y)| = 2/y^3$ on $[3, 3 + h]$; for the
+central difference $M_0 = 1/(3 - h)$ and $M_3 = 6/(3 - h)^4$, since
+$|f'''(y)| = 6/y^4$ on $[3 - h, 3 + h]$.
+
+@fig-fd-error shows the observed errors for $k = 1, \dots, 50$
+against the bounds. For large $h$ the forward-difference error follows
+the truncation term $h/27$; for small $h$ rounding dominates, and the
+error grows like $1/h$. The bound predicts a best step
+$h^* = 2\sqrt{u(1/3)/(2/27)} \approx 4.5\times10^{-8}$ with error at
+most $3.3\times10^{-9}$. The smallest observed error is
+$8.3\times10^{-10}$, at $h = 2^{-27} \approx 7.5\times10^{-9}$; the
+bound is a worst case, and the actual rounding errors partly cancel.
+For the central difference the predicted best step is about
+$1.1\times10^{-5}$ with error at most $4.9\times10^{-12}$, and the
+smallest observed error is $1.6\times10^{-12}$, at
+$h = 2^{-18} \approx 3.8\times10^{-6}$.
+
+```{python}
+#| label: fig-fd-error
+#| fig-cap: "Error of the forward difference (left) and the central difference (right) for $f(y) = 1/y$ at $y = 3$, with $h = 2^{-k}$. Dots are observed errors (zero errors are not shown); the line is the bound of @thm-fd-error."
+x0 = 3.0
+ks = np.arange(1, 51)
+hs = 2.0 ** -ks
+exact = Fraction(-1, 9)
+fwd = np.array([float(abs(Fraction((1 / (x0 + h) - 1 / x0) / h) - exact)) for h in hs])
+cen = np.array([float(abs(Fraction((1 / (x0 + h) - 1 / (x0 - h)) / (2 * h)) - exact)) for h in hs])
+bound_f = (2 / 27) * hs / 2 + 2 * u * (1 / 3) / hs
+bound_c = (6 / (x0 - hs) ** 4) * hs**2 / 6 + u * (1 / (x0 - hs)) / hs
+fig, axes = plt.subplots(1, 2, figsize=(8, 3.2), sharey=True)
+for ax, err, bnd, title in ((axes[0], fwd, bound_f, "forward difference"),
+                            (axes[1], cen, bound_c, "central difference")):
+    keep = err > 0
+    ax.loglog(hs[keep], err[keep], "o", ms=3, color="#7a1f1f", label="observed")
+    ax.loglog(hs, bnd, "-", color="#333333", lw=1, label="bound")
+    ax.set_xlabel("$h$")
+    ax.set_title(title, fontsize=10)
+axes[0].set_ylabel("absolute error")
+axes[0].legend(frameon=False, fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| include: false
+close(fwd[9], 3.6e-5, "error at 2^-10", tol=2e-7)
+close(fwd[26], 8.3e-10, "error at 2^-27", tol=1e-11)
+close(fwd[39], 2.7e-5, "error at 2^-40", tol=2e-7)
+# The hypotheses: 3 +- h exact, values within a factor 2, subtraction exact.
+for h in hs:
+    check(Fraction(x0 + h) == Fraction(x0) + Fraction(h) and Fraction(x0 - h) == Fraction(x0) - Fraction(h),
+          "3 +- h is exact")
+    a1, a0, am = 1 / (x0 + h), 1 / x0, 1 / (x0 - h)
+    check(Fraction(a1 - a0) == Fraction(a1) - Fraction(a0), "forward subtraction exact")
+    check(Fraction(a1 - am) == Fraction(a1) - Fraction(am), "central subtraction exact")
+    for yv, fv in ((x0 + h, a1), (x0, a0), (x0 - h, am)):
+        check(abs(Fraction(fv) - 1 / Fraction(yv)) <= Fraction(1, 2**53) / Fraction(yv), "1/y rounded")
+# Observed errors never exceed the bounds.
+check(np.all(fwd <= bound_f), "forward difference within the bound")
+check(np.all(cen <= bound_c), "central difference within the bound")
+# Truncation regime: error close to h/27 (exactly h/(9(3+h))).
+close(fwd[:12], hs[:12] / (9 * (3 + hs[:12])), "forward truncation error h/(9(3+h))", tol=1e-9)
+close(fwd[9], hs[9] / 27, "h/27 at h = 2^-10", tol=1e-7)
+# Predicted best steps and minimum bounds.
+hstar_f = 2 * math.sqrt(u * (1 / 3) / (2 / 27))
+close(hstar_f, 4.5e-8, "forward h*", tol=1e-9)
+close(2 * math.sqrt(u * (1 / 3) * (2 / 27)), 3.3e-9, "forward minimum bound", tol=1e-10)
+hstar_c = (3 * u * (1 / 3) / (6 / 81)) ** (1 / 3)
+close(hstar_c, 1.1e-5, "central h*", tol=1e-6)
+close((6 / 81) * hstar_c**2 / 2, 4.9e-12, "central minimum bound", tol=1e-13)
+check(int(np.argmin(fwd)) + 1 == 27, "best forward step is 2^-27")
+close(fwd.min(), 8.3e-10, "best forward error", tol=1e-11)
+close(2.0**-27, 7.5e-9, "2^-27", tol=1e-10)
+check(int(np.argmin(cen)) + 1 == 18, "best central step is 2^-18")
+close(cen.min(), 1.6e-12, "best central error", tol=1e-13)
+close(2.0**-18, 3.8e-6, "2^-18", tol=1e-7)
+# Order of magnitude statements.
+close(math.sqrt(u), 1e-8, "sqrt(u) about 1e-8", tol=6e-9)
+close(u ** (1 / 3), 5e-6, "u^(1/3) about 5e-6", tol=2e-7)
+# The calculus in the proof.
+hh = sp.symbols("h", positive=True)
+M2s, M0s, M3s, us = sp.symbols("M_2 M_0 M_3 u", positive=True)
+gf = M2s * hh / 2 + 2 * us * M0s / hh
+crit = sp.solve(sp.diff(gf, hh), hh)
+check(len(crit) == 1, "one critical point")
+sym_equal(crit[0], 2 * sp.sqrt(us * M0s / M2s), "h* forward")
+sym_equal(gf.subs(hh, crit[0]), 2 * sp.sqrt(us * M0s * M2s), "minimum forward")
+gc = M3s * hh**2 / 6 + us * M0s / hh
+critc = sp.solve(sp.diff(gc, hh), hh)
+sym_equal(critc[0]**3, 3 * us * M0s / M3s, "h*^3 central")
+sym_equal(gc.subs(hh, critc[0]), M3s * critc[0]**2 / 2, "minimum central")
+# Taylor coefficients in (b): the f and f'' terms cancel.
+t_ = sp.symbols("t")
+ser = sp.series(sp.exp(t_), t_, 0, 5).removeO()
+sym_equal(sp.expand((ser.subs(t_, hh) - ser.subs(t_, -hh)) / (2 * hh) - 1), hh**2 / 6,
+          "central difference of exp: f''' h^2 / 6 leading term")
+```
+
+## Softmax and log-sum-exp {#sec-fp-stable-softmax}
+
+The softmax of $\mathbf{z}\in\mathbb{R}^n$ is the vector with
+components $\operatorname{softmax}(\mathbf{z})_i = e^{z_i}/\sum_j e^{z_j}$
+(@def-softmax), so computing it exponentiates every input. In
+binary64, $e^z$ overflows for $z$ above about $709.78$. The 16-bit format binary16
+[@ieee754-2019] has the same structure as binary64 with 10 fraction
+bits and 5 exponent bits; its largest finite number is
+$(2 - 2^{-10})2^{15} = 65504$, and $e^z$ overflows there for $z$ above
+about $11.09$. The inputs to a softmax in a language model, its logits
+(@sec-small-gpt), reach that size in practice. The remedy rests on an observation that a small case makes
+clear: $\operatorname{softmax}(1, 2, 3) \approx (0.090, 0.245, 0.665)$,
+and $\operatorname{softmax}(101, 102, 103)$ and
+$\operatorname{softmax}(-2, -1, 0)$ are the same vector, because
+adding a constant to every input multiplies every exponential by the
+same factor, which cancels in the quotient.
+
+::: {#thm-softmax-shift}
+## Softmax is unchanged by a shift
+
+For every $\mathbf{z}\in\mathbb{R}^n$ and every real $c$,
+$\operatorname{softmax}(\mathbf{z} + c\mathbf{1}) = \operatorname{softmax}(\mathbf{z})$.
+Consequently, for every real $m$,
+$$
+\ln\sum_{j=1}^n e^{z_j} = m + \ln\sum_{j=1}^n e^{z_j - m} .
+$$ {#eq-fp-lse-shift}
+:::
+
+::: {.proof}
+$e^{z_i + c} = e^{c}e^{z_i}$, so
+$$
+\operatorname{softmax}(\mathbf{z} + c\mathbf{1})_i
+= \frac{e^ce^{z_i}}{\sum_j e^ce^{z_j}}
+= \frac{e^{z_i}}{\sum_j e^{z_j}}
+= \operatorname{softmax}(\mathbf{z})_i .
+$$
+For @eq-fp-lse-shift, $\sum_j e^{z_j} = e^m\sum_j e^{z_j - m}$, and the
+logarithm of a product of positive numbers is the sum of their
+logarithms.
+:::
+
+The function $\operatorname{lse}(\mathbf{z}) = \ln\sum_j e^{z_j}$ is
+the *log-sum-exp* function. It appears in the cross-entropy loss,
+because
+$-\ln\operatorname{softmax}(\mathbf{z})_y = \operatorname{lse}(\mathbf{z}) - z_y$
+(@sec-probability-loss). In words, @eq-fp-lse-shift says that
+log-sum-exp may be computed after subtracting any number $m$ from
+every input, provided $m$ is added back at the end.
+
+::: {#cor-stable-softmax}
+## Stable evaluation
+
+Let $\mathbf{z}\in\mathbb{R}^n$, $m = \max_j z_j$ and
+$S = \sum_j e^{z_j - m}$. Then every term
+$e^{z_j - m}$ lies in $(0, 1]$, at least one equals $1$, and
+$1 \le S \le n$. Hence
+$$
+\operatorname{softmax}(\mathbf{z})_i = \frac{e^{z_i - m}}{S},
+\qquad
+\operatorname{lse}(\mathbf{z}) = m + \ln S,
+\qquad
+-\ln\operatorname{softmax}(\mathbf{z})_y = m + \ln S - z_y ,
+$$
+and computed this way, no exponential exceeds $1$, and every
+denominator and every argument of the logarithm lies between $1$ and
+$n$.
+:::
+
+::: {.proof}
+$z_j - m \le 0$, with equality where the maximum is attained, so
+$0 < e^{z_j - m} \le 1$ with equality there, and summing $n$ such
+terms gives $1 \le S \le n$. The three formulas are
+@thm-softmax-shift with $c = -m$ and @eq-fp-lse-shift.
+:::
+
+In floating point, a term $e^{z_j - m}$ may underflow to $0$ when
+$z_j - m < -745$; since $S \ge 1$, that changes the computed
+probabilities by less than $2^{-1074}$, far below the rounding error.
+The model of @sec-small-gpt computes its softmax in this way, and its
+hidden checks do the same.
+
+::: {#exm-fp-softmax-overflow}
+Let $\mathbf{z} = (1000, 999, 998)$. Computed directly, $e^{1000}$
+overflows to $\infty$, so every quotient is $\infty/\infty$ and every
+component of the result is NaN. Subtracting $m = 1000$ gives
+$(0, -1, -2)$, $S = 1 + e^{-1} + e^{-2} \approx 1.5032$, and
+$$
+\operatorname{softmax}(\mathbf{z}) \approx (0.6652, 0.2447, 0.0900),
+\qquad
+\operatorname{lse}(\mathbf{z}) \approx 1000.4076 .
+$$
+For $\mathbf{z} = (-1000, -1001, -1002)$ the direct computation
+underflows instead: every $e^{z_j}$ is $0$, so the quotients are $0/0$
+and the logarithm of the sum is $-\infty$. The shifted computation
+gives the
+same probabilities as before, since the shifted vector is again
+$(0, -1, -2)$, and $\operatorname{lse}(\mathbf{z}) \approx -999.5924$.
+:::
+
+```{python}
+#| include: false
+with np.errstate(over="ignore", invalid="ignore", under="ignore", divide="ignore"):
+    big = np.array([1000.0, 999.0, 998.0])
+    check(np.isinf(np.exp(1000.0)), "e^1000 overflows")
+    check(np.all(np.isnan(np.exp(big) / np.exp(big).sum())), "naive softmax gives NaN")
+    small = -np.array([1000.0, 1001.0, 1002.0])
+    check(np.all(np.exp(small) == 0), "e^-1000 underflows to 0")
+    check(np.all(np.isnan(np.exp(small) / np.exp(small).sum())), "naive softmax of small gives NaN")
+    check(np.log(np.exp(small).sum()) == -np.inf, "naive lse is -inf")
+for zv, lse_val in ((big, 1000.4076), (small, -999.5924)):
+    mz = zv.max()
+    w = np.exp(zv - mz)
+    close(w.sum(), 1.5032, "S", tol=1e-4)
+    close(w / w.sum(), [0.6652, 0.2447, 0.0900], "stable softmax", tol=1e-4)
+    close(mz + math.log(w.sum()), lse_val, "stable lse", tol=1e-7)
+    check(w.max() == 1.0 and 1 <= w.sum() <= len(zv), "terms in (0, 1], S in [1, n]")
+sm3 = lambda z: np.exp(z - np.max(z)) / np.exp(z - np.max(z)).sum()
+for zz in ([1.0, 2, 3], [101.0, 102, 103], [-2.0, -1, 0]):
+    close(sm3(np.array(zz)), [0.090, 0.245, 0.665], f"softmax{tuple(zz)}", tol=1e-3)
+close(np.exp([1.0, 2, 3]) / np.exp([1.0, 2, 3]).sum(), sm3(np.array([-2.0, -1, 0])), "shift without max")
+# The identity, symbolically and numerically.
+zsy = sp.symbols("z1:4", real=True)
+csy = sp.symbols("c", real=True)
+for i in range(3):
+    sym_equal(sp.exp(zsy[i] + csy) / sum(sp.exp(zj + csy) for zj in zsy),
+              sp.exp(zsy[i]) / sum(sp.exp(zj) for zj in zsy), "softmax shift")
+for _ in range(100):
+    zr = rng_a.normal(size=6) * 5
+    cr = float(rng_a.normal() * 50)
+    sm = lambda z: np.exp(z) / np.exp(z).sum()
+    close(sm(zr + cr), sm(zr), "shift numerically", tol=1e-12)
+    mr = float(rng_a.normal() * 3)
+    close(math.log(np.exp(zr).sum()), mr + math.log(np.exp(zr - mr).sum()), "lse shift", tol=1e-12)
+    yr = int(rng_a.integers(6))
+    close(-math.log(sm(zr)[yr]), zr.max() + math.log(np.exp(zr - zr.max()).sum()) - zr[yr],
+          "cross-entropy via lse", tol=1e-12)
+# binary16 overflow.
+check(float(np.finfo(np.float16).max) == 65504.0, "largest binary16 number")
+check(np.finfo(np.float16).nmant == 10 and np.finfo(np.float16).iexp == 5,
+      "binary16: 10 fraction bits, 5 exponent bits")
+check((2 - 2**-10) * 2**15 == 65504, "(2 - 2^-10) 2^15 = 65504")
+close(math.log(65504), 11.09, "ln 65504", tol=1e-3)
+with np.errstate(over="ignore"):
+    check(np.isinf(np.exp(np.float16(11.1))) and np.isfinite(np.exp(np.float16(11.08))),
+          "binary16 exp overflows just above 11.09")
+```
+
+## Notes and further reading {#sec-notes-floating-point}
+
+The IEEE 754 standard [@ieee754-2019] defines the binary64 and
+binary16 formats and the rounding rules, and requires the basic
+operations to be correctly rounded. @goldberg1991what is a widely read
+introduction
+to the consequences for programmers, with proofs. @higham2002accuracy
+develops rounding-error analysis in depth; its chapter 2 covers the
+standard model and its chapter 1 discusses cancellation.
+@stoer2002introduction [ch. 1] treats floating-point numbers and
+error propagation in a first course on numerical analysis.
+
+## Exercises {#sec-exercises-floating-point}
+
+::: {#exr-a-spacing}
+What is the spacing between consecutive binary64 numbers near $1000$?
+What is the largest power of 2 whose sum with $1000$ rounds back to
+exactly $1000$?
+:::
+
+::: {#exr-a-tenth}
+Show that $0.1$ is not a binary64 number. Then explain why the computed
+sum $0.1 + 0.2$ is not equal to the computed $0.3$, using
+@thm-fp-rounding.
+:::
+
+::: {#exr-a-sqrt}
+For large $x > 0$, the difference $\sqrt{x + 1} - \sqrt{x}$ suffers
+from cancellation. Show that it equals
+$1/(\sqrt{x + 1} + \sqrt{x})$, and use @lem-fp-cancellation to explain
+why the second form is better. Compare the two in binary64 for
+$x = 10^{12}$.
+:::
+
+::: {#exr-a-lse}
+Show that for $\mathbf{z}\in\mathbb{R}^n$,
+$\max_j z_j \le \operatorname{lse}(\mathbf{z}) \le \max_j z_j + \ln n$,
+with equality on the right exactly when all components are equal.
+:::
+
+::: {#exr-a-fd-step}
+For $f = \sin$, with $M_0 = M_2 = 1$, find the step $h^*$ and the
+error bound of @thm-fd-error (a) in binary64, and the corresponding
+step and bound for the central difference with $M_3 = 1$.
 :::

@@ -1,0 +1,267 @@
+## Chapter 11 {#sec-solutions-11}
+
+```{python}
+#| include: false
+from checks import num_grad
+from checks.ch11 import SHAPES as SHAPES11
+
+
+def rms11(x, eps):
+    x = np.asarray(x, dtype=float)
+    return x / np.sqrt(np.mean(x * x) + eps)
+
+
+def rms11_jac(x, eps):
+    x = np.asarray(x, dtype=float)
+    s = 1 / np.sqrt(np.mean(x * x) + eps)
+    return s * np.eye(x.size) - s**3 / x.size * np.outer(x, x)
+
+
+rng11 = np.random.default_rng(111)
+```
+
+**@exr-ch11-rmsnorm-example.** Here $\mu = (9 + 16)/2 = 12.5$, so
+$\mu + \varepsilon = 13$ and $s = 1/\sqrt{13}$. Then
+$\operatorname{rms}(\mathbf{x}) = (3, 4)/\sqrt{13} \approx (0.8321, 1.1094)$.
+With $\|\mathbf{x}\|^2 + n\varepsilon = 26$, @eq-gpt-rmsnorm-jacobian
+gives
+$$
+J = \frac{1}{\sqrt{13}}\Bigl(I - \frac{1}{26}\begin{pmatrix}9 & 12\\ 12 & 16\end{pmatrix}\Bigr)
+= \frac{1}{26\sqrt{13}}\begin{pmatrix}17 & -12\\ -12 & 10\end{pmatrix}.
+$$
+Then $J(3, 4)^\top = \frac{1}{26\sqrt{13}}(3, 4)^\top$, an eigenvalue
+$1/(26\sqrt{13})$, which equals
+$\varepsilon s^3 = \frac12\cdot13^{-3/2}$. And
+$J(4, -3)^\top = \frac{1}{26\sqrt{13}}(104, -78)^\top = \frac{1}{\sqrt{13}}(4, -3)^\top$,
+an eigenvalue $s$ on the vector perpendicular to $\mathbf{x}$.
+
+```{python}
+#| include: false
+xa, ya = sp.symbols("x y", real=True)
+e11 = sp.Rational(1, 2)
+s11 = 1 / sp.sqrt((xa**2 + ya**2) / 2 + e11)
+Jex = sp.Matrix([xa * s11, ya * s11]).jacobian([xa, ya]).subs({xa: 3, ya: 4})
+check(sp.simplify(Jex - sp.Matrix([[17, -12], [-12, 10]]) / (26 * sp.sqrt(13))) == sp.zeros(2, 2),
+      "Jacobian at (3, 4)")
+check(sp.simplify(Jex * sp.Matrix([3, 4]) - sp.Matrix([3, 4]) / (26 * sp.sqrt(13))) == sp.zeros(2, 1),
+      "eigenvalue on x")
+sym_equal(1 / (26 * sp.sqrt(13)), e11 * sp.Integer(13)**sp.Rational(-3, 2), "equals eps s^3")
+check(sp.simplify(Jex * sp.Matrix([4, -3]) - sp.Matrix([4, -3]) / sp.sqrt(13)) == sp.zeros(2, 1),
+      "eigenvalue s on the perpendicular")
+close(rms11([3, 4], 0.5), [0.8321, 1.1094], "rms(3, 4)", tol=1e-4)
+```
+
+**@exr-ch11-rmsnorm-gradient.** $J$ is symmetric and, by
+@thm-rmsnorm-jacobian, $J\mathbf{x} = \varepsilon s^3\mathbf{x}$, so
+$$
+\mathbf{x}\cdot\bar{\mathbf{x}} = \mathbf{x}\cdot J\bar{\mathbf{y}}
+= (J\mathbf{x})\cdot\bar{\mathbf{y}} = \varepsilon s^3\,(\mathbf{x}\cdot\bar{\mathbf{y}}) .
+$$
+With $\varepsilon = 0$ the right side is $0$ for every
+$\bar{\mathbf{y}}$. This is what @thm-rmsnorm-scaling predicts: for
+$\varepsilon = 0$ the map is unchanged by positive scaling, so any
+loss $L$ computed from $\operatorname{rms}(\mathbf{x})$ satisfies
+$L(c\mathbf{x}) = L(\mathbf{x})$ for $c > 0$. Differentiating with
+respect to $c$ at $c = 1$ by the chain rule gives
+$\nabla L(\mathbf{x})\cdot\mathbf{x} = 0$.
+
+```{python}
+#| include: false
+for eps in (1e-5, 0.3, 0.0):
+    xg, yg = rng11.normal(size=6), rng11.normal(size=6)
+    sg_ = 1 / np.sqrt(np.mean(xg**2) + eps)
+    close(xg @ (rms11_jac(xg, eps).T @ yg), eps * sg_**3 * (xg @ yg), f"x . xbar at eps = {eps}")
+close(xg @ num_grad(lambda v: rms11(v, 0.0) @ yg, xg), 0.0, "perpendicular gradient for eps = 0",
+      tol=1e-7)
+```
+
+**@exr-ch11-layernorm.** $C\mathbf{x} = \mathbf{x} - \frac1n\mathbf{1}(\mathbf{1}^\top\mathbf{x})
+= \mathbf{x} - m(\mathbf{x})\mathbf{1}$, because
+$\mathbf{1}^\top\mathbf{x} = \sum_i x_i$. The components of
+$C\mathbf{x}$ are $x_i - m(\mathbf{x})$, so
+$\mu(C\mathbf{x}) = \frac1n\sum_i(x_i - m(\mathbf{x}))^2 = v(\mathbf{x})$.
+Hence
+$$
+\frac{x_i - m(\mathbf{x})}{\sqrt{v(\mathbf{x}) + \varepsilon}}
+= \frac{(C\mathbf{x})_i}{\sqrt{\mu(C\mathbf{x}) + \varepsilon}}
+= \operatorname{rms}(C\mathbf{x})_i .
+$$
+The map $C$ is linear, so its Jacobian is $C$ (@exm-affine), and by
+@thm-chain-rule the Jacobian of layer normalisation is
+$J_{\operatorname{rms}}(C\mathbf{x})\,C$. Since
+$C\mathbf{1} = \mathbf{1} - \frac1n\mathbf{1}\cdot n = \mathbf{0}$,
+the Jacobian sends $\mathbf{1}$ to $\mathbf{0}$: adding the same
+small amount to every component does not change the output to first
+order (in fact it does not change it at all).
+
+```{python}
+#| include: false
+nl = 5
+Cm = np.eye(nl) - np.ones((nl, nl)) / nl
+xl_ = rng11.normal(size=nl)
+close(Cm @ xl_, xl_ - xl_.mean(), "C x = x - m 1")
+close(np.mean((Cm @ xl_)**2), np.var(xl_), "v(x) = mu(C x)")
+ln_ = lambda v: (v - v.mean()) / np.sqrt(np.var(v) + 1e-5)
+close(ln_(xl_), rms11(Cm @ xl_, 1e-5), "LN = rms o C")
+JLN = np.array([num_grad(lambda v, i=i: ln_(v)[i], xl_) for i in range(nl)])
+close(JLN, rms11_jac(Cm @ xl_, 1e-5) @ Cm, "Jacobian of LN", tol=1e-7)
+close(JLN @ np.ones(nl), np.zeros(nl), "Jacobian sends 1 to 0", tol=1e-7)
+```
+
+**@exr-ch11-double-norm.** (a) Write
+$\mathbf{y} = \operatorname{rms}(\mathbf{x}) = s\mathbf{x}$
+with $s = (\mu + \varepsilon)^{-1/2}$. Then
+$\mu(\mathbf{y}) = s^2\mu = \mu/(\mu + \varepsilon)$, and
+$\operatorname{rms}(\mathbf{y}) = \mathbf{y}/\sqrt{\mu(\mathbf{y}) + \varepsilon} = c\,\mathbf{y}$.
+
+(b) $c = 1$ exactly when $\mu/(\mu + \varepsilon) = 1 - \varepsilon$,
+that is, $\mu = (1 - \varepsilon)(\mu + \varepsilon)$. Expanding,
+this is $0 = \varepsilon(1 - \varepsilon - \mu)$, and since
+$\varepsilon > 0$ it holds exactly when $\mu = 1 - \varepsilon$.
+
+(c) With $\mu = 1$,
+$c^{-2} = \frac{1}{1+\varepsilon} + \varepsilon = \frac{1 + \varepsilon + \varepsilon^2}{1 + \varepsilon}$,
+which gives $c^2$. Then
+$c^2 = 1 - \varepsilon^2/(1 + \varepsilon + \varepsilon^2)$, and for
+$\varepsilon = 10^{-5}$,
+$1 - c \approx \varepsilon^2/2 = 5\times10^{-11}$.
+
+```{python}
+#| include: false
+mu_, ep_ = sp.symbols("mu epsilon", positive=True)
+cc = 1 / sp.sqrt(mu_ / (mu_ + ep_) + ep_)
+xd = rng11.normal(size=16) * 0.7
+mud = np.mean(xd**2)
+close(rms11(rms11(xd, 1e-5), 1e-5), float(cc.subs({mu_: mud, ep_: 1e-5})) * rms11(xd, 1e-5),
+      "rms(rms(x)) = c rms(x)")
+check(sp.solve(sp.Eq(mu_ / (mu_ + ep_) + ep_, 1), mu_) == [1 - ep_], "c = 1 iff mu = 1 - eps")
+sym_equal(cc.subs(mu_, 1)**2, (1 + ep_) / (1 + ep_ + ep_**2), "c^2 at mu = 1")
+one_minus_c = (1 - cc.subs({mu_: 1, ep_: sp.Rational(1, 10**5)})).evalf(30)
+close(float(one_minus_c), 5e-11, "1 - c about 5e-11", tol=1e-14)
+```
+
+**@exr-ch11-param-general.** The embeddings contribute $|V|d$ (token)
+and $n_cd$ (position), and the output matrix another $|V|d$. Each
+layer has four $d\times d$ attention matrices, $4d^2$ entries, and two
+MLP matrices of shapes $4d\times d$ and $d\times4d$, $8d^2$ entries,
+so $12d^2$ per layer. The total is $2|V|d + n_cd + 12Kd^2$. The heads
+only decide how to group the rows of $W_Q$, $W_K$ and $W_V$, not the
+shapes of the matrices, so the count does not depend on them.
+For $|V| = 27$, $n_c = 16$, $d = 16$ and $K = 1$ the formula gives
+$864 + 256 + 3072 = 4192$, as in @thm-parameter-count. With $d = 32$
+and $K = 2$ it gives $1728 + 512 + 24576 = 26816$.
+
+```{python}
+#| include: false
+Vs, ncs, ds, Ks = sp.symbols("V n_c d K", positive=True, integer=True)
+count = Vs * ds + ncs * ds + Ks * (4 * ds**2 + 4 * ds * ds + ds * 4 * ds) + Vs * ds
+sym_equal(count, 2 * Vs * ds + ncs * ds + 12 * Ks * ds**2, "general count")
+check(count.subs({Vs: 27, ncs: 16, ds: 16, Ks: 1}) == 4192, "4192 from the formula")
+check(sum(r * c for r, c in SHAPES11.values()) == 4192, "4192 from the shapes")
+check(count.subs({Vs: 27, ncs: 16, ds: 32, Ks: 2}) == 26816 and 1728 + 512 + 24576 == 26816,
+      "d = 32, K = 2")
+```
+
+**@exr-ch11-temperature-power.** Let $S = \sum_j e^{z_j}$, so that
+$p_i = e^{z_i}/S$ and $p_i^{1/T} = e^{z_i/T}/S^{1/T}$. Then
+$$
+\frac{p_i^{1/T}}{\sum_j p_j^{1/T}}
+= \frac{e^{z_i/T}/S^{1/T}}{\sum_j e^{z_j/T}/S^{1/T}}
+= \frac{e^{z_i/T}}{\sum_j e^{z_j/T}}
+= \operatorname{softmax}(\mathbf{z}/T)_i .
+$$
+At $T = 0.5$ the powers are the squares $(0.25, 0.09, 0.04)$, with
+sum $0.38$, so the sampling distribution is
+$(25, 9, 4)/38 \approx (0.658, 0.237, 0.105)$.
+
+```{python}
+#| include: false
+zp = rng11.normal(size=6)
+pz = np.exp(zp) / np.exp(zp).sum()
+for Tv in (0.3, 0.5, 2.0):
+    close(np.exp(zp / Tv) / np.exp(zp / Tv).sum(), pz**(1 / Tv) / (pz**(1 / Tv)).sum(), f"powers at T={Tv}")
+pp = np.array([0.5, 0.3, 0.2])
+close(pp**2, [0.25, 0.09, 0.04], "squares")
+close((pp**2).sum(), 0.38, "sum 0.38")
+close(pp**2 / 0.38, [0.658, 0.237, 0.105], "distribution at T = 0.5", tol=1e-3)
+close(pp**2 / 0.38, np.array([25, 9, 4]) / 38, "as fractions of 38")
+```
+
+**@exr-ch11-temperature-ties.** The maximum $3$ is attained at
+positions 2 and 3, so by @thm-temperature the limit as $T\to0$ is
+$(0, \frac12, \frac12, 0)$, and the limit as $T\to\infty$ is
+$(\frac14, \frac14, \frac14, \frac14)$. At $T = 1/\ln 2$,
+$e^{z_i/T} = e^{z_i\ln 2} = 2^{z_i}$, which gives $(2, 8, 8, 1)$ with
+sum $19$, so the probabilities are $(2, 8, 8, 1)/19$.
+
+```{python}
+#| include: false
+Tt11 = sp.symbols("T", positive=True)
+zz = [1, 3, 3, 0]
+dd = sum(sp.exp(sp.Integer(z) / Tt11) for z in zz)
+check([sp.limit(sp.exp(sp.Integer(z) / Tt11) / dd, Tt11, 0, "+") for z in zz]
+      == [0, sp.Rational(1, 2), sp.Rational(1, 2), 0], "T -> 0 with a tie")
+check([sp.limit(sp.exp(sp.Integer(z) / Tt11) / dd, Tt11, sp.oo) for z in zz] == [sp.Rational(1, 4)] * 4,
+      "T -> infinity")
+vals = [sp.simplify(sp.exp(sp.Integer(z) / Tt11) / dd).subs(Tt11, 1 / sp.log(2)) for z in zz]
+check([sp.nsimplify(sp.simplify(v)) for v in vals] == [sp.Rational(2, 19), sp.Rational(8, 19),
+      sp.Rational(8, 19), sp.Rational(1, 19)], "value at T = 1/ln 2")
+```
+
+**@exr-ch11-residual-invertible.** Write $J = J_F(\mathbf{a})$.
+Suppose $(I + J)\mathbf{v} = \mathbf{0}$. Then $\mathbf{v} = -J\mathbf{v}$,
+and by @lem-linear-bound
+$\|\mathbf{v}\| = \|J\mathbf{v}\| \le \|J\|_F\|\mathbf{v}\|$. Since
+$\|J\|_F < 1$, this forces $\|\mathbf{v}\| = 0$. So the only solution
+of $(I + J)\mathbf{v} = \mathbf{0}$ is $\mathbf{v} = \mathbf{0}$, and a
+square matrix with this property is invertible. For the example take
+$F(\mathbf{x}) = -x_1\mathbf{e}_1$, which is linear with
+$J_F = -\mathbf{e}_1\mathbf{e}_1^\top$, of Frobenius norm $1$. Then
+$I + J_F$ has first column $\mathbf{0}$, so it is not invertible.
+
+```{python}
+#| include: false
+for _ in range(200):
+    Jr = rng11.normal(size=(4, 4))
+    Jr *= rng11.uniform(0, 0.999) / np.linalg.norm(Jr, "fro")
+    check(abs(np.linalg.det(np.eye(4) + Jr)) > 1e-12, "I + J invertible when |J|_F < 1")
+Je = sp.zeros(3, 3)
+Je[0, 0] = -1
+check(sp.sqrt(sum(v**2 for v in Je)) == 1 and (sp.eye(3) + Je).det() == 0, "singular example")
+```
+
+**@exr-ch11-kv-cost.** At position $t$, each head computes $t$ scores
+of $d_h$ multiplications and a weighted sum of $t$ value vectors of
+$d_h$ components, so $2td_h$ multiplications, and the $h$ heads give
+$2td_hh = 2td$. With the cache the model processes each position once, for a
+total of $\sum_{t=1}^n 2td = d\,n(n+1)$. Without it, step $t$ recomputes
+positions $1, \dots, t$, at a cost of $\sum_{\tau=1}^t 2\tau d = d\,t(t+1)$,
+and the total is
+$$
+d\sum_{t=1}^n t(t+1) = \frac{d\,n(n+1)(n+2)}{3},
+$$
+where the sum formula holds for $n = 1$ ($2 = 1\cdot2\cdot3/3$) and
+passes from $n - 1$ to $n$ because
+$\frac{(n-1)n(n+1)}{3} + n(n+1) = \frac{n(n+1)(n+2)}{3}$. For
+$d = n = 16$ the two counts are $4352$ and $26112$, a ratio of
+$(n + 2)/3 = 6$.
+
+```{python}
+#| include: false
+nn, dsym = sp.symbols("n d", positive=True, integer=True)
+tt = sp.symbols("t", positive=True, integer=True)
+sym_equal(sp.summation(2 * tt * dsym, (tt, 1, nn)), dsym * nn * (nn + 1), "cached cost")
+sym_equal(sp.summation(dsym * tt * (tt + 1), (tt, 1, nn)), dsym * nn * (nn + 1) * (nn + 2) / 3,
+          "recompute cost")
+sym_equal((nn - 1) * nn * (nn + 1) / 3 + nn * (nn + 1), nn * (nn + 1) * (nn + 2) / 3, "induction step")
+check(16 * 16 * 17 == 4352 and 16 * 16 * 17 * 18 // 3 == 26112 and 26112 // 4352 == 6, "d = n = 16")
+# Count multiplications directly by simulating the two procedures.
+def count_mults(n, d=16, dh=4, cached=True):
+    total = 0
+    for t in range(1, n + 1):
+        positions = [t] if cached else range(1, t + 1)
+        for p in positions:
+            total += (d // dh) * 2 * p * dh
+    return total
+check(count_mults(16) == 4352 and count_mults(16, cached=False) == 26112, "direct count")
+```

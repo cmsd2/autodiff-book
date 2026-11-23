@@ -1,0 +1,143 @@
+## Appendix A {#sec-solutions-a}
+
+```{python}
+#| include: false
+import math
+import struct
+from fractions import Fraction
+
+u_a = 2.0**-53
+bits_a = lambda x: struct.unpack(">Q", struct.pack(">d", x))[0]
+```
+
+**@exr-a-spacing.** Since $2^9 = 512 \le 1000 < 1024 = 2^{10}$, the binary64 numbers near $1000$ lie $2^{9-52} = 2^{-43} \approx
+1.137\times10^{-13}$ apart. Adding $2^{-43}$ gives the next binary64
+number, so the sum does not round back. The sum $1000 + 2^{-44}$ lies
+exactly halfway between $1000$ and $1000 + 2^{-43}$. Writing
+$1000 = 2^9(1 + f/2^{52})$ gives $f = 488\times2^{43}$, which is even,
+so the tie goes to $1000$. Any smaller power of 2 is nearer to $1000$.
+The answer is $2^{-44}$.
+
+```{python}
+#| include: false
+check(math.ulp(1000.0) == 2.0**-43, "spacing near 1000")
+close(2.0**-43, 1.137e-13, "2^-43", tol=1e-16)
+check(1000.0 + 2.0**-44 == 1000.0 and 1000.0 + 2.0**-43 != 1000.0, "2^-44 rounds back, 2^-43 does not")
+check(all(1000.0 + 2.0**-p == 1000.0 for p in range(44, 80)), "smaller powers round back")
+check((1000 / 512 - 1) * 2**52 == 488 * 2**43 and (bits_a(1000.0) & 1) == 0, "f is even")
+```
+
+**@exr-a-tenth.** Every binary64 number has the form $M\,2^k$ with
+integers $M$ and $k$. If $1/10 = M\,2^k$ with $k \ge 0$, the right
+side is an integer, which $1/10$ is not. If $k < 0$, then
+$2^{-k} = 10M$, so $5$ divides a power of 2, which is impossible.
+
+So $0.1$, $0.2$ and $0.3$ are each stored with a rounding error, by
+@thm-fp-rounding of relative size at most $u$. The stored values are
+$\hat a \approx 0.1 + 5.55\times10^{-18}$ and
+$\hat b \approx 0.2 + 1.11\times10^{-17}$, and their exact sum
+$0.3 + 1.67\times10^{-17}$ lies exactly halfway between two
+consecutive binary64 numbers, which are $2^{-54}$ apart near $0.3$.
+The tie goes to the one with even $f$, the upper one,
+$0.3 + 4.44\times10^{-17}$, which Python prints as
+`0.30000000000000004`. The stored $0.3$ is the lower one,
+$0.3 - 1.11\times10^{-17}$. The two computed numbers are neighbours,
+so they are not equal.
+
+```{python}
+#| include: false
+q = Fraction(1, 10)
+check(all((q * 2**k).denominator != 1 for k in range(0, 2000)), "1/10 times a power of 2 is not an integer")
+check(Fraction(0.1) != q, "0.1 is not stored exactly")
+sa, sb = Fraction(0.1), Fraction(0.2)
+close(float(sa - q), 5.55e-18, "error of fl(0.1)", tol=1e-20)
+close(float(sb - Fraction(2, 10)), 1.11e-17, "error of fl(0.2)", tol=1e-19)
+close(float(sa + sb - Fraction(3, 10)), 1.67e-17, "exact sum of stored values", tol=1e-19)
+lo, hi = Fraction(0.3), Fraction(0.1 + 0.2)
+check(hi - lo == Fraction(1, 2**54) and math.ulp(0.3) == 2.0**-54, "neighbours 2^-54 apart")
+check(sa + sb - lo == hi - (sa + sb), "exact sum is halfway")
+check((bits_a(0.1 + 0.2) & 1) == 0 and (bits_a(0.3) & 1) == 1, "tie to even picks the upper")
+close(float(hi - Fraction(3, 10)), 4.44e-17, "upper neighbour", tol=1e-19)
+close(float(lo - Fraction(3, 10)), -1.11e-17, "stored 0.3", tol=1e-19)
+check(repr(0.1 + 0.2) == "0.30000000000000004" and 0.1 + 0.2 != 0.3, "printed value")
+```
+
+**@exr-a-sqrt.** Multiplying and dividing by $\sqrt{x+1} + \sqrt{x}$,
+$$
+\sqrt{x+1} - \sqrt{x} = \frac{(x + 1) - x}{\sqrt{x+1} + \sqrt{x}}
+= \frac{1}{\sqrt{x+1} + \sqrt{x}} .
+$$
+In the first form, $a = \sqrt{x+1}$ and $b = \sqrt{x}$ are each
+computed with relative error at most $u$, and by @lem-fp-cancellation the
+difference can have relative error up to
+$u(a + b)/(a - b) \approx u\cdot2\sqrt{x}\cdot2\sqrt{x} = 4ux$, about
+$4.4\times10^{-4}$ for $x = 10^{12}$. The second form adds two positive
+numbers and divides, so by @eq-fp-standard-model each step adds a
+relative error of at most $u$ and the result is accurate to a few
+units of $u$. In binary64 the first form gives
+$5.00003807\times10^{-7}$ and the second
+$4.99999999999875\times10^{-7}$, which is correct to the digits shown;
+the first has relative error $7.6\times10^{-6}$, within the bound.
+
+```{python}
+#| include: false
+xs_ = 1e12
+direct = math.sqrt(xs_ + 1) - math.sqrt(xs_)
+better = 1 / (math.sqrt(xs_ + 1) + math.sqrt(xs_))
+true_ = 1 / (sp.sqrt(sp.Integer(10**12) + 1) + sp.sqrt(sp.Integer(10**12)))
+close(direct, 5.00003807e-7, "direct form", tol=1e-15)
+close(better, 4.99999999999875e-7, "rewritten form", tol=1e-20)
+check(abs(better - float(true_)) <= 4 * u_a * float(true_), "rewritten form is accurate")
+rel = abs(direct - float(true_)) / float(true_)
+close(rel, 7.6e-6, "relative error of the direct form", tol=1e-7)
+close(4 * u_a * xs_, 4.4e-4, "bound 4 u x", tol=1e-5)
+check(rel <= 4 * u_a * xs_, "within the bound")
+sym_equal((sp.sqrt(sp.Symbol("x", positive=True) + 1) - sp.sqrt(sp.Symbol("x", positive=True)))
+          * (sp.sqrt(sp.Symbol("x", positive=True) + 1) + sp.sqrt(sp.Symbol("x", positive=True))), 1,
+          "difference of squares")
+```
+
+**@exr-a-lse.** Let $m = \max_j z_j$ and $S = \sum_j e^{z_j - m}$, so
+that $\operatorname{lse}(\mathbf{z}) = m + \ln S$ by @eq-fp-lse-shift. By
+@cor-stable-softmax, $1 \le S \le n$, so
+$m \le \operatorname{lse}(\mathbf{z}) \le m + \ln n$. Equality on the
+right means $S = n$; since each of the $n$ terms is at most $1$, that
+happens exactly when every term is $1$, that is, when $z_j = m$ for
+every $j$.
+
+```{python}
+#| include: false
+rng_aa = np.random.default_rng(71)
+for _ in range(500):
+    nz = int(rng_aa.integers(1, 9))
+    zz_ = rng_aa.normal(size=nz) * 3
+    lse = zz_.max() + math.log(np.exp(zz_ - zz_.max()).sum())
+    check(zz_.max() <= lse <= zz_.max() + math.log(nz) + 1e-12, "lse bounds")
+    if nz > 1:
+        check(lse < zz_.max() + math.log(nz) - 1e-12, "strict when components differ")
+close(4.2 + math.log(np.exp(np.full(5, 4.2) - 4.2).sum()), 4.2 + math.log(5), "equality when all equal")
+```
+
+**@exr-a-fd-step.** With $M_0 = M_2 = 1$, @thm-fd-error (a) gives
+$h^* = 2\sqrt u = 2^{-25.5} \approx 2.1\times10^{-8}$, and the bound
+$2\sqrt u \approx 2.1\times10^{-8}$ on the error. For the central
+difference with $M_0 = M_3 = 1$, $h^* = (3u)^{1/3} \approx
+6.9\times10^{-6}$ and the bound is $(3u)^{2/3}/2 \approx 2.4\times10^{-11}$.
+These assume that the library computes $\sin$ with error at most $u$; a library
+whose $\sin$ is accurate to within one unit in the last place doubles
+the rounding term at worst, which moves $h^*$ by a factor of
+$\sqrt2$ or $2^{1/3}$ and changes the bounds by similar factors.
+
+```{python}
+#| include: false
+close(2 * math.sqrt(u_a), 2.0**-25.5, "2 sqrt(u) = 2^-25.5")
+close(2 * math.sqrt(u_a), 2.1e-8, "h* forward", tol=1e-9)
+close((3 * u_a) ** (1 / 3), 6.9e-6, "h* central", tol=1e-7)
+close((3 * u_a) ** (2 / 3) / 2, 2.4e-11, "central bound", tol=1e-12)
+# The observed forward-difference error for sin at x = 1 near h* is within the bound
+# (doubled, to allow the library's sin one unit in the last place).
+for k in range(20, 32):
+    h_ = 2.0**-k
+    err_ = abs((math.sin(1 + h_) - math.sin(1)) / h_ - math.cos(1))
+    check(err_ <= h_ / 2 + 2 * (2 * u_a) / h_ + 2 * u_a, f"sin forward difference at 2^-{k}")
+```
