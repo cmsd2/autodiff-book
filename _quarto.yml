@@ -75,5 +75,10 @@ format:
     colorlinks: true
     include-in-header:
       # KOMA-Script sets headings in sans serif; keep them in Latin Modern Roman.
+      # Code and its printed output wrap at the margin instead of running past
+      # the shaded box, and are set one size smaller than the text.
       text: |
         \addtokomafont{disposition}{\rmfamily}
+        \usepackage{fvextra}
+        \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\},fontsize=\small}
+        \RecustomVerbatimEnvironment{verbatim}{Verbatim}{breaklines,fontsize=\small}

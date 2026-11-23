@@ -823,7 +823,8 @@ def as_dual(x):
 
 
 def extend(g, dg):
-    """Extend g, with derivative dg, to dual numbers: g(a + b eps) = g(a) + g'(a) b eps."""
+    """Extend g, with derivative dg, to dual numbers:
+    g(a + b eps) = g(a) + g'(a) b eps."""
     def g_dual(x):
         x = as_dual(x)
         return Dual(g(x.a), dg(x.a) * x.b)
@@ -856,7 +857,8 @@ $\mathbf{e}_j$.
 #| label: dual-forward
 #| echo: true
 def jvp(f, a, u):
-    """Return f(a) and the directional derivative grad f(a) . u, by one forward pass."""
+    """Return f(a) and the directional derivative grad f(a) . u,
+    by one forward pass."""
     out = f(*[Dual(ai, ui) for ai, ui in zip(a, u)])
     return out.a, out.b
 
@@ -864,7 +866,8 @@ def jvp(f, a, u):
 def gradient(f, a):
     """Return grad f(a) by n forward passes with seeds e_1, ..., e_n."""
     n = len(a)
-    return [jvp(f, a, [1.0 if i == j else 0.0 for i in range(n)])[1] for j in range(n)]
+    seeds = [[1.0 if i == j else 0.0 for i in range(n)] for j in range(n)]
+    return [jvp(f, a, e)[1] for e in seeds]
 ```
 
 Applied to the function of @tbl-fwd-trace, the passes reproduce the

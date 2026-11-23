@@ -456,7 +456,7 @@ def mlp_backprop(Ws, bs, x, y):
         a = np.maximum(z, 0) if l < len(Ws) - 1 else z
         acts.append(a)
     loss = 0.5 * np.sum((zs[-1] - y) ** 2)
-    delta = zs[-1] - y                      # delta_D, the gradient of the loss
+    delta = zs[-1] - y          # delta_D, the gradient of the loss
     dWs, dbs = [None] * len(Ws), [None] * len(Ws)
     for l in reversed(range(len(Ws))):
         dWs[l] = np.outer(delta, acts[l])   # delta_l a_{l-1}^T

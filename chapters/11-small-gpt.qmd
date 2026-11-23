@@ -851,8 +851,8 @@ def logits(theta, tokens):
     later = np.triu(np.ones((T, T), dtype=bool), k=1)   # entries with j > t
     O = np.zeros((T, 16))
     for j in range(4):
-        c = slice(4 * j, 4 * j + 4)                     # the columns of head j
-        S = Q[:, c] @ K[:, c].T / 2.0                    # scores q_t . k_j / sqrt(4)
+        c = slice(4 * j, 4 * j + 4)              # the columns of head j
+        S = Q[:, c] @ K[:, c].T / 2.0  # scores q_t . k_j / sqrt(4)
         S[later] = -np.inf
         A = np.exp(S - S.max(axis=1, keepdims=True))
         A = A / A.sum(axis=1, keepdims=True)             # row t is alpha_t
