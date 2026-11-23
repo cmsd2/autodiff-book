@@ -1,0 +1,258 @@
+## Chapter 5 {#sec-solutions-5}
+
+**@exr-ch5-iterates.** As in @exm-gd-bowl,
+$\boldsymbol{\theta}_k = \bigl((1 - 2\eta)^k, (1 - 6\eta)^k\bigr)$.
+
+(a) Both coordinates tend to $0$ exactly when $|1 - 2\eta| < 1$ and
+$|1 - 6\eta| < 1$, that is, when $0 < \eta < 1$ and $0 < \eta < \frac13$.
+So gradient descent converges exactly when $0 < \eta < \frac13$, as
+@thm-gd-quadratic predicts with $L = 6$.
+
+(b) $y_k = (1 - 6\eta)^k$ changes sign at every step exactly when
+$1 - 6\eta < 0$, that is, $\eta > \frac16$.
+
+(c) For $\eta = 0.3$ the factors are $0.4$ and $-0.8$, so
+$\boldsymbol{\theta}_3 = (0.064, -0.512)$. For $\eta = \frac13$ the
+factors are $\frac13$ and $-1$: $x_k = 3^{-k} \to 0$, but
+$y_k = (-1)^k$ jumps between $1$ and $-1$ for ever, and
+$f(\boldsymbol{\theta}_k) \to 3$.
+
+```{python}
+#| include: false
+rng = np.random.default_rng(55)
+th3 = [(1 - 2 * sp.Rational(3, 10))**3, (1 - 6 * sp.Rational(3, 10))**3]
+check(th3 == [sp.Rational(64, 1000), -sp.Rational(512, 1000)], "theta_3 for eta = 0.3")
+for ev in np.linspace(0.005, 0.7, 140):
+    conv = abs(1 - 2 * ev) < 1 and abs(1 - 6 * ev) < 1
+    check(conv == (ev < 1 / 3), "convergence iff eta < 1/3")
+    check((1 - 6 * ev < 0) == (ev > 1 / 6), "sign change iff eta > 1/6")
+p = np.array([1.0, 1.0])
+for k in range(1, 41):
+    p = p - (1 / 3) * np.array([2 * p[0], 6 * p[1]])
+    close(p, [3.0**-k, (-1.0)**k], "eta = 1/3 iterates")
+close(p[0]**2 + 3 * p[1]**2, 3, "f tends to 3", tol=1e-12)
+```
+
+**@exr-ch5-softplus.** (a) If $f$ is $L$-smooth then
+$|f'(x) - f'(0)| \le L|x|$ for every $x$, so
+$|f'(x) - f'(0)|/|x| \le L$ for $x \ne 0$. As $x \to 0$ the left side
+tends to $f''(0) = \frac14$, so $L \ge \frac14$.
+
+(b) $x_1 = 0 - 4f'(0) = -4\cdot\frac12 = -2$. Since $f'(x) > 0$ for
+every $x$, $x_{k+1} = x_k - 4f'(x_k) < x_k$. Suppose the decreasing
+sequence $x_k$ were bounded below. Then it would converge to some
+$\bar x$, and $4f'(x_k) = x_k - x_{k+1} \to 0$. By continuity of $f'$,
+$f'(\bar x) = 0$, which is impossible. So $x_k \to -\infty$. Each step
+lowers $f$ (@cor-gd-decrease with $\eta = 1/L$), and $f(x_k) \to 0$,
+the infimum, which is never attained.
+
+```{python}
+#| include: false
+xk = [0.0]
+for _ in range(2000):
+    xk.append(xk[-1] - 4 / (1 + np.exp(-xk[-1])))
+check(xk[1] == -2.0, "x_1 = -2")
+check(all(b < a for a, b in zip(xk, xk[1:])), "x_k decreases")
+check(xk[-1] < -7, "x_k heads to -infinity")
+fk = np.logaddexp(0, np.array(xk))
+check(np.all(np.diff(fk) < 0) and fk[-1] < 1e-3, "f decreases towards 0")
+hh = 1e-4
+close((1 / (1 + np.exp(-hh)) - 0.5) / hh, 0.25, "difference quotient of f' near 0", tol=1e-6)
+```
+
+**@exr-ch5-line-search.** (a) Here $\nabla f(1, 1) = (2, 6)$ and
+$$
+\varphi(t) = (1 - 2t)^2 + 3(1 - 6t)^2, \qquad
+\varphi'(t) = -4(1 - 2t) - 36(1 - 6t) = 224t - 40 .
+$$
+So $t_0 = 40/224 = \frac{5}{28}$, a minimum since $\varphi'' = 224 > 0$,
+and $\boldsymbol{\theta}_1 = (1 - \frac{10}{28}, 1 - \frac{30}{28}) = (\frac{9}{14}, -\frac{1}{14})$.
+Then $\nabla f(\boldsymbol{\theta}_1) = (\frac97, -\frac37)$, and
+$(\frac97, -\frac37)\cdot(2, 6) = \frac{18}{7} - \frac{18}{7} = 0$.
+
+(b) Write $\mathbf{g} = \nabla f(\boldsymbol{\theta}_k)$. By
+@lem-line-derivative with $\mathbf{d} = -\mathbf{g}$,
+$\varphi'(t) = -\nabla f(\boldsymbol{\theta}_k - t\mathbf{g})\cdot\mathbf{g}$.
+At the minimiser $t_k > 0$, $\varphi'(t_k) = 0$, which says
+$\nabla f(\boldsymbol{\theta}_{k+1})\cdot\mathbf{g} = 0$.
+
+```{python}
+#| include: false
+t_ = sp.symbols("t", real=True)
+phi = (1 - 2*t_)**2 + 3*(1 - 6*t_)**2
+sym_equal(sp.diff(phi, t_), 224*t_ - 40, "phi'")
+check(sp.solve(sp.diff(phi, t_), t_) == [sp.Rational(5, 28)], "t_0 = 5/28")
+th1 = sp.Matrix([1, 1]) - sp.Rational(5, 28) * sp.Matrix([2, 6])
+check(th1 == sp.Matrix([sp.Rational(9, 14), -sp.Rational(1, 14)]), "theta_1")
+g1 = sp.Matrix([2 * th1[0], 6 * th1[1]])
+check(g1 == sp.Matrix([sp.Rational(9, 7), -sp.Rational(3, 7)]) and (g1.T * sp.Matrix([2, 6]))[0, 0] == 0,
+      "perpendicular gradients")
+# Exact line search on a random quadratic: consecutive gradients are perpendicular.
+Q = rng.normal(size=(3, 3)); A = Q @ Q.T + np.eye(3); b = rng.normal(size=3)
+th = rng.normal(size=3)
+for _ in range(10):
+    g = A @ th - b
+    tk = (g @ g) / (g @ A @ g)
+    th = th - tk * g
+    close((A @ th - b) @ g, 0, "line search orthogonality", tol=1e-10)
+```
+
+**@exr-ch5-least-squares.** (a) Expanding,
+$f(\boldsymbol{\theta}) = \frac12\boldsymbol{\theta}^\top X^\top X\boldsymbol{\theta} - (X^\top\mathbf{y})^\top\boldsymbol{\theta} + \frac12\|\mathbf{y}\|^2$.
+This is the quadratic of @exm-smooth-quadratic with the symmetric
+matrix $A = X^\top X$ and $\mathbf{b} = X^\top\mathbf{y}$, plus a
+constant. So
+$\nabla f(\boldsymbol{\theta}) = X^\top X\boldsymbol{\theta} - X^\top\mathbf{y} = X^\top(X\boldsymbol{\theta} - \mathbf{y})$,
+and the Hessian is $X^\top X$.
+
+(b) If $X^\top X\mathbf{v} = \lambda\mathbf{v}$ with $\|\mathbf{v}\| = 1$,
+then $\lambda = \mathbf{v}^\top X^\top X\mathbf{v} = \|X\mathbf{v}\|^2 \ge 0$.
+By @thm-convex-hessian with $\mu = 0$, $f$ is convex, and by
+@exm-smooth-quadratic it is $L$-smooth with $L$ the largest eigenvalue.
+
+(c) $X^\top X = \begin{pmatrix} 3 & 3\\ 3 & 5\end{pmatrix}$, with
+characteristic equation $\lambda^2 - 8\lambda + 6 = 0$ and eigenvalues
+$4 \pm \sqrt{10}$, about $0.838$ and $7.162$. Both are positive, so
+$f$ is also $(4 - \sqrt{10})$-strongly convex, and
+$$
+\kappa = \frac{4 + \sqrt{10}}{4 - \sqrt{10}} = \frac{(4 + \sqrt{10})^2}{6} = \frac{13 + 4\sqrt{10}}{3} \approx 8.55 .
+$$
+
+```{python}
+#| include: false
+Xs = sp.Matrix([[1, 0], [1, 1], [1, 2]])
+G = Xs.T * Xs
+check(G == sp.Matrix([[3, 3], [3, 5]]), "X^T X")
+l_ = sp.symbols("lambda")
+sym_equal((G - l_ * sp.eye(2)).det(), l_**2 - 8*l_ + 6, "characteristic polynomial")
+check(set(G.eigenvals()) == {4 - sp.sqrt(10), 4 + sp.sqrt(10)}, "eigenvalues 4 +- sqrt 10")
+kap = (4 + sp.sqrt(10)) / (4 - sp.sqrt(10))
+sym_equal(kap, (13 + 4 * sp.sqrt(10)) / 3, "condition number")
+close(float(kap), 8.55, "kappa about 8.55", tol=1e-3)
+close([float(4 - sp.sqrt(10)), float(4 + sp.sqrt(10))], [0.838, 7.162], "eigenvalues", tol=1e-3)
+th_ = sp.Matrix(sp.symbols("p q", real=True)); ys = sp.Matrix(sp.symbols("y1:4", real=True))
+fls = ((Xs * th_ - ys).T * (Xs * th_ - ys))[0, 0] / 2
+check(sp.expand(sp.Matrix([sp.diff(fls, v) for v in th_]) - Xs.T * (Xs * th_ - ys)) == sp.zeros(2, 1),
+      "least-squares gradient")
+check(sp.hessian(fls, th_) == G, "least-squares Hessian")
+for _ in range(50):
+    Xr = rng.normal(size=(6, 3))
+    check(np.linalg.eigvalsh(Xr.T @ Xr).min() >= -1e-12, "X^T X has no negative eigenvalues")
+```
+
+**@exr-ch5-strong-equivalent.** By @exm-quadratic,
+$\nabla g(\mathbf{x}) = \nabla f(\mathbf{x}) - \mu\mathbf{x}$. So
+$$
+g(\mathbf{y}) - g(\mathbf{x}) - \nabla g(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
+= f(\mathbf{y}) - f(\mathbf{x}) - \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
+- \frac{\mu}{2}\bigl(\|\mathbf{y}\|^2 - \|\mathbf{x}\|^2 - 2\mathbf{x}\cdot(\mathbf{y} - \mathbf{x})\bigr),
+$$
+and the bracket equals
+$\|\mathbf{y}\|^2 - 2\mathbf{x}\cdot\mathbf{y} + \|\mathbf{x}\|^2 = \|\mathbf{y} - \mathbf{x}\|^2$.
+So the left side is non-negative for all $\mathbf{x}$, $\mathbf{y}$
+exactly when
+$f(\mathbf{y}) \ge f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x}) + \frac{\mu}{2}\|\mathbf{y} - \mathbf{x}\|^2$
+for all $\mathbf{x}$, $\mathbf{y}$. By @thm-convex-first-order, the
+first condition says $g$ is convex, and the second says $f$ is
+$\mu$-strongly convex.
+
+```{python}
+#| include: false
+xv = sp.Matrix(sp.symbols("x1:4", real=True)); yv = sp.Matrix(sp.symbols("y1:4", real=True))
+n2 = lambda v: (v.T * v)[0, 0]
+sym_equal(n2(yv) - n2(xv) - 2 * (xv.T * (yv - xv))[0, 0], n2(yv - xv), "the bracket is ||y - x||^2")
+```
+
+**@exr-ch5-mu-le-l.** Take any $\mathbf{x}$ and any
+$\mathbf{d} \ne \mathbf{0}$, and put $\mathbf{y} = \mathbf{x} + \mathbf{d}$.
+By the definition of strong convexity and @lem-descent,
+$$
+\frac{\mu}{2}\|\mathbf{d}\|^2
+\le f(\mathbf{y}) - f(\mathbf{x}) - \nabla f(\mathbf{x})\cdot\mathbf{d}
+\le \frac{L}{2}\|\mathbf{d}\|^2 .
+$$
+Dividing by $\frac12\|\mathbf{d}\|^2 > 0$ gives $\mu \le L$.
+
+```{python}
+#| include: false
+# For quadratics mu and L are the extreme eigenvalues, so mu <= L.
+for _ in range(50):
+    Q = rng.normal(size=(4, 4)); lam = np.linalg.eigvalsh(Q @ Q.T + 0.01 * np.eye(4))
+    check(lam[0] <= lam[-1], "mu <= L")
+    d = rng.normal(size=4); M = Q @ Q.T + 0.01 * np.eye(4)
+    check(lam[0] * d @ d <= d @ M @ d <= lam[-1] * d @ d + 1e-12, "the sandwich")
+```
+
+**@exr-ch5-quadratic-2d.** (a) The characteristic equation
+$(3 - \lambda)^2 - 1 = 0$ gives $\lambda = 2$ and $\lambda = 4$, with
+unit eigenvectors $\mathbf{u}_1 = (1, -1)/\sqrt2$ and
+$\mathbf{u}_2 = (1, 1)/\sqrt2$. The minimiser is
+$$
+\boldsymbol{\theta}^* = A^{-1}\mathbf{b} = \frac18\begin{pmatrix} 3 & -1\\ -1 & 3\end{pmatrix}\begin{pmatrix}1\\1\end{pmatrix} = \bigl(\tfrac14, \tfrac14\bigr).
+$$
+By @thm-gd-quadratic with $L = 4$, gradient descent converges from
+every start exactly when $0 < \eta < \frac12$.
+
+(b) $\eta = 2/(2 + 4) = \frac13$ and $\rho = (4 - 2)/(4 + 2) = \frac13$.
+
+(c) $\boldsymbol{\theta}_1 = \mathbf{0} - \frac13(A\mathbf{0} - \mathbf{b}) = (\frac13, \frac13)$
+and
+$\boldsymbol{\theta}_2 = (\frac13, \frac13) - \frac13\bigl((\frac43, \frac43) - (1, 1)\bigr) = (\frac29, \frac29)$.
+The starting error $\mathbf{e}_0 = -(\frac14, \frac14) = -\frac{\sqrt2}{4}\mathbf{u}_2$
+is an eigenvector for $\lambda = 4$, so by @thm-gd-quadratic
+$\mathbf{e}_k = (1 - \frac43)^k\mathbf{e}_0 = (-\frac13)^k\mathbf{e}_0$.
+Its length shrinks by exactly $\frac13$ at every step, and it changes
+sign each time: $\boldsymbol{\theta}_1$ overshoots $\boldsymbol{\theta}^*$
+and $\boldsymbol{\theta}_2$ falls short.
+
+```{python}
+#| include: false
+A2 = sp.Matrix([[3, 1], [1, 3]]); b2 = sp.Matrix([1, 1])
+check(A2.eigenvals() == {2: 1, 4: 1}, "eigenvalues 2 and 4")
+check(A2 * sp.Matrix([1, -1]) == 2 * sp.Matrix([1, -1]) and A2 * sp.Matrix([1, 1]) == 4 * sp.Matrix([1, 1]),
+      "eigenvectors")
+check(A2.inv() == sp.Matrix([[3, -1], [-1, 3]]) / 8, "inverse")
+ths2 = A2.inv() * b2
+check(ths2 == sp.Matrix([sp.Rational(1, 4)] * 2), "theta*")
+eta2 = sp.Rational(2, 6)
+check(eta2 == sp.Rational(1, 3) and sp.Rational(4 - 2, 4 + 2) == sp.Rational(1, 3), "eta and rho")
+t = sp.zeros(2, 1); its = [t]
+for _ in range(6):
+    t = t - eta2 * (A2 * t - b2); its.append(t)
+check(its[1] == sp.Matrix([sp.Rational(1, 3)] * 2) and its[2] == sp.Matrix([sp.Rational(2, 9)] * 2),
+      "theta_1 and theta_2")
+for k, tk in enumerate(its):
+    check(tk - ths2 == (-sp.Rational(1, 3))**k * (sp.zeros(2, 1) - ths2), "error is (-1/3)^k e_0")
+```
+
+**@exr-ch5-euler-limit.** (a) The flow is $\theta' = -\lambda\theta$,
+and since $\frac{d}{dt}\bigl(e^{\lambda t}\theta(t)\bigr) = e^{\lambda t}(\theta' + \lambda\theta) = 0$,
+the solution is $\theta(t) = \theta_0e^{-\lambda t}$. Gradient descent
+gives $\theta_{k+1} = (1 - \eta\lambda)\theta_k$, so
+$\theta_k = (1 - \eta\lambda)^k\theta_0$.
+
+(b) With $\eta = t/k$, $\theta_k = (1 - \lambda t/k)^k\theta_0$. For
+$k > \lambda t$ the base is positive, and with $s = \lambda t/k$,
+$$
+\ln\Bigl(1 - \frac{\lambda t}{k}\Bigr)^k = k\ln(1 - s) = -\lambda t\cdot\frac{\ln(1 - s)}{-s} .
+$$
+As $k \to \infty$, $s \to 0$ and $\ln(1 - s)/(-s) \to 1$, the derivative
+of $\ln$ at $1$. So the logarithm tends to $-\lambda t$, and by
+continuity of the exponential, $\theta_k \to \theta_0e^{-\lambda t} = \theta(t)$.
+
+(c) $\theta(1) = e^{-6} \approx 0.00248$. With $k = 6$, $\eta = \frac16$
+and $\theta_6 = (1 - 1)^6 = 0$: the first step jumps straight to the
+minimum. With $k = 60$, $\theta_{60} = 0.9^{60} \approx 0.00180$, and
+with $k = 600$, $\theta_{600} = 0.99^{600} \approx 0.00241$.
+
+```{python}
+#| include: false
+lam_, t_, th0_ = sp.symbols("lambda t theta0", positive=True)
+sol = th0_ * sp.exp(-lam_ * t_)
+sym_equal(sp.diff(sol, t_), -lam_ * sol, "flow solution")
+kk = sp.symbols("k", positive=True)
+check(sp.limit((1 - lam_ * t_ / kk)**kk, kk, sp.oo) == sp.exp(-lam_ * t_), "Euler limit")
+check([f"{v:.3g}" for v in (np.exp(-6), 0.9**60, 0.99**600)] == ["0.00248", "0.0018", "0.00241"],
+      "values for k = 60 and 600")
+check((1 - 6 * (1 / 6))**6 == 0, "k = 6 gives 0")
+```

@@ -1,12 +1,1549 @@
 # Gradient descent {#sec-gradient-descent}
 
-::: {.callout-note}
-## Not yet written
+A model computes its outputs from a list of adjustable numbers, its
+*parameters*, collected in a vector $\boldsymbol{\theta}$. A list of
+examples of inputs with the outputs the model should give, the
+*training data*, turns the parameters into a single number, the
+*loss* $L(\boldsymbol{\theta})$, which measures how far the model's
+outputs are from the desired ones. Fitting a line
+$\theta_1 + \theta_2 s$ through points $(s_i, y_i)$ by least squares is
+the simplest case: the loss is
+$\frac12\sum_i(\theta_1 + \theta_2 s_i - y_i)^2$
+(@exr-ch5-least-squares). *Training* the model means finding
+parameters that make the loss small. @thm-steepest says which way is
+downhill from any point: the direction of $-\nabla f$. Gradient descent
+takes a step that way, recomputes the gradient, and repeats. This
+chapter asks how large the steps should be and how quickly the method
+gets close to a minimum.
 
-This chapter will cover:
+The answers depend on two numbers that bound the curvature of the
+function (how fast its slope changes, measured by second derivatives),
+one from above and one from below. The upper bound limits
+the step size, and with it in hand every step is guaranteed to lower
+the function. The lower bound, when it is positive, makes the error
+shrink by a fixed factor at every step. Their ratio decides how many
+steps are needed, and on a quadratic function it can be read off from
+the eigenvalues of a matrix. The last
+section treats gradient descent as a numerical method for a
+differential equation.
 
-- smoothness and the descent lemma
-- convergence for non-convex, convex and strongly convex functions
-- quadratic models, eigenvalues and the condition number
-- gradient flow as a differential equation
+Throughout this chapter and the next, $f\colon\mathbb{R}^n\to\mathbb{R}$
+is the function being minimised. For a model it is the loss
+$L(\boldsymbol{\theta})$, but here the letter $L$ is reserved for the
+upper curvature bound of @sec-gd-smoothness, which is its standard
+name.
+
+```{python}
+#| include: false
+import numpy as np
+import sympy as sp
+import matplotlib.pyplot as plt
+from checks import check, close, maxima_zero, sym_equal, num_grad
+
+rng = np.random.default_rng(5)
+```
+
+## The iteration {#sec-gd-iteration}
+
+@thm-steepest says that at a point $\mathbf{a}$ the function decreases
+fastest in the direction of $-\nabla f(\mathbf{a})$. It does not say
+how far to go. Take $f(x, y) = x^2 + 3y^2$ from @exm-steepest, at
+$(1, 1)$, where $f = 4$ and $\nabla f = (2, 6)$. Moving by $0.1$
+times the negative gradient gives
+$$
+(1, 1) - 0.1\,(2, 6) = (0.8, 0.4), \qquad f(0.8, 0.4) = 0.64 + 0.48 = 1.12 ,
+$$
+a large decrease. At the new point the gradient is $(1.6, 2.4)$, and
+the same rule gives the next point. Repeating this is gradient
+descent. The multiplier $0.1$ sets the length of each move, and the
+rest of the chapter is about how to choose it.
+
+::: {#def-gd}
+## Gradient descent
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be differentiable, let
+$\boldsymbol{\theta}_0 \in \mathbb{R}^n$ and let $\eta > 0$. *Gradient
+descent* with *learning rate* (or *step size*) $\eta$ produces the
+sequence
+$$
+\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k - \eta\,\nabla f(\boldsymbol{\theta}_k),
+\qquad k = 0, 1, 2, \dots
+$$ {#eq-gd}
+The points $\boldsymbol{\theta}_k$ are the *iterates*, and
+$\boldsymbol{\theta}_0$ is the *starting point*.
+:::
+
+Each new point is the old one moved a distance
+$\eta\|\nabla f(\boldsymbol{\theta}_k)\|$ in the direction of steepest
+descent. Despite the name "step size", $\eta$ is not the length of the
+step: it is the ratio of the step to the gradient. The direction of
+steepest descent comes from the derivative, which describes $f$
+only close to $\boldsymbol{\theta}_k$, so the step must be short. Its
+length shrinks as the gradient shrinks. Near a minimum the gradient is close to
+$\mathbf{0}$, and the steps become short without any change to $\eta$.
+A fixed $\eta$ is therefore a natural first choice, and it is what this
+chapter studies.
+
+::: {#exm-gd-bowl}
+Continue @exm-steepest with $f(x, y) = x^2 + 3y^2$ and
+$\boldsymbol{\theta}_0 = (1, 1)$. Since $\nabla f(x, y) = (2x, 6y)$,
+the iteration acts on each coordinate separately:
+$$
+x_{k+1} = (1 - 2\eta)\,x_k, \qquad y_{k+1} = (1 - 6\eta)\,y_k .
+$$
+Each is a first-order recurrence relation, with solution
+$x_k = (1 - 2\eta)^k$ and $y_k = (1 - 6\eta)^k$. With $\eta = 0.1$
+the iterates are
+$$
+(1, 1),\quad (0.8, 0.4),\quad (0.64, 0.16),\quad (0.512, 0.064),\ \dots
+$$
+and they approach the minimum at the origin. With $\eta = 0.4$ the
+factors are $0.2$ and $-1.4$, so $y_k = (-1.4)^k$ changes sign at
+every step and grows without bound: $y_5 = -5.37824$. The step that
+works well for $x$ is too long for $y$, the direction in which $f$
+curves more steeply.
+:::
+
+```{python}
+#| include: false
+def gd(grad, theta0, eta, steps):
+    th = [np.array(theta0, dtype=float)]
+    for _ in range(steps):
+        th.append(th[-1] - eta * grad(th[-1]))
+    return np.array(th)
+
+grad_bowl = lambda p: np.array([2 * p[0], 6 * p[1]])
+f_bowl = lambda p: p[0]**2 + 3 * p[1]**2
+it = gd(grad_bowl, [1, 1], 0.1, 3)
+close(it, [[1, 1], [0.8, 0.4], [0.64, 0.16], [0.512, 0.064]], "iterates with eta = 0.1")
+close([f_bowl(it[1]), *grad_bowl(it[1])], [1.12, 1.6, 2.4], "lead-in: f = 1.12 and gradient (1.6, 2.4)")
+it = gd(grad_bowl, [1, 1], 0.4, 5)
+close(it[:, 0], 0.2**np.arange(6), "x factor 0.2")
+close(it[5, 1], -5.37824, "y_5 with eta = 0.4")
+close(it[:, 1], (-1.4)**np.arange(6), "y factor -1.4")
+x, y, eta = sp.symbols("x y eta", real=True)
+fb = x**2 + 3 * y**2
+step = sp.Matrix([x, y]) - eta * sp.Matrix([sp.diff(fb, x), sp.diff(fb, y)])
+check(sp.expand(step - sp.Matrix([(1 - 2*eta)*x, (1 - 6*eta)*y])) == sp.zeros(2, 1),
+      "coordinatewise recurrence")
+```
+
+The rest of the chapter explains this behaviour in general: why the
+safe step size depends on the steepest curvature, and what the
+shallowest curvature does to the speed.
+
+## Smoothness {#sec-gd-smoothness}
+
+In @exm-gd-bowl the step $\eta = 0.4$ was too long because $f$ curves
+steeply in the $y$-direction: there the gradient changes quickly from
+point to point, and a step chosen from the gradient at one point
+overshoots. The rate at which the gradient can change is the number
+that limits the step. For $f(x, y) = x^2 + 3y^2$, moving from $(1, 1)$
+to $(1, 1.1)$ changes the gradient from $(2, 6)$ to $(2, 6.6)$, a
+change of $0.6$ for a move of length $0.1$: a ratio of $6$. Moving
+instead to $(1.1, 1)$ changes it to $(2.2, 6)$, a ratio of $2$. Since
+$\nabla f(\mathbf{x}) - \nabla f(\mathbf{y}) = (2(x_1 - y_1), 6(x_2 - y_2))$,
+no move gives a ratio above $6$.
+
+::: {#def-l-smooth}
+## $L$-smooth function
+
+Let $L > 0$. A differentiable function
+$f\colon\mathbb{R}^n\to\mathbb{R}$ is *$L$-smooth* if its gradient is
+*Lipschitz continuous with constant $L$*, which means
+$$
+\|\nabla f(\mathbf{x}) - \nabla f(\mathbf{y})\| \le L\,\|\mathbf{x} - \mathbf{y}\|
+\quad\text{for all } \mathbf{x}, \mathbf{y} \in \mathbb{R}^n .
+$$
+:::
+
+In words: between any two points, the gradient changes by at most $L$
+times the distance between them. So $x^2 + 3y^2$ is $6$-smooth. For a
+function of one variable the condition says that the slope $f'$
+changes by at most $L|x - y|$ between $x$ and $y$, and by the mean
+value theorem that holds whenever $|f''| \le L$ everywhere. So $L$
+bounds how quickly the slope of the graph can change.
+
+A bound on the gradient itself, $\|\nabla f\| \le G$, might look like
+the natural hypothesis, but it limits only how far a step goes, not
+whether it overshoots. The function $f(x) = \sqrt{x^2 + 10^{-4}}$, a
+smoothed version of $|x|$, has $|f'(x)| = |x|/\sqrt{x^2 + 10^{-4}} < 1$
+everywhere. From $x_0 = 0.01$, where $f'(x_0) = 1/\sqrt2 \approx 0.707$,
+a step with $\eta = 0.1$ lands at $x_1 \approx -0.0607$, and $f$ rises
+from $0.0141$ to $0.0615$. The slope changes from about $-1$ to about
+$1$ within a short interval around $0$: $f''(0) = 100$, so $f$ is
+$100$-smooth, and $\eta = 0.1$ is ten times $1/L = 0.01$, the
+learning rate that the results below treat as safe.
+The function $x^2$ has the unbounded derivative $2x$, but it is
+$2$-smooth, and the same $\eta = 0.1$ multiplies $x$ by $0.8$ and
+lowers $f$ at every step. A step uses the gradient at its starting
+point, so what decides whether it is safe is how much the gradient
+changes along it, and that is what $L$ bounds.
+
+```{python}
+#| include: false
+# Bounded gradient is not enough: f(x) = sqrt(x^2 + 1e-4).
+xr_ = sp.symbols("x", real=True)
+fr_ = sp.sqrt(xr_**2 + sp.Rational(1, 10000))
+dfr_ = sp.diff(fr_, xr_)
+check(sp.simplify(dfr_.subs(xr_, sp.Rational(1, 100)) - 1 / sp.sqrt(2)) == 0, "f'(0.01) = 1/sqrt 2")
+close(float(1 / sp.sqrt(2)), 0.707, "1/sqrt 2", tol=1e-3)
+x1r_ = 0.01 - 0.1 / np.sqrt(2)
+check(f"{x1r_:.3g}" == "-0.0607", "x_1 = -0.0607")
+fr_num = lambda v: np.sqrt(v**2 + 1e-4)
+check(f"{fr_num(0.01):.3g}" == "0.0141" and f"{fr_num(x1r_):.3g}" == "0.0615" and fr_num(x1r_) > fr_num(0.01),
+      "f rises from 0.0141 to 0.0615")
+check(all(abs(v) / np.sqrt(v**2 + 1e-4) < 1 for v in np.linspace(-5, 5, 10001)), "|f'| < 1")
+d2fr_ = sp.diff(fr_, xr_, 2)
+check(d2fr_.subs(xr_, 0) == 100, "f''(0) = 100")
+sym_equal(d2fr_, sp.Rational(1, 10000) / (xr_**2 + sp.Rational(1, 10000))**sp.Rational(3, 2), "f'' formula")
+check(all(0 < float(d2fr_.subs(xr_, v)) <= 100 for v in np.linspace(-1, 1, 201)), "0 < f'' <= 100")
+check(abs(float(dfr_.subs(xr_, sp.Rational(1, 10)))) > 0.99, "slope near 1 at 0.1")
+check(all(abs((0.8 * v)**2) < v**2 for v in (3.0, -0.5, 1e-3)), "x^2 with eta = 0.1 decreases")
+```
+
+For several variables the second derivative is the Hessian matrix
+$\nabla^2 f$ (@def-hessian), and the test for smoothness uses its
+eigenvalues. The proof restricts $f$ to a line, a device used
+throughout this chapter.
+
+::: {#lem-line-derivative}
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be differentiable, and let
+$\mathbf{x}, \mathbf{d} \in \mathbb{R}^n$. The function
+$\varphi(t) = f(\mathbf{x} + t\mathbf{d})$ of one variable is
+differentiable, with
+$\varphi'(t) = \nabla f(\mathbf{x} + t\mathbf{d})\cdot\mathbf{d}$.
+:::
+
+::: {.proof}
+If $\mathbf{d} = \mathbf{0}$, $\varphi$ is constant and both sides are
+$0$. Otherwise put $\mathbf{u} = \mathbf{d}/\|\mathbf{d}\|$ and
+$\mathbf{a} = \mathbf{x} + t\mathbf{d}$. With $s = h\|\mathbf{d}\|$,
+$$
+\frac{\varphi(t + h) - \varphi(t)}{h}
+= \|\mathbf{d}\|\,\frac{f(\mathbf{a} + s\mathbf{u}) - f(\mathbf{a})}{s},
+$$
+and as $h \to 0$, $s \to 0$ and the right side tends to
+$\|\mathbf{d}\|\,\nabla f(\mathbf{a})\cdot\mathbf{u}
+= \nabla f(\mathbf{a})\cdot\mathbf{d}$ by @thm-directional.
+:::
+
+A twice continuously differentiable function (one whose second
+partial derivatives exist and are continuous) has a symmetric Hessian
+by @thm-mixed-partials. By @thm-spectral, a real symmetric matrix $A$
+has an orthonormal basis of eigenvectors $\mathbf{u}_1, \dots, \mathbf{u}_n$,
+with real eigenvalues $\lambda_1, \dots, \lambda_n$. The coefficients
+of any vector in that basis are dot products,
+$\mathbf{v} = \sum_i c_i\mathbf{u}_i$ with $c_i = \mathbf{u}_i\cdot\mathbf{v}$,
+and $\|\mathbf{v}\|^2 = \sum_i c_i^2$. @cor-quadratic-bounds uses this
+to bound $\mathbf{v}^\top A\mathbf{v}$; the same idea bounds the
+length of $A\mathbf{v}$.
+
+::: {#lem-eigen-bounds}
+Let $A$ be a real symmetric matrix whose eigenvalues all lie in the
+interval $[-M, M]$. Then $\|A\mathbf{v}\| \le M\|\mathbf{v}\|$ for
+every vector $\mathbf{v}$.
+:::
+
+::: {.proof}
+Write $\mathbf{v} = \sum_i c_i\mathbf{u}_i$ in an orthonormal basis of
+eigenvectors. Then $A\mathbf{v} = \sum_i \lambda_i c_i\mathbf{u}_i$,
+so $\|A\mathbf{v}\|^2 = \sum_i \lambda_i^2c_i^2 \le M^2\sum_i c_i^2 = M^2\|\mathbf{v}\|^2$.
+:::
+
+Integrals of vector-valued functions are taken component by component.
+One inequality about them is needed.
+
+::: {#lem-integral-norm}
+If $\mathbf{w}\colon[0, 1]\to\mathbb{R}^n$ has continuous components,
+then $\bigl\|\int_0^1 \mathbf{w}(t)\,dt\bigr\| \le \int_0^1 \|\mathbf{w}(t)\|\,dt$.
+:::
+
+::: {.proof}
+Let $\mathbf{W} = \int_0^1\mathbf{w}(t)\,dt$. If $\mathbf{W} = \mathbf{0}$
+there is nothing to prove. Otherwise, by linearity of the integral and
+@thm-cauchy-schwarz,
+$$
+\|\mathbf{W}\|^2 = \mathbf{W}\cdot\int_0^1\mathbf{w}(t)\,dt
+= \int_0^1 \mathbf{W}\cdot\mathbf{w}(t)\,dt
+\le \|\mathbf{W}\|\int_0^1\|\mathbf{w}(t)\|\,dt ,
+$$
+and dividing by $\|\mathbf{W}\|$ gives the result.
+:::
+
+::: {#thm-smooth-hessian}
+## A test for smoothness
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be twice continuously
+differentiable, let $L > 0$, and suppose that at every point
+$\mathbf{x}$ all the eigenvalues of $\nabla^2 f(\mathbf{x})$ lie in
+$[-L, L]$. Then $f$ is $L$-smooth.
+:::
+
+::: {.proof}
+Fix $\mathbf{x}$ and $\mathbf{y}$ and put $\mathbf{d} = \mathbf{y} - \mathbf{x}$.
+The partial derivative $\partial f/\partial x_i$ has continuous partial
+derivatives, so it is differentiable (@thm-continuous-partials), and
+its gradient is column $i$ of the Hessian, which equals row $i$
+because the Hessian is symmetric (@thm-mixed-partials). By @lem-line-derivative,
+$\psi_i(t) = \frac{\partial f}{\partial x_i}(\mathbf{x} + t\mathbf{d})$
+has the continuous derivative
+$\psi_i'(t) = \bigl(\nabla^2 f(\mathbf{x} + t\mathbf{d})\,\mathbf{d}\bigr)_i$.
+The fundamental theorem of calculus, applied to each component, gives
+$$
+\nabla f(\mathbf{y}) - \nabla f(\mathbf{x})
+= \int_0^1 \nabla^2 f(\mathbf{x} + t\mathbf{d})\,\mathbf{d}\;dt :
+$$
+the change in the gradient is the sum of the changes along the
+segment. By @lem-integral-norm and @lem-eigen-bounds,
+$\|\nabla f(\mathbf{y}) - \nabla f(\mathbf{x})\|
+\le \int_0^1 L\|\mathbf{d}\|\,dt = L\|\mathbf{y} - \mathbf{x}\|$.
+:::
+
+::: {#exm-smooth-quadratic}
+## Quadratic functions
+
+Let $A$ be a symmetric $n\times n$ matrix, $\mathbf{b} \in \mathbb{R}^n$
+and
+$$
+f(\boldsymbol{\theta}) = \tfrac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta}
+= \frac12\sum_{i,j}a_{ij}\theta_i\theta_j - \sum_i b_i\theta_i .
+$$
+By @exm-quadratic and @exm-affine,
+$\nabla f(\boldsymbol{\theta}) = A\boldsymbol{\theta} - \mathbf{b}$,
+and the Hessian is $A$ at every point: entry $a_{ij}$ is the rate at
+which $\partial f/\partial\theta_j$ changes as $\theta_i$ changes, the
+same everywhere. So
+$\nabla f(\mathbf{x}) - \nabla f(\mathbf{y}) = A(\mathbf{x} - \mathbf{y})$,
+and by @lem-eigen-bounds $f$ is $L$-smooth with $L$ the largest
+absolute value of an eigenvalue of $A$. No smaller constant works: if
+$A\mathbf{u} = \lambda\mathbf{u}$ with $|\lambda| = L$, then
+$\|\nabla f(\mathbf{u}) - \nabla f(\mathbf{0})\| = L\|\mathbf{u}\|$.
+
+The function $x^2 + 3y^2$ of @exm-gd-bowl is of this form with
+$A = \operatorname{diag}(2, 6)$ and $\mathbf{b} = \mathbf{0}$. The
+diagonal entries are the curvatures in the $x$- and $y$-directions,
+and the zero off-diagonal entries say that $\partial f/\partial x$
+does not depend on $y$, nor $\partial f/\partial y$ on $x$. So it is
+$6$-smooth, matching the ratio found above.
+:::
+
+```{python}
+#| include: false
+check(np.allclose(grad_bowl(np.array([1, 1.1])), [2, 6.6]) and np.allclose(grad_bowl(np.array([1.1, 1])), [2.2, 6]),
+      "gradients at (1, 1.1) and (1.1, 1)")
+close(np.linalg.norm(grad_bowl(np.array([1, 1.1])) - grad_bowl(np.array([1, 1]))) / 0.1, 6, "ratio 6")
+close(np.linalg.norm(grad_bowl(np.array([1.1, 1])) - grad_bowl(np.array([1, 1]))) / 0.1, 2, "ratio 2")
+th = sp.Matrix(sp.symbols("t1:4", real=True))
+A3 = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"a{min(i, j)}{max(i, j)}", real=True))
+b3 = sp.Matrix(sp.symbols("b1:4", real=True))
+fq = (th.T * A3 * th)[0, 0] / 2 - (b3.T * th)[0, 0]
+check(sp.expand(sp.Matrix([sp.diff(fq, v) for v in th]) - (A3 * th - b3)) == sp.zeros(3, 1),
+      "gradient of quadratic")
+check(sp.hessian(fq, th) == A3, "Hessian of quadratic")
+check(sp.hessian(fb, (x, y)) == sp.diag(2, 6), "Hessian of the bowl")
+# The bowl's gradient has Lipschitz constant 6, attained along e_2.
+for _ in range(500):
+    p, q = rng.normal(size=2), rng.normal(size=2)
+    check(np.linalg.norm(grad_bowl(p) - grad_bowl(q)) <= 6 * np.linalg.norm(p - q) + 1e-12,
+          "bowl is 6-smooth")
+close(np.linalg.norm(grad_bowl(np.array([0, 1.0]))), 6.0, "constant 6 attained")
+# lem-eigen-bounds and lem-integral-norm on random cases.
+for _ in range(200):
+    M = rng.normal(size=(4, 4)); M = M + M.T
+    lam = np.linalg.eigvalsh(M); v = rng.normal(size=4)
+    check(np.linalg.norm(M @ v) <= np.abs(lam).max() * np.linalg.norm(v) + 1e-9, "norm bound")
+ts = np.linspace(0, 1, 2001)
+w = np.stack([np.cos(3 * ts), ts**2 - 0.5, np.sin(5 * ts)])
+check(np.linalg.norm(np.trapezoid(w, ts, axis=1)) <= np.trapezoid(np.linalg.norm(w, axis=0), ts),
+      "norm of integral")
+```
+
+::: {#exm-softplus}
+The *softplus* function $f(x) = \ln(1 + e^x)$ appears in the loss of
+a model that predicts one of two outcomes. Its derivatives are
+$$
+f'(x) = \frac{e^x}{1 + e^x} = \frac{1}{1 + e^{-x}}, \qquad
+f''(x) = f'(x)\bigl(1 - f'(x)\bigr) .
+$$
+Since $0 < f'(x) < 1$ and $p(1 - p) \le \tfrac14$ for every real $p$
+(because $\tfrac14 - p(1-p) = (p - \tfrac12)^2$), we have
+$0 < f''(x) \le \tfrac14$, with equality at $x = 0$. By
+@thm-smooth-hessian with $n = 1$, $f$ is $\tfrac14$-smooth.
+:::
+
+```{python}
+#| include: false
+xs_ = sp.symbols("x", real=True)
+sp_f = sp.log(1 + sp.exp(xs_))
+d1 = sp.diff(sp_f, xs_)
+sym_equal(d1, 1 / (1 + sp.exp(-xs_)), "softplus derivative")
+sym_equal(sp.diff(sp_f, xs_, 2), d1 * (1 - d1), "softplus second derivative")
+check(sp.diff(sp_f, xs_, 2).subs(xs_, 0) == sp.Rational(1, 4), "f''(0) = 1/4")
+p_ = sp.symbols("p", real=True)
+sym_equal(sp.Rational(1, 4) - p_ * (1 - p_), (p_ - sp.Rational(1, 2))**2, "1/4 - p(1-p)")
+grid = np.linspace(-30, 30, 20001)
+sig = 1 / (1 + np.exp(-grid))
+check(np.all(sig * (1 - sig) <= 0.25 + 1e-15) and np.all(sig * (1 - sig) > 0), "0 < f'' <= 1/4")
+maxima_zero("diff(log(1 + exp(x)), x, 2) - exp(x)/(1 + exp(x))^2", "softplus f'' in Maxima")
+```
+
+## The descent lemma {#sec-gd-descent-lemma}
+
+To guarantee that a step lowers $f$, we need an upper bound on $f$ at
+the new point in terms of what is known at the old one. The tangent
+plane at $\mathbf{x}$, the graph of
+$\mathbf{y} \mapsto f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})$,
+approximates $f$ near $\mathbf{x}$, and smoothness bounds how far the
+graph of $f$ can rise above it. For $f(x, y) = x^2 + 3y^2$ at
+$\mathbf{x} = (1, 1)$, take $\mathbf{y} = (0.9, 0.7)$. The tangent
+plane predicts $4 + (2, 6)\cdot(-0.1, -0.3) = 2$, the true value is
+$f(0.9, 0.7) = 0.81 + 1.47 = 2.28$, and the excess $0.28$ is less than
+$\frac{6}{2}\|(-0.1, -0.3)\|^2 = 0.3$. The lemma says that this always
+happens.
+
+::: {#lem-descent}
+## Descent lemma
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth. For all
+$\mathbf{x}$ and $\mathbf{y}$ in $\mathbb{R}^n$,
+$$
+f(\mathbf{y}) \le f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
++ \frac{L}{2}\|\mathbf{y} - \mathbf{x}\|^2 .
+$$ {#eq-gd-descent}
+:::
+
+The right side is the tangent plane plus the term
+$\frac{L}{2}\|\mathbf{y} - \mathbf{x}\|^2$, whose graph is a
+paraboloid (a bowl) with its lowest point at $\mathbf{x}$. So the
+graph of $f$ never rises above the tangent plane by more than
+$\frac{L}{2}$ times the squared distance from $\mathbf{x}$.
+
+::: {.proof}
+Put $\mathbf{d} = \mathbf{y} - \mathbf{x}$ and
+$\varphi(t) = f(\mathbf{x} + t\mathbf{d})$. By @lem-line-derivative,
+$\varphi'(t) = \nabla f(\mathbf{x} + t\mathbf{d})\cdot\mathbf{d}$,
+which is continuous in $t$ because $\nabla f$ is Lipschitz continuous.
+By the fundamental theorem of calculus,
+$$
+f(\mathbf{y}) - f(\mathbf{x}) - \nabla f(\mathbf{x})\cdot\mathbf{d}
+= \int_0^1 \bigl(\varphi'(t) - \varphi'(0)\bigr)\,dt
+= \int_0^1 \bigl(\nabla f(\mathbf{x} + t\mathbf{d}) - \nabla f(\mathbf{x})\bigr)\cdot\mathbf{d}\;dt .
+$$
+By @thm-cauchy-schwarz and smoothness, the integrand is at most
+$\|\nabla f(\mathbf{x} + t\mathbf{d}) - \nabla f(\mathbf{x})\|\,\|\mathbf{d}\|
+\le Lt\|\mathbf{d}\|^2$, and $\int_0^1 Lt\|\mathbf{d}\|^2\,dt = \frac{L}{2}\|\mathbf{d}\|^2$.
+:::
+
+The same proof bounds the integrand below by $-Lt\|\mathbf{d}\|^2$, so
+the graph of $f$ also stays above the downward parabola
+$f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot\mathbf{d} - \frac{L}{2}\|\mathbf{d}\|^2$.
+Only the upper bound is needed here. Applied to a gradient step, it
+shows how much each step must gain.
+
+::: {#cor-gd-decrease}
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and
+$\mathbf{x}^+ = \mathbf{x} - \eta\nabla f(\mathbf{x})$ with $\eta > 0$. Then
+$$
+f(\mathbf{x}^+) \le f(\mathbf{x}) - \eta\Bigl(1 - \frac{L\eta}{2}\Bigr)\|\nabla f(\mathbf{x})\|^2 .
+$$
+In particular, if $0 < \eta \le 1/L$ then
+$f(\mathbf{x}^+) \le f(\mathbf{x}) - \frac{\eta}{2}\|\nabla f(\mathbf{x})\|^2$,
+and with $\eta = 1/L$ each step lowers $f$ by at least
+$\|\nabla f(\mathbf{x})\|^2/(2L)$.
+:::
+
+::: {.proof}
+Put $\mathbf{y} = \mathbf{x}^+$ in @eq-gd-descent:
+$\nabla f(\mathbf{x})\cdot(\mathbf{x}^+ - \mathbf{x}) = -\eta\|\nabla f(\mathbf{x})\|^2$
+and $\|\mathbf{x}^+ - \mathbf{x}\|^2 = \eta^2\|\nabla f(\mathbf{x})\|^2$.
+If $\eta \le 1/L$ then $1 - L\eta/2 \ge 1/2$.
+:::
+
+Any $\eta < 2/L$ makes the bound a strict decrease whenever the
+gradient is not zero, and $\eta = 1/L$ gives the largest guaranteed
+decrease, because $\eta(1 - L\eta/2)$ is largest there.
+
+::: {#exm-descent-bowl}
+For $f(x, y) = x^2 + 3y^2$, which is $6$-smooth, take $\eta = 1/6$ at
+$(1, 1)$. The gradient is $(2, 6)$, with
+$\|\nabla f\|^2 = 40$, so @cor-gd-decrease promises a decrease of at
+least $40/12 = 10/3$. The step goes to
+$(1, 1) - \frac16(2, 6) = (\frac23, 0)$, where $f = \frac49$. The
+actual decrease is $4 - \frac49 = \frac{32}{9} \approx 3.56$.
+:::
+
+```{python}
+#| include: false
+p0 = sp.Matrix([1, 1])
+g0 = sp.Matrix([2, 6])
+p1 = p0 - g0 / 6
+check(p1 == sp.Matrix([sp.Rational(2, 3), 0]), "step to (2/3, 0)")
+fv = lambda p: p[0]**2 + 3 * p[1]**2
+check(fv(p1) == sp.Rational(4, 9) and fv(p0) - fv(p1) == sp.Rational(32, 9), "decrease 32/9")
+check((g0.T * g0)[0, 0] / 12 == sp.Rational(10, 3) and sp.Rational(32, 9) >= sp.Rational(10, 3),
+      "bound 10/3")
+close(32 / 9, 3.56, "32/9", tol=1e-3)
+# The lead-in to the descent lemma: y = (0.9, 0.7) from x = (1, 1).
+q_ = sp.Matrix([sp.Rational(9, 10), sp.Rational(7, 10)])
+check(fv(q_) == sp.Rational(228, 100) and fv(p0) + (g0.T * (q_ - p0))[0, 0] == 2, "2.28 and the tangent value 2")
+check(3 * ((q_ - p0).T * (q_ - p0))[0, 0] == sp.Rational(3, 10) and sp.Rational(28, 100) < sp.Rational(3, 10),
+      "excess 0.28 below 0.3")
+# The descent lemma at random points for the 1/4-smooth softplus and the 1-smooth cosine.
+sp_num = lambda t: np.logaddexp(0, t)
+for _ in range(1000):
+    a_, b_ = rng.normal(scale=5, size=2)
+    check(sp_num(b_) <= sp_num(a_) + (b_ - a_) / (1 + np.exp(-a_)) + 0.125 * (b_ - a_)**2 + 1e-12,
+          "descent lemma, softplus")
+    check(np.cos(b_) <= np.cos(a_) - np.sin(a_) * (b_ - a_) + 0.5 * (b_ - a_)**2 + 1e-12,
+          "descent lemma, cosine")
+# eta (1 - L eta / 2) is largest at eta = 1/L.
+e_, L_ = sp.symbols("eta L", positive=True)
+check(sp.solve(sp.diff(e_ * (1 - L_ * e_ / 2), e_), e_) == [1 / L_], "best guaranteed step 1/L")
+```
+
+## Functions that are not convex {#sec-gd-nonconvex}
+
+The loss of a neural network is not convex (@sec-gd-convex defines
+the term), and has many critical points, points where the gradient is
+zero (@def-local-extremum). Some are minima, others maxima or saddle
+points (@thm-second-derivative-test). Gradient descent cannot be
+expected to find the lowest point of such a function, but smoothness
+alone guarantees that it finds points where the gradient is small.
+
+::: {#exm-gd-cos}
+Let $f(\theta) = \cos\theta$ on $\mathbb{R}$. Then
+$f'(\theta) = -\sin\theta$ and $|f''(\theta)| = |\cos\theta| \le 1$,
+so $f$ is $1$-smooth. Gradient descent with $\eta = 1$ is
+$\theta_{k+1} = \theta_k + \sin\theta_k$. From $\theta_0 = 1$, to
+six significant figures,
+$$
+\theta_1 = 1.84147, \quad \theta_2 = 2.80506, \quad \theta_3 = 3.13528, \quad
+\theta_4 = 3.14159 ,
+$$
+approaching the minimum at $\pi$. The squared gradients
+$\sin^2\theta_k$ for $k = 0, 1, 2, 3$ are $0.708$, $0.929$, $0.109$
+and $0.0000399$. From $\theta_0 = 0$, where $\cos$ has a maximum, the
+gradient is zero and $\theta_k = 0$ for every $k$.
+:::
+
+::: {#thm-gd-nonconvex}
+## Gradient descent on smooth functions
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and bounded below,
+with $f^* = \inf f$ its greatest lower bound. Run gradient descent from
+any $\boldsymbol{\theta}_0$ with $0 < \eta \le 1/L$. Then
+$f(\boldsymbol{\theta}_k)$ never increases, and for every $k \ge 1$,
+$$
+\min_{0\le j<k}\|\nabla f(\boldsymbol{\theta}_j)\|^2
+\le \frac1k\sum_{j=0}^{k-1}\|\nabla f(\boldsymbol{\theta}_j)\|^2
+\le \frac{2\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)}{\eta k} .
+$$
+With $\eta = 1/L$ the right side is $2L\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)/k$.
+Also $\nabla f(\boldsymbol{\theta}_k) \to \mathbf{0}$ as $k \to \infty$.
+:::
+
+::: {.proof}
+By @cor-gd-decrease,
+$\frac{\eta}{2}\|\nabla f(\boldsymbol{\theta}_j)\|^2 \le f(\boldsymbol{\theta}_j) - f(\boldsymbol{\theta}_{j+1})$
+for each $j$, so $f$ never increases. Adding these inequalities for
+$j = 0, \dots, k-1$, the right sides telescope:
+$$
+\frac{\eta}{2}\sum_{j=0}^{k-1}\|\nabla f(\boldsymbol{\theta}_j)\|^2
+\le f(\boldsymbol{\theta}_0) - f(\boldsymbol{\theta}_k)
+\le f(\boldsymbol{\theta}_0) - f^* .
+$$
+Divide by $\eta k/2$. The minimum of $k$ numbers is at most their
+mean. The partial sums of the series
+$\sum_j\|\nabla f(\boldsymbol{\theta}_j)\|^2$ are bounded and its terms
+are not negative, so it converges and its terms tend to $0$.
+:::
+
+In words: the average of the first $k$ squared gradients falls at
+least as fast as $1/k$, so some early iterate already has a small
+gradient. In @exm-gd-cos, $f^* = -1$, and the theorem bounds the
+smallest of the first $k$ squared gradients by
+$2(\cos 1 + 1)/k \approx 3.08/k$. The theorem does not say that
+$\boldsymbol{\theta}_k$ converges, or that it approaches a minimum. A
+critical point might be a maximum or a saddle point, and if
+$\boldsymbol{\theta}_0$ is such a point gradient descent never moves,
+as the start $\theta_0 = 0$ shows.
+
+```{python}
+#| include: false
+thc = [1.0]
+for _ in range(30):
+    thc.append(thc[-1] + np.sin(thc[-1]))
+thc = np.array(thc)
+close(thc[1:5], [1.84147, 2.80506, 3.13528, 3.14159], "cos iterates", tol=2e-6)
+check([f"{v:.3g}" for v in np.sin(thc[:4])**2] == ["0.708", "0.929", "0.109", "3.99e-05"],
+      "squared gradients to three figures")
+close(2 * (np.cos(1) + 1), 3.08, "2(cos 1 + 1)", tol=1e-3)
+for k in range(1, 31):
+    g2 = np.sin(thc[:k])**2
+    check(g2.min() <= g2.mean() <= 2 * (np.cos(1) + 1) / k + 1e-15, "thm-gd-nonconvex on cos")
+    check(np.cos(thc[k]) <= np.cos(thc[k - 1]) + 1e-15, "cos values never increase")
+check(0 + np.sin(0) == 0, "stays at the maximum")
+# The theorem on a non-convex function of two variables,
+# f = cos x cos y + 0.05 (x^2 + y^2) >= -1. Its Hessian eigenvalues are
+# 0.1 - cos x cos y +- sin x sin y = 0.1 - cos(x +- y), which lie in [-0.9, 1.1].
+fx = lambda p: np.cos(p[0]) * np.cos(p[1]) + 0.05 * (p[0]**2 + p[1]**2)
+gx = lambda p: np.array([-np.sin(p[0]) * np.cos(p[1]) + 0.1 * p[0],
+                         -np.cos(p[0]) * np.sin(p[1]) + 0.1 * p[1]])
+close(gx(np.array([0.3, -1.2])), num_grad(fx, [0.3, -1.2]), "gradient of the test function", tol=1e-7)
+hx = lambda p: np.array([[0.1 - np.cos(p[0]) * np.cos(p[1]), np.sin(p[0]) * np.sin(p[1])],
+                         [np.sin(p[0]) * np.sin(p[1]), 0.1 - np.cos(p[0]) * np.cos(p[1])]])
+Lx = 1.1
+check(all(np.abs(np.linalg.eigvalsh(hx(p))).max() <= Lx + 1e-12 for p in rng.uniform(-6, 6, size=(2000, 2))),
+      "Hessian eigenvalues in [-1.1, 1.1]")
+for start in rng.uniform(-6, 6, size=(20, 2)):
+    traj = gd(gx, start, 1 / Lx, 200)
+    g2 = np.array([gx(t) @ gx(t) for t in traj[:-1]])
+    for k in (1, 5, 50, 200):
+        check(g2[:k].mean() <= 2 * Lx * (fx(start) + 1) / k + 1e-12, "thm-gd-nonconvex in two variables")
+```
+
+## Convex functions {#sec-gd-convex}
+
+In @exm-gd-cos a point with zero gradient was a maximum. A shape
+condition rules this out. For $f(x) = x^2$, take the chord joining the
+points of the graph at $x = -1$ and $x = 3$. At the midpoint $x = 1$
+the chord has height $(1 + 9)/2 = 5$, above $f(1) = 1$, and the graph
+lies below the chord all the way between. For $\cos$ on $[-\pi, \pi]$
+the chord joining the ends is the line at height $-1$, but $\cos 0 = 1$
+lies above it: the graph rises over the chord, and the maximum at $0$
+is the top of that rise. Functions whose graphs never rise above a chord are
+the subject of this section. For them a zero gradient does mean a
+minimum, and the function values along gradient descent converge.
+
+::: {#def-convex}
+## Convex function
+
+A function $f\colon\mathbb{R}^n\to\mathbb{R}$ is *convex* if
+$$
+f\bigl(t\mathbf{x} + (1-t)\mathbf{y}\bigr) \le t f(\mathbf{x}) + (1-t) f(\mathbf{y})
+$$
+for all $\mathbf{x}, \mathbf{y} \in \mathbb{R}^n$ and all $t \in [0, 1]$.
+:::
+
+As $t$ runs from $0$ to $1$, the point $t\mathbf{x} + (1-t)\mathbf{y}$
+runs along the segment from $\mathbf{y}$ to $\mathbf{x}$, and the right
+side runs along the chord. The inequality says that the graph over the
+segment lies on or below the chord.
+
+For differentiable functions an equivalent condition uses tangent
+planes instead of chords. For $f(x) = x^2$ the tangent line at $x = 1$
+is $1 + 2(y - 1)$, and $y^2 - \bigl(1 + 2(y - 1)\bigr) = (y - 1)^2 \ge 0$:
+the graph lies above the tangent line everywhere.
+
+::: {#thm-convex-first-order}
+## First-order characterisation of convexity
+
+A differentiable function $f\colon\mathbb{R}^n\to\mathbb{R}$ is convex
+if and only if
+$$
+f(\mathbf{y}) \ge f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
+\quad\text{for all } \mathbf{x}, \mathbf{y} \in \mathbb{R}^n .
+$$ {#eq-gd-tangent}
+:::
+
+::: {.proof}
+Suppose $f$ is convex, and fix $\mathbf{x}$ and $\mathbf{y}$. For
+$0 < t \le 1$, convexity with the points $\mathbf{y}$ and $\mathbf{x}$
+gives
+$f\bigl(\mathbf{x} + t(\mathbf{y} - \mathbf{x})\bigr) \le f(\mathbf{x}) + t\bigl(f(\mathbf{y}) - f(\mathbf{x})\bigr)$,
+so
+$$
+\frac{f\bigl(\mathbf{x} + t(\mathbf{y} - \mathbf{x})\bigr) - f(\mathbf{x})}{t} \le f(\mathbf{y}) - f(\mathbf{x}) .
+$$
+As $t \to 0^+$ the left side tends to
+$\nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})$ by
+@lem-line-derivative, which gives @eq-gd-tangent.
+
+Conversely, suppose @eq-gd-tangent holds. Fix $\mathbf{x}$, $\mathbf{y}$
+and $t \in [0, 1]$, and let $\mathbf{z} = t\mathbf{x} + (1-t)\mathbf{y}$.
+Applying @eq-gd-tangent at $\mathbf{z}$ twice,
+$$
+f(\mathbf{x}) \ge f(\mathbf{z}) + \nabla f(\mathbf{z})\cdot(\mathbf{x} - \mathbf{z}),
+\qquad
+f(\mathbf{y}) \ge f(\mathbf{z}) + \nabla f(\mathbf{z})\cdot(\mathbf{y} - \mathbf{z}).
+$$
+Multiply the first by $t$ and the second by $1 - t$ and add. Since
+$t(\mathbf{x} - \mathbf{z}) + (1-t)(\mathbf{y} - \mathbf{z}) = \mathbf{z} - \mathbf{z} = \mathbf{0}$,
+the gradient terms cancel and leave
+$t f(\mathbf{x}) + (1-t) f(\mathbf{y}) \ge f(\mathbf{z})$.
+:::
+
+A *minimiser* of $f$ is a point $\boldsymbol{\theta}^*$ with
+$f(\boldsymbol{\theta}^*) \le f(\mathbf{y})$ for every $\mathbf{y}$.
+
+::: {#cor-convex-stationary}
+If $f\colon\mathbb{R}^n\to\mathbb{R}$ is convex and differentiable and
+$\nabla f(\boldsymbol{\theta}^*) = \mathbf{0}$, then
+$\boldsymbol{\theta}^*$ is a minimiser of $f$.
+:::
+
+::: {.proof}
+Put $\mathbf{x} = \boldsymbol{\theta}^*$ in @eq-gd-tangent.
+:::
+
+Conversely, at any minimiser of a differentiable function the gradient
+is zero (@thm-critical-point). The next theorem gives a
+practical test for convexity, and a stronger property that
+@sec-gd-strong-convexity uses.
+
+::: {#thm-convex-hessian}
+## Curvature bounded below
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be twice continuously
+differentiable, let $\mu \ge 0$, and suppose that at every point all
+the eigenvalues of $\nabla^2 f(\mathbf{x})$ are at least $\mu$. Then
+for all $\mathbf{x}$ and $\mathbf{y}$,
+$$
+f(\mathbf{y}) \ge f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
++ \frac{\mu}{2}\|\mathbf{y} - \mathbf{x}\|^2 .
+$$
+In particular (taking $\mu = 0$), a function whose Hessian has no
+negative eigenvalues is convex.
+:::
+
+::: {.proof}
+Put $\mathbf{d} = \mathbf{y} - \mathbf{x}$. By Taylor's theorem in the
+form @eq-taylor-lagrange, there is a $\tau \in (0, 1)$ with
+$$
+f(\mathbf{y}) = f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot\mathbf{d}
++ \tfrac12\,\mathbf{d}^\top\nabla^2 f(\mathbf{x} + \tau\mathbf{d})\,\mathbf{d} .
+$$
+The Hessian is symmetric (@thm-mixed-partials) with all eigenvalues at
+least $\mu$, so by @cor-quadratic-bounds the last term is at least
+$\frac{\mu}{2}\|\mathbf{d}\|^2$. With $\mu = 0$ the inequality is
+@eq-gd-tangent, so $f$ is convex by @thm-convex-first-order.
+:::
+
+So the quadratic of @exm-smooth-quadratic is convex when no eigenvalue
+of $A$ is negative, and the function $\ln(1 + e^x)$ of @exm-softplus
+is convex because $f'' > 0$. That function also shows that a convex
+function need not have a minimiser: it is positive and tends to $0$ as
+$x \to -\infty$, but never reaches $0$. The next theorem assumes a
+minimiser exists.
+
+::: {#thm-gd-convex}
+## Gradient descent on convex functions
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be convex and $L$-smooth, with a
+minimiser $\boldsymbol{\theta}^*$, and let $f^* = f(\boldsymbol{\theta}^*)$.
+Run gradient descent with $0 < \eta \le 1/L$. Then the distance
+$\|\boldsymbol{\theta}_k - \boldsymbol{\theta}^*\|$ never increases,
+and for every $k \ge 1$,
+$$
+f(\boldsymbol{\theta}_k) - f^* \le \frac{\|\boldsymbol{\theta}_0 - \boldsymbol{\theta}^*\|^2}{2\eta k} .
+$$
+:::
+
+::: {.proof}
+Fix $j$, write $\mathbf{g} = \nabla f(\boldsymbol{\theta}_j)$, and
+expand the square of the distance after one step:
+$$
+\|\boldsymbol{\theta}_{j+1} - \boldsymbol{\theta}^*\|^2
+= \|\boldsymbol{\theta}_j - \boldsymbol{\theta}^* - \eta\mathbf{g}\|^2
+= \|\boldsymbol{\theta}_j - \boldsymbol{\theta}^*\|^2
+ - 2\eta\,\mathbf{g}\cdot(\boldsymbol{\theta}_j - \boldsymbol{\theta}^*) + \eta^2\|\mathbf{g}\|^2 .
+$$
+Rearranged,
+$$
+\mathbf{g}\cdot(\boldsymbol{\theta}_j - \boldsymbol{\theta}^*) - \frac{\eta}{2}\|\mathbf{g}\|^2
+= \frac{1}{2\eta}\Bigl(\|\boldsymbol{\theta}_j - \boldsymbol{\theta}^*\|^2 - \|\boldsymbol{\theta}_{j+1} - \boldsymbol{\theta}^*\|^2\Bigr).
+$$ {#eq-gd-distance-step}
+By @cor-gd-decrease,
+$f(\boldsymbol{\theta}_{j+1}) \le f(\boldsymbol{\theta}_j) - \frac{\eta}{2}\|\mathbf{g}\|^2$,
+and by @eq-gd-tangent with $\mathbf{x} = \boldsymbol{\theta}_j$ and
+$\mathbf{y} = \boldsymbol{\theta}^*$,
+$f(\boldsymbol{\theta}_j) \le f^* + \mathbf{g}\cdot(\boldsymbol{\theta}_j - \boldsymbol{\theta}^*)$.
+Together with @eq-gd-distance-step these give
+$$
+0 \le f(\boldsymbol{\theta}_{j+1}) - f^*
+\le \frac{1}{2\eta}\Bigl(\|\boldsymbol{\theta}_j - \boldsymbol{\theta}^*\|^2 - \|\boldsymbol{\theta}_{j+1} - \boldsymbol{\theta}^*\|^2\Bigr),
+$$
+so the distance never increases. Adding these inequalities for
+$j = 0, \dots, k-1$, the right sides telescope:
+$$
+\sum_{j=1}^{k}\bigl(f(\boldsymbol{\theta}_j) - f^*\bigr)
+\le \frac{1}{2\eta}\Bigl(\|\boldsymbol{\theta}_0 - \boldsymbol{\theta}^*\|^2 - \|\boldsymbol{\theta}_k - \boldsymbol{\theta}^*\|^2\Bigr)
+\le \frac{\|\boldsymbol{\theta}_0 - \boldsymbol{\theta}^*\|^2}{2\eta} .
+$$
+The values $f(\boldsymbol{\theta}_j)$ never increase
+(@thm-gd-nonconvex), so each term on the left is at least
+$f(\boldsymbol{\theta}_k) - f^*$, and the left side is at least
+$k\bigl(f(\boldsymbol{\theta}_k) - f^*\bigr)$.
+:::
+
+The error in $f$ falls like $1/k$: to make it ten times smaller takes
+about ten times as many steps.
+
+::: {#exm-gd-huber}
+The *Huber function*
+$$
+h(x) = \begin{cases} \tfrac12 x^2, & |x| \le 1,\\ |x| - \tfrac12, & |x| > 1,\end{cases}
+\qquad
+h'(x) = \begin{cases} x, & |x| \le 1,\\ 1, & x > 1,\\ -1, & x < -1,\end{cases}
+$$
+is used as a loss that grows slowly for large errors. The two pieces
+and their derivatives agree at $x = \pm1$, so $h$ is differentiable.
+Its derivative clips $x$ to the interval $[-1, 1]$, which never moves
+two numbers further apart, so $h$ is $1$-smooth. The derivative never
+decreases, so for $y > x$,
+$h(y) - h(x) - h'(x)(y - x) = \int_x^y\bigl(h'(s) - h'(x)\bigr)\,ds \ge 0$,
+and similarly for $y < x$. By @thm-convex-first-order, $h$ is convex,
+with minimiser $0$.
+
+Gradient descent with $\eta = 1$ from $x_0 = 10$ moves one unit at a
+time while $|x_k| > 1$: $x_k = 10 - k$ for $k \le 9$, and then
+$x_{10} = 1 - h'(1) = 0$. So $h(x_k) = 9.5 - k$ for $k \le 9$. The
+bound of @thm-gd-convex is $|x_0 - 0|^2/(2k) = 50/k$; at $k = 9$ it
+is about $5.56$, and the true value is $0.5$. The theorem covers every
+convex $1$-smooth function, and most are better behaved than the worst
+case.
+:::
+
+```{python}
+#| include: false
+# The lead-in to convexity: chords of x^2 and cos, and the tangent line of x^2.
+check(((-1)**2 + 3**2) / 2 == 5 and 1**2 == 1, "chord of x^2 at the midpoint")
+check(all(t_**2 <= ((3 - t_) * 1 + (t_ + 1) * 9) / 4 + 1e-12 for t_ in np.linspace(-1, 3, 101)),
+      "x^2 lies below its chord")
+check(np.cos(-np.pi) == -1 and np.cos(np.pi) == -1 and np.cos(0) == 1, "cos rises above its chord")
+yy_ = sp.symbols("yy", real=True)
+sym_equal(yy_**2 - (1 + 2 * (yy_ - 1)), (yy_ - 1)**2, "x^2 above its tangent at 1")
+def huber(t):
+    return 0.5 * t**2 if abs(t) <= 1 else abs(t) - 0.5
+def dhuber(t):
+    return float(np.clip(t, -1, 1))
+check(abs(huber(1) - 0.5) < 1e-15 and abs(huber(1.0 + 1e-9) - 0.5) < 1e-8, "pieces agree at 1")
+close(dhuber(3.7), num_grad(lambda v: huber(v[0]), [3.7])[0], "h' outside")
+close(dhuber(0.3), num_grad(lambda v: huber(v[0]), [0.3])[0], "h' inside")
+for _ in range(1000):
+    a_, b_ = rng.normal(scale=3, size=2)
+    check(abs(dhuber(a_) - dhuber(b_)) <= abs(a_ - b_) + 1e-15, "Huber is 1-smooth")
+    check(huber(b_) >= huber(a_) + dhuber(a_) * (b_ - a_) - 1e-12, "Huber tangent inequality")
+xs_h = [10.0]
+for _ in range(12):
+    xs_h.append(xs_h[-1] - dhuber(xs_h[-1]))
+check(xs_h[:10] == [10.0 - k for k in range(10)] and xs_h[10] == 0.0, "Huber iterates")
+check(all(abs(huber(xs_h[k]) - (9.5 - k)) < 1e-12 for k in range(10)), "h(x_k) = 9.5 - k")
+close(50 / 9, 5.56, "50/9", tol=1e-3)
+for k in range(1, 13):
+    check(huber(xs_h[k]) <= 100 / (2 * k), "thm-gd-convex on Huber")
+# thm-gd-convex on random convex quadratics with zero eigenvalues (not strongly convex).
+for _ in range(20):
+    Q = rng.normal(size=(5, 3)); A = Q @ Q.T            # rank 3, positive semidefinite
+    thstar = rng.normal(size=5); b = A @ thstar
+    Lq = np.linalg.eigvalsh(A)[-1]
+    fq_ = lambda t: 0.5 * t @ A @ t - b @ t
+    th0 = rng.normal(size=5)
+    traj = gd(lambda t: A @ t - b, th0, 1 / Lq, 300)
+    fstar = fq_(thstar)
+    dists = [np.linalg.norm(t - thstar) for t in traj]
+    check(all(d1 <= d0 + 1e-12 for d0, d1 in zip(dists, dists[1:])), "distance never increases")
+    for k in (1, 10, 100, 300):
+        check(fq_(traj[k]) - fstar <= Lq * dists[0]**2 / (2 * k) + 1e-10, "thm-gd-convex on a quadratic")
+```
+
+## Strong convexity {#sec-gd-strong-convexity}
+
+The $1/k$ rate of @thm-gd-convex is slow, and in @exm-gd-bowl gradient
+descent did much better: every coordinate shrank by a fixed factor at
+every step. The reason is that $x^2 + 3y^2$ curves upwards in every
+direction, by at least a fixed amount. Its graph lies above every
+tangent plane by a definite margin: for any $\mathbf{x}$ and
+$\mathbf{y}$,
+$$
+f(\mathbf{y}) - f(\mathbf{x}) - \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
+= (y_1 - x_1)^2 + 3(y_2 - x_2)^2 \ge \|\mathbf{y} - \mathbf{x}\|^2 ,
+$$
+so the gap between the graph and the tangent plane grows at least like
+the squared distance. The definition writes the margin as
+$\frac{\mu}{2}\|\mathbf{y} - \mathbf{x}\|^2$, so here $\mu = 2$, the
+smaller diagonal entry of the Hessian $\operatorname{diag}(2, 6)$.
+
+The Huber function of @exm-gd-huber has no such margin. For $x > 1$
+its graph is a straight line, which coincides with its own tangent: at
+$x = 2$ and $y = 3$, $h(3) - h(2) - h'(2)(3 - 2) = 2.5 - 1.5 - 1 = 0$.
+There gradient descent covered only one unit per step.
+
+::: {#def-strongly-convex}
+## Strongly convex function
+
+Let $\mu > 0$. A differentiable function
+$f\colon\mathbb{R}^n\to\mathbb{R}$ is *$\mu$-strongly convex* if
+$$
+f(\mathbf{y}) \ge f(\mathbf{x}) + \nabla f(\mathbf{x})\cdot(\mathbf{y} - \mathbf{x})
++ \frac{\mu}{2}\|\mathbf{y} - \mathbf{x}\|^2
+\quad\text{for all } \mathbf{x}, \mathbf{y} \in \mathbb{R}^n .
+$$
+:::
+
+Compared with @eq-gd-tangent, the graph must clear each tangent plane
+by a bowl of curvature $\mu$. A strongly convex function is therefore
+convex, by @thm-convex-first-order. By
+@thm-convex-hessian, a twice continuously differentiable function is
+$\mu$-strongly convex when every eigenvalue of its Hessian is at least
+$\mu$ at every point. The quadratic
+$\frac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta}$
+with $A$ symmetric is $\mu$-strongly convex when the smallest eigenvalue
+of $A$ is $\mu > 0$, and $x^2 + 3y^2$ is $2$-strongly convex and
+$6$-smooth.
+
+::: {#lem-gradient-domination}
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $\mu$-strongly convex with a minimiser $\boldsymbol{\theta}^*$,
+and $f^* = f(\boldsymbol{\theta}^*)$. For every $\mathbf{x}$,
+$$
+\frac{\mu}{2}\|\mathbf{x} - \boldsymbol{\theta}^*\|^2 \le f(\mathbf{x}) - f^*
+\le \frac{1}{2\mu}\|\nabla f(\mathbf{x})\|^2 .
+$$
+In particular, $\boldsymbol{\theta}^*$ is the only minimiser.
+:::
+
+::: {.proof}
+For the left inequality, put $\boldsymbol{\theta}^*$ in place of
+$\mathbf{x}$ and $\mathbf{x}$ in place of $\mathbf{y}$ in the
+definition, and use $\nabla f(\boldsymbol{\theta}^*) = \mathbf{0}$
+(@thm-critical-point). For
+the right inequality, fix $\mathbf{x}$, write
+$\mathbf{g} = \nabla f(\mathbf{x})$, and complete the square:
+$$
+f(\mathbf{x}) + \mathbf{g}\cdot(\mathbf{y} - \mathbf{x}) + \frac{\mu}{2}\|\mathbf{y} - \mathbf{x}\|^2
+= f(\mathbf{x}) - \frac{\|\mathbf{g}\|^2}{2\mu}
+  + \frac{\mu}{2}\Bigl\|\mathbf{y} - \mathbf{x} + \frac{\mathbf{g}}{\mu}\Bigr\|^2
+\ge f(\mathbf{x}) - \frac{\|\mathbf{g}\|^2}{2\mu} .
+$$
+By the definition with $\mathbf{y} = \boldsymbol{\theta}^*$, $f^*$ is
+at least the left side, hence at least
+$f(\mathbf{x}) - \|\mathbf{g}\|^2/(2\mu)$. If $\mathbf{x}$ is another
+minimiser, the left inequality gives
+$\|\mathbf{x} - \boldsymbol{\theta}^*\|^2 \le 0$.
+:::
+
+The right inequality says that the gradient cannot be small unless $f$
+is close to its minimum. That fails for $\cos$, where the gradient is
+zero at every maximum, and for the Huber function, whose derivative is
+$1$ at every $x > 1$ while the gap $h(x) - h(0) = x - \frac12$ grows
+without bound. It is the extra
+ingredient in the next theorem. By @cor-gd-decrease, a step with
+$\eta \le 1/L$ lowers $f$ by at least
+$\frac{\eta}{2}\|\nabla f\|^2$, and by the right inequality this is at
+least $\eta\mu\,(f - f^*)$. So every step removes at least the fixed
+fraction $\eta\mu$ of the remaining gap $f - f^*$, and the gap decays
+at least as fast as the solution $(1 - \eta\mu)^k u_0$ of the
+first-order recurrence $u_{k+1} = (1 - \eta\mu)u_k$.
+
+::: {#thm-gd-strongly-convex}
+## Gradient descent on strongly convex functions
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and $\mu$-strongly
+convex, with a minimiser $\boldsymbol{\theta}^*$ and
+$f^* = f(\boldsymbol{\theta}^*)$. Run gradient descent with
+$0 < \eta \le 1/L$. Then $0 \le 1 - \eta\mu < 1$, and for every $k$,
+$$
+f(\boldsymbol{\theta}_k) - f^* \le (1 - \eta\mu)^k\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr),
+\qquad
+\|\boldsymbol{\theta}_k - \boldsymbol{\theta}^*\|^2 \le \frac{2}{\mu}(1 - \eta\mu)^k\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr).
+$$
+With $\eta = 1/L$ the factor is $1 - 1/\kappa$, where $\kappa = L/\mu$.
+:::
+
+::: {.proof}
+@exr-ch5-mu-le-l shows that $\mu \le L$, so $0 < \eta\mu \le \mu/L \le 1$.
+By @cor-gd-decrease and @lem-gradient-domination,
+$$
+f(\boldsymbol{\theta}_{k+1}) - f^*
+\le f(\boldsymbol{\theta}_k) - f^* - \frac{\eta}{2}\|\nabla f(\boldsymbol{\theta}_k)\|^2
+\le f(\boldsymbol{\theta}_k) - f^* - \eta\mu\bigl(f(\boldsymbol{\theta}_k) - f^*\bigr) .
+$$
+So each step multiplies $f - f^*$ by at most $1 - \eta\mu$, and
+induction on $k$ gives the first inequality. The second follows from
+the first and the left inequality of @lem-gradient-domination.
+:::
+
+An error bound of the form $Cr^k$ with $0 \le r < 1$ is called
+*linear convergence* with rate $r$. The name describes the logarithm
+of the bound, $\log_{10}C - k\log_{10}(1/r)$, which falls linearly in
+$k$: each step adds about $\log_{10}(1/r)$ correct decimal digits. The
+$1/k$ bound of @thm-gd-convex is slower, since each extra correct digit
+multiplies the number of steps by ten.
+
+The rate $1 - \eta\mu$ is smallest at the longest allowed step,
+$\eta = 1/L$. That step suits the steepest direction, where the
+curvature can be as large as $L$. In a direction where the curvature
+is only $\mu$ it removes just the fraction $\mu/L$ of the gap. So the
+ratio of the two bounds sets the speed.
+
+::: {#def-condition-number}
+## Condition number
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and
+$\mu$-strongly convex, where $L$ is the smallest constant and $\mu$ the
+largest constant for which these hold. The *condition number* of $f$
+is $\kappa = L/\mu$.
+:::
+
+Both constants exist because the inequalities in @def-l-smooth and
+@def-strongly-convex are not strict, and $\kappa \ge 1$ by
+@exr-ch5-mu-le-l. A condition number close to $1$ means that $f$
+curves by about the same amount in every direction, and its level
+curves are close to circles. A large condition number means a long,
+narrow valley. @thm-gd-strongly-convex holds for any valid pair of
+constants, and the best pair gives the best bound. Since
+$1 - x \le e^{-x}$, after $k$ steps with $\eta = 1/L$ the gap
+$f - f^*$ has shrunk by at least $e^{-k/\kappa}$, and
+$k = \kappa\ln(1/\varepsilon)$ steps reduce it by a factor
+$\varepsilon$. A function whose curvature varies a lot between
+directions needs many steps.
+
+::: {#exm-gd-strong-bowl}
+For $f(x, y) = x^2 + 3y^2$, $\mu = 2$ and $L = 6$, so $\kappa = 3$, and
+with $\eta = 1/6$ the theorem promises that $f$ falls by a factor of at
+least $1 - 1/3 = 2/3$ per step. The iteration is
+$x_{k+1} = \frac23 x_k$, $y_{k+1} = 0$, so from $(1, 1)$,
+$f(\boldsymbol{\theta}_k) = (\frac23)^{2k} = (\frac49)^k$ for $k \ge 1$:
+a factor of $\frac49$ per step, better than the guaranteed
+$\frac23$.
+:::
+
+```{python}
+#| include: false
+it = gd(grad_bowl, [1, 1], 1 / 6, 20)
+fvals = np.array([f_bowl(p) for p in it])
+close(fvals[1:], (4 / 9)**np.arange(1, 21), "f = (4/9)^k")
+check(all(fvals[k] <= (2 / 3)**k * fvals[0] + 1e-15 for k in range(21)), "thm-gd-strongly-convex, f")
+check(all(np.sum(it[k]**2) <= (2 / 2) * (2 / 3)**k * fvals[0] + 1e-15 for k in range(21)),
+      "thm-gd-strongly-convex, distance")
+# The lead-in to strong convexity: the gap above the tangent plane of the bowl.
+x1_, x2_, y1_, y2_ = sp.symbols("x1 x2 y1 y2", real=True)
+fbx = lambda a, b: a**2 + 3 * b**2
+gap = fbx(y1_, y2_) - fbx(x1_, x2_) - (2 * x1_ * (y1_ - x1_) + 6 * x2_ * (y2_ - x2_))
+sym_equal(gap, (y1_ - x1_)**2 + 3 * (y2_ - x2_)**2, "gap above the tangent plane")
+# lem-gradient-domination for the bowl (mu = 2) at random points.
+for p in rng.normal(size=(500, 2)) * 3:
+    check(p @ p <= f_bowl(p) + 1e-12 and f_bowl(p) <= grad_bowl(p) @ grad_bowl(p) / 4 + 1e-12,
+          "gradient domination")
+# Completing the square, symbolically.
+g1, g2, d1_, d2_, mu_ = sp.symbols("g1 g2 d1 d2 mu", positive=True)
+lhs = g1*d1_ + g2*d2_ + mu_/2*(d1_**2 + d2_**2)
+rhs = -(g1**2 + g2**2)/(2*mu_) + mu_/2*((d1_ + g1/mu_)**2 + (d2_ + g2/mu_)**2)
+sym_equal(lhs, rhs, "completing the square")
+check(all(1 - t <= np.exp(-t) for t in np.linspace(0, 1, 101)), "1 - x <= e^-x")
+# The Huber function has no strong-convexity margin.
+check(huber(3) == 2.5 and huber(2) == 1.5 and dhuber(2) == 1 and huber(3) - huber(2) - dhuber(2) * 1 == 0,
+      "Huber coincides with its tangent: 2.5 - 1.5 - 1 = 0")
+check(all(abs(huber(v) - huber(0) - (v - 0.5)) < 1e-12 and dhuber(v) == 1 for v in np.linspace(1.01, 50, 200)),
+      "Huber gap x - 1/2 with derivative 1")
+# Each step removes the fraction eta mu of the gap: the bowl with eta = 1/6, mu = 2.
+for p in rng.normal(size=(200, 2)) * 3:
+    q = p - grad_bowl(p) / 6
+    check(f_bowl(p) - f_bowl(q) >= (1 / 6) * 2 * f_bowl(p) - 1e-12, "step removes the fraction eta mu")
+# Linear convergence: the logarithm of C r^k is log C - k log(1/r).
+C_, r_, k_ = sp.symbols("C r k", positive=True)
+sym_equal(sp.expand_log(sp.log(C_ * r_**k_, 10), force=True), sp.log(C_, 10) - k_ * sp.log(1 / r_, 10),
+          "log of C r^k")
+```
+
+## Quadratic functions and the condition number {#sec-gd-quadratic}
+
+Near a minimum, a twice differentiable function is close to its
+second-order Taylor polynomial (@eq-taylor-peano), a quadratic. On a
+quadratic, gradient descent can be solved exactly. @exm-gd-bowl
+already did this for $x^2 + 3y^2$: each coordinate obeyed its own
+first-order recurrence, with factors $1 - 2\eta$ and $1 - 6\eta$,
+where $2$ and $6$ are the eigenvalues of the Hessian. For a general
+quadratic the coordinates are mixed together, but in the basis of
+eigenvectors of the Hessian they separate in the same way.
+
+So let $A$ be a symmetric $n\times n$ matrix whose eigenvalues all lie
+in an interval $[\mu, L]$ with $\mu > 0$, where $\mu$ and $L$ are the
+smallest and largest eigenvalues. By @thm-spectral, $A$ has an
+orthonormal basis of eigenvectors $\mathbf{u}_1, \dots, \mathbf{u}_n$,
+with $A\mathbf{u}_i = \lambda_i\mathbf{u}_i$. Let
+$\mathbf{b} \in \mathbb{R}^n$ and
+$$
+f(\boldsymbol{\theta}) = \tfrac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta} .
+$$ {#eq-gd-quadratic}
+By @exm-smooth-quadratic and @thm-convex-hessian, $f$ is $L$-smooth
+and $\mu$-strongly convex. These are the best constants. No smaller
+$L$ works, by @exm-smooth-quadratic. No larger $\mu$ works, because
+$f(\mathbf{x} + \mathbf{d}) - f(\mathbf{x}) - \nabla f(\mathbf{x})\cdot\mathbf{d} = \frac12\mathbf{d}^\top A\mathbf{d}$,
+which is exactly $\frac{\mu}{2}\|\mathbf{d}\|^2$ when $\mathbf{d}$ is an
+eigenvector for the eigenvalue $\mu$. So the condition number of $f$
+is $\kappa = L/\mu$, the ratio of the largest to the smallest
+eigenvalue of $A$; it is also called the condition number of the
+matrix $A$. The matrix $A$ is invertible, because $0$ is
+not an eigenvalue, so $\boldsymbol{\theta}^* = A^{-1}\mathbf{b}$ is the
+only point where $\nabla f(\boldsymbol{\theta}) = A\boldsymbol{\theta} - \mathbf{b}$
+is zero, and by @cor-convex-stationary it is the minimiser. Since
+$\mathbf{b} = A\boldsymbol{\theta}^*$, the gradient is
+$A(\boldsymbol{\theta} - \boldsymbol{\theta}^*)$.
+
+::: {#thm-gd-quadratic}
+## Gradient descent on a quadratic
+
+Let $A$ be a real symmetric $n\times n$ matrix with smallest
+eigenvalue $\mu > 0$ and largest eigenvalue $L$, with orthonormal
+eigenvectors $\mathbf{u}_1, \dots, \mathbf{u}_n$ and eigenvalues
+$\lambda_1, \dots, \lambda_n$. Let $\mathbf{b} \in \mathbb{R}^n$, let
+$f$ be the quadratic @eq-gd-quadratic, with minimiser
+$\boldsymbol{\theta}^* = A^{-1}\mathbf{b}$, and run gradient descent
+with step $\eta > 0$ from any $\boldsymbol{\theta}_0$. Let
+$\mathbf{e}_k = \boldsymbol{\theta}_k - \boldsymbol{\theta}^*$ be the
+error. Then:
+
+1. $\mathbf{e}_{k+1} = (I - \eta A)\,\mathbf{e}_k$, and if
+   $\mathbf{e}_0 = \sum_i c_i\mathbf{u}_i$ then
+   $\mathbf{e}_k = \sum_i (1 - \eta\lambda_i)^k c_i\,\mathbf{u}_i$.
+2. $\|\mathbf{e}_k\| \le \rho(\eta)^k\|\mathbf{e}_0\|$, where
+   $\rho(\eta) = \max_i|1 - \eta\lambda_i| = \max\bigl(|1 - \eta\mu|, |1 - \eta L|\bigr)$,
+   and equality holds for some non-zero $\mathbf{e}_0$.
+3. $\boldsymbol{\theta}_k \to \boldsymbol{\theta}^*$ for every
+   $\boldsymbol{\theta}_0$ if and only if $\eta < 2/L$.
+4. $\rho(\eta)$ is smallest at $\eta = 2/(\mu + L)$, where
+   $$
+   \rho = \frac{L - \mu}{L + \mu} = \frac{\kappa - 1}{\kappa + 1},
+   \qquad \kappa = \frac{L}{\mu} .
+   $$
+:::
+
+::: {.proof}
+(1) $\mathbf{e}_{k+1} = \mathbf{e}_k - \eta A(\boldsymbol{\theta}_k - \boldsymbol{\theta}^*)
+= (I - \eta A)\mathbf{e}_k$. Since $(I - \eta A)\mathbf{u}_i = (1 - \eta\lambda_i)\mathbf{u}_i$,
+each application of $I - \eta A$ multiplies the coefficient of
+$\mathbf{u}_i$ by $1 - \eta\lambda_i$.
+
+(2) Each $\lambda_i$ lies in $[\mu, L]$, so
+$1 - \eta L \le 1 - \eta\lambda_i \le 1 - \eta\mu$, and
+$|1 - \eta\lambda_i|$ is at most the larger of $|1 - \eta\mu|$ and
+$|1 - \eta L|$; both are attained, since $\mu$ and $L$ are eigenvalues. By
+(1), $\|\mathbf{e}_k\|^2 = \sum_i (1 - \eta\lambda_i)^{2k}c_i^2 \le \rho^{2k}\sum_i c_i^2$.
+If $|1 - \eta\lambda_j| = \rho$, then $\mathbf{e}_0 = \mathbf{u}_j$
+gives equality.
+
+(3) If $\eta < 2/L$ then $-1 < 1 - \eta L \le 1 - \eta\lambda_i \le 1 - \eta\mu < 1$
+for every $i$, so $\rho < 1$ and $\mathbf{e}_k \to \mathbf{0}$ by (2).
+If $\eta \ge 2/L$ then $1 - \eta L \le -1$, and the starting error
+$\mathbf{e}_0 = \mathbf{u}_j$, an eigenvector with eigenvalue $L$, gives $\|\mathbf{e}_k\| = |1 - \eta L|^k \ge 1$
+for every $k$.
+
+(4) Let $a = 1 - \eta\mu$ and $b = 1 - \eta L$, so that $b \le a$.
+Then $\max(|a|, |b|) = \max(a, -a, b, -b) = \max(a, -b)$, because
+$b \le a$ and $-a \le -b$. So
+$\rho(\eta) = \max(1 - \eta\mu,\ \eta L - 1)$. The first term
+decreases and the second increases with $\eta$, and they are equal
+when $\eta = 2/(\mu + L)$, where both are $(L - \mu)/(L + \mu)$. For a
+smaller $\eta$ the first term is larger than this, and for a larger
+$\eta$ the second is. Dividing the numerator and denominator by $\mu$
+gives $(\kappa - 1)/(\kappa + 1)$.
+:::
+
+Part 1 says that one step of gradient descent multiplies the error by
+the matrix $I - \eta A$, so $\mathbf{e}_k = (I - \eta A)^k\mathbf{e}_0$:
+a first-order recurrence, with a matrix in place of a number. Entry
+$(i, j)$ of $I - \eta A$ is $\delta_{ij} - \eta a_{ij}$, where
+$\delta_{ij}$ is $1$ if $i = j$ and $0$ otherwise. It is the amount by
+which coordinate $j$ of the old error contributes to coordinate $i$ of
+the new one. For $x^2 + 3y^2$, $A = \operatorname{diag}(2, 6)$ and
+$I - \eta A = \operatorname{diag}(1 - 2\eta, 1 - 6\eta)$: the
+off-diagonal entries are zero, so the coordinates never mix, and each
+is multiplied by its own factor, as in @exm-gd-bowl. For a general
+symmetric $A$ the off-diagonal entries mix the coordinates, but
+$I - \eta A$ has the same eigenvectors as $A$, with eigenvalues
+$1 - \eta\lambda_i$. In the basis $\mathbf{u}_1, \dots, \mathbf{u}_n$
+it acts as a diagonal matrix again: the eigenvalue $1 - \eta\lambda_i$
+is the factor by which one step multiplies the component of the error
+along $\mathbf{u}_i$. The number $\rho(\eta)$ is the largest absolute
+value of an eigenvalue of $I - \eta A$, which is called the *spectral
+radius* of $I - \eta A$. A component whose factor is negative changes
+sign at every step.
+
+With $\eta = 1/L$, which @thm-gd-strongly-convex uses, $\rho = 1 - 1/\kappa$,
+and the gap $f - f^* = \frac12\mathbf{e}_k^\top A\mathbf{e}_k$ shrinks
+by at least $(1 - 1/\kappa)^2$ per step, better than the factor
+$1 - 1/\kappa$ that the general theorem guarantees. For large $\kappa$
+the best rate $(\kappa - 1)/(\kappa + 1) = 1 - 2/(\kappa + 1)$ is not
+much better. The number of steps needed to divide the error by $10^6$
+is about $\frac{\kappa}{2}\ln 10^6$, so it grows in proportion to the
+condition number.
+
+::: {#exm-gd-zigzag}
+## The zigzag
+
+Return to $f(x, y) = x^2 + 3y^2$ from @exm-steepest. Here
+$A = \operatorname{diag}(2, 6)$, $\mathbf{b} = \mathbf{0}$,
+$\boldsymbol{\theta}^* = \mathbf{0}$, $\mu = 2$, $L = 6$ and
+$\kappa = 3$. Gradient descent converges exactly when
+$0 < \eta < \frac13$, which matches @exm-gd-bowl: $\eta = 0.4$ is too
+large. The best fixed step is $\eta = 2/8 = \frac14$, with
+$\rho = \frac{3 - 1}{3 + 1} = \frac12$. Starting from $(1, 1)$, the
+factors are $1 - \frac{2}{4} = \frac12$ and $1 - \frac64 = -\frac12$, so
+$$
+\boldsymbol{\theta}_k = \Bigl(\bigl(\tfrac12\bigr)^k,\ \bigl(-\tfrac12\bigr)^k\Bigr):
+\quad (1, 1),\ \bigl(\tfrac12, -\tfrac12\bigr),\ \bigl(\tfrac14, \tfrac14\bigr),\ \bigl(\tfrac18, -\tfrac18\bigr),\ \dots
+$$
+The iterates bounce between the lines $y = x$ and $y = -x$, crossing
+the valley floor ($y = 0$) at every step. The first step has direction
+$-(1, 3)/\sqrt{10}$, the steepest-descent direction of @exm-steepest,
+and it overshoots in $y$. Consecutive steps make an angle whose
+cosine is $-0.8$, about $143°$. The distance to the minimum after $k$
+steps is $\sqrt2\,(\frac12)^k$, but the path walked has total length
+$\sum_k \frac14\|\nabla f(\boldsymbol{\theta}_k)\| = \sqrt{10}$,
+more than twice the straight-line distance $\sqrt2$.
+
+A narrower valley makes this worse. For $x^2 + 25y^2$, $\mu = 2$,
+$L = 50$ and $\kappa = 25$. The best step is $\eta = \frac{2}{52} = \frac1{26}$,
+the factors are $\frac{12}{13}$ and $-\frac{12}{13}$, and
+$\boldsymbol{\theta}_k = \bigl((\frac{12}{13})^k, (-\frac{12}{13})^k\bigr)$.
+Dividing the error by $10^6$ takes $173$ steps, against $20$ for
+$\kappa = 3$. @fig-gd-zigzag shows both runs.
+:::
+
+```{python}
+#| include: false
+it = gd(grad_bowl, [1, 1], 0.25, 40)
+ks = np.arange(41)
+close(it, np.stack([0.5**ks, (-0.5)**ks], axis=1), "zigzag iterates")
+steps_ = np.diff(it, axis=0)
+close(steps_[0] / np.linalg.norm(steps_[0]), -np.array([1, 3]) / np.sqrt(10), "first step direction")
+cosang = (steps_[:-1] * steps_[1:]).sum(axis=1)
+cosang /= np.linalg.norm(steps_[:-1], axis=1) * np.linalg.norm(steps_[1:], axis=1)
+close(cosang, -0.8, "cosine between consecutive steps")
+close(np.degrees(np.arccos(-0.8)), 143, "about 143 degrees", tol=2e-3)
+close(np.linalg.norm(it, axis=1), np.sqrt(2) * 0.5**ks, "distance sqrt2 (1/2)^k")
+L_, mu_ = sp.Integer(6), sp.Integer(2)
+check(2 / (mu_ + L_) == sp.Rational(1, 4) and (L_ - mu_) / (L_ + mu_) == sp.Rational(1, 2),
+      "eta* and rho for kappa = 3")
+kk = sp.symbols("k", integer=True, nonnegative=True)
+sym_equal(sp.summation(sp.Rational(1, 4) * sp.sqrt(40) * sp.Rational(1, 2)**kk, (kk, 0, sp.oo)),
+          sp.sqrt(10), "path length")
+close(np.linalg.norm(steps_, axis=1).sum(), np.sqrt(10), "numerical path length", tol=1e-9)
+check(np.sqrt(10) > 2 * np.sqrt(2), "more than twice the distance")
+# Convergence region 0 < eta < 1/3, on a grid of step sizes.
+for e in np.linspace(0.01, 0.6, 60):
+    check((max(abs(1 - 2 * e), abs(1 - 6 * e)) < 1) == (e < 1 / 3), "convergence iff eta < 1/3")
+# rho(eta) is minimised at 2/(mu + L), by grid search, for several (mu, L).
+for m_, Lm in [(2, 6), (2, 50), (1, 1.5), (0.1, 10)]:
+    es = np.linspace(1e-4, 2 / Lm, 200001)
+    rho = np.maximum(np.abs(1 - es * m_), np.abs(1 - es * Lm))
+    close(es[rho.argmin()], 2 / (m_ + Lm), "argmin of rho", tol=1e-4)
+    close(rho.min(), (Lm - m_) / (Lm + m_), "min of rho", tol=1e-6)
+# The narrow valley.
+it25 = gd(lambda p: np.array([2 * p[0], 50 * p[1]]), [1, 1], 1 / 26, 200)
+ks = np.arange(201)
+close(it25, np.stack([(12 / 13)**ks, (-12 / 13)**ks], axis=1), "narrow valley iterates", tol=1e-10)
+e25 = np.linalg.norm(it25, axis=1) / np.sqrt(2)
+check(e25[173] <= 1e-6 < e25[172], "173 steps divide the error by 10^6")
+check(0.5**20 <= 1e-6 < 0.5**19, "20 steps for kappa = 3")
+# thm-gd-quadratic (1) and (2) on random symmetric positive definite matrices.
+for _ in range(30):
+    Q = rng.normal(size=(4, 4)); A = Q @ Q.T + 0.1 * np.eye(4)
+    lam, U = np.linalg.eigh(A)
+    b = rng.normal(size=4); ths = np.linalg.solve(A, b)
+    e_ = rng.uniform(0.05, 2.2) / lam[-1]
+    th0 = rng.normal(size=4)
+    traj = gd(lambda t: A @ t - b, th0, e_, 25)
+    c = U.T @ (th0 - ths)
+    rho = max(abs(1 - e_ * lam[0]), abs(1 - e_ * lam[-1]))
+    close(rho, np.abs(1 - e_ * lam).max(), "rho is attained at an end")
+    for k in (0, 1, 7, 25):
+        close(traj[k] - ths, U @ ((1 - e_ * lam)**k * c), "error formula", tol=1e-8)
+        check(np.linalg.norm(traj[k] - ths) <= rho**k * np.linalg.norm(th0 - ths) * (1 + 1e-9) + 1e-12,
+              "rate bound")
+    fq_ = lambda t: 0.5 * t @ A @ t - b @ t
+    close(fq_(traj[3]) - fq_(ths), 0.5 * (traj[3] - ths) @ A @ (traj[3] - ths), "f - f* = e^T A e / 2",
+          tol=1e-9)
+    # I - eta A: entries delta_ij - eta a_ij, eigenvectors u_i, eigenvalues 1 - eta lambda_i.
+    M_ = np.eye(4) - e_ * A
+    check(all(abs(M_[i, j] - ((i == j) - e_ * A[i, j])) < 1e-15 for i in range(4) for j in range(4)),
+          "entries of I - eta A")
+    close(M_ @ U, U * (1 - e_ * lam), "eigenpairs of I - eta A")
+    close(rho, np.abs(np.linalg.eigvalsh(M_)).max(), "rho is the spectral radius")
+    close(traj[5] - ths, np.linalg.matrix_power(M_, 5) @ (th0 - ths), "e_k = (I - eta A)^k e_0")
+    # The best strong convexity constant is the smallest eigenvalue: the gap along u_n.
+    xq = rng.normal(size=4); dq = 0.7 * U[:, 0]
+    close(fq_(xq + dq) - fq_(xq) - (A @ xq - b) @ dq, lam[0] / 2 * dq @ dq, "gap along u_n is mu/2 |d|^2")
+etaq = sp.symbols("eta", positive=True)
+check(sp.eye(2) - etaq * sp.diag(2, 6) == sp.diag(1 - 2 * etaq, 1 - 6 * etaq), "I - eta diag(2, 6)")
+dvq = sp.Matrix(sp.symbols("d1:4", real=True)); xvq = sp.Matrix(sp.symbols("x1:4", real=True))
+fq3 = lambda t: (t.T * A3 * t)[0, 0] / 2 - (b3.T * t)[0, 0]
+sym_equal(fq3(xvq + dvq) - fq3(xvq) - ((A3 * xvq - b3).T * dvq)[0, 0], (dvq.T * A3 * dvq)[0, 0] / 2,
+          "gap above the tangent plane of a quadratic")
+```
+
+```{python}
+#| label: fig-gd-zigzag
+#| fig-cap: "Gradient descent with the best fixed step on $x^2 + 3y^2$ (left, $\\kappa = 3$, $\\eta = 1/4$) and on $x^2 + 25y^2$ (right, $\\kappa = 25$, $\\eta = 1/26$), starting from $(1, 1)$. The grey curves are level curves. Both runs cross the valley floor at every step, and the narrower valley needs many more steps."
+#| fig-width: 8
+#| fig-height: 3.6
+fig, axes = plt.subplots(1, 2, figsize=(8, 3.6))
+for ax, (c2, eta_, n_) in zip(axes, [(3, 0.25, 8), (25, 1 / 26, 40)]):
+    grid_ = np.linspace(-1.2, 1.2, 400)
+    X_, Y_ = np.meshgrid(grid_, grid_)
+    ax.contour(X_, Y_, X_**2 + c2 * Y_**2, levels=np.geomspace(0.02, 30, 14),
+               colors="0.75", linewidths=0.7)
+    path = gd(lambda p: np.array([2 * p[0], 2 * c2 * p[1]]), [1, 1], eta_, n_)
+    ax.plot(path[:, 0], path[:, 1], "-o", color="black", markersize=3, linewidth=1)
+    ax.plot(0, 0, "x", color="black")
+    ax.set_title(f"$x^2 + {c2}y^2$, first {n_} steps", fontsize=10)
+    ax.set_aspect("equal")
+    ax.set_xlim(-1.2, 1.2)
+    ax.set_ylim(-1.2, 1.2)
+    ax.set_xticks([-1, 0, 1])
+    ax.set_yticks([-1, 0, 1])
+fig.tight_layout()
+plt.show()
+```
+
+The zigzag comes from a single step size serving every direction. In
+the steep direction the step overshoots and the error changes sign; in
+the shallow direction it moves only part of the way. No fixed $\eta$
+suits both when $\kappa$ is large. @sec-stochastic returns to this
+problem with momentum, and with methods that choose a different step
+for each coordinate.
+
+## Gradient flow {#sec-gd-flow}
+
+Run gradient descent on $x^2 + 3y^2$ from $(1, 1)$ with smaller and
+smaller steps, always for $1/\eta$ steps, so that the total of the step
+sizes is $1$. With $\eta = 0.1$ the last point is
+$(0.8^{10}, 0.4^{10}) \approx (0.1074, 0.000105)$; with $\eta = 0.01$
+it is $(0.98^{100}, 0.94^{100}) \approx (0.1326, 0.00205)$; with
+$\eta = 0.001$ it is $(0.998^{1000}, 0.994^{1000}) \approx (0.1351, 0.00243)$.
+The points settle down, towards $(e^{-2}, e^{-6}) \approx (0.1353, 0.00248)$.
+Think of $\eta$ as a small interval of time, and of
+$\boldsymbol{\theta}_k$ as the position at time $k\eta$. Rearranged,
+@eq-gd reads
+$$
+\frac{\boldsymbol{\theta}_{k+1} - \boldsymbol{\theta}_k}{\eta} = -\nabla f(\boldsymbol{\theta}_k) :
+$$
+the left side is the average velocity over one interval, a difference
+quotient, so the position changes at rate $-\nabla f$. As
+$\eta \to 0$ the difference quotient becomes a derivative, and the
+iterates trace out the solution of a differential equation.
+
+::: {#def-gradient-flow}
+## Gradient flow
+
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be differentiable. A
+*gradient flow* of $f$ is a differentiable path
+$\boldsymbol{\theta}\colon[0, \infty)\to\mathbb{R}^n$ with
+$$
+\frac{d\boldsymbol{\theta}}{dt} = -\nabla f\bigl(\boldsymbol{\theta}(t)\bigr) .
+$$ {#eq-gd-flow}
+:::
+
+The path moves at every instant in the direction of steepest descent,
+with speed equal to the length of the gradient. This is a system of
+$n$ first-order differential equations, one for each coordinate. When
+$\nabla f$ is Lipschitz continuous, it has exactly one solution for
+each starting point $\boldsymbol{\theta}(0)$, by the existence and
+uniqueness theorem for such systems, which the book does not prove
+(see @stoer2002introduction [ch. 7]). The function decreases along
+the solution.
+
+::: {#thm-flow-decrease}
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be differentiable and
+$\boldsymbol{\theta}$ a gradient flow of $f$. Then
+$$
+\frac{d}{dt}f\bigl(\boldsymbol{\theta}(t)\bigr) = -\bigl\|\nabla f\bigl(\boldsymbol{\theta}(t)\bigr)\bigr\|^2 \le 0,
+$$
+so $f(\boldsymbol{\theta}(t))$ never increases, and it strictly
+decreases on any interval where the gradient is not zero. If $f$ is
+also $\mu$-strongly convex with minimiser $\boldsymbol{\theta}^*$ and
+$f^* = f(\boldsymbol{\theta}^*)$, then
+$$
+f\bigl(\boldsymbol{\theta}(t)\bigr) - f^* \le e^{-2\mu t}\bigl(f(\boldsymbol{\theta}(0)) - f^*\bigr) .
+$$
+:::
+
+::: {.proof}
+By the chain rule (@thm-chain-rule), the derivative of
+$t \mapsto f(\boldsymbol{\theta}(t))$ is
+$\nabla f(\boldsymbol{\theta}(t))\cdot\boldsymbol{\theta}'(t)$, which
+is $-\|\nabla f(\boldsymbol{\theta}(t))\|^2$ by @eq-gd-flow. A
+function whose derivative is never positive never increases, and one
+with a negative derivative strictly decreases.
+
+For the second part, let $u(t) = f(\boldsymbol{\theta}(t)) - f^*$. By
+@lem-gradient-domination, $u'(t) = -\|\nabla f\|^2 \le -2\mu u(t)$.
+Multiply by the integrating factor $e^{2\mu t}$:
+$$
+\frac{d}{dt}\bigl(e^{2\mu t}u(t)\bigr) = e^{2\mu t}\bigl(u'(t) + 2\mu u(t)\bigr) \le 0 ,
+$$
+so $e^{2\mu t}u(t) \le u(0)$.
+:::
+
+*Euler's method* approximates the solution of
+$\boldsymbol{\theta}' = F(\boldsymbol{\theta})$ by stepping along the
+tangent: with step $h$, $\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k + hF(\boldsymbol{\theta}_k)$,
+and $\boldsymbol{\theta}_k$ approximates $\boldsymbol{\theta}(kh)$. With
+$F = -\nabla f$ and $h = \eta$ this is @eq-gd. Gradient descent is
+Euler's method for the gradient flow, and the learning rate is the time
+step.
+
+On the quadratic @eq-gd-quadratic the flow can be solved exactly. The
+error $\mathbf{e}(t) = \boldsymbol{\theta}(t) - \boldsymbol{\theta}^*$
+satisfies $\mathbf{e}' = -A\mathbf{e}$, and
+$\mathbf{e}(t) = \sum_i e^{-\lambda_i t}c_i\mathbf{u}_i$ is the
+solution, since differentiating multiplies the coefficient of
+$\mathbf{u}_i$ by $-\lambda_i$. Gradient descent replaces
+$e^{-\lambda_i\eta k}$, the value at time $t = \eta k$, by
+$(1 - \eta\lambda_i)^k$. When $\eta\lambda_i$ is small the two are
+close, because $1 - x \approx e^{-x}$ for small $x$. When
+$\eta\lambda_i > 1$ the factor $1 - \eta\lambda_i$ is negative, and
+Euler's method overshoots a solution that never changes sign; when
+$\eta\lambda_i \ge 2$ it diverges, although the flow decays. The
+zigzag of @exm-gd-zigzag is this overshoot in the direction with the
+largest eigenvalue. The condition $\eta < 2/L$ of @thm-gd-quadratic is
+the condition $|1 - \eta L| < 1$ under which Euler's method for the
+equation $y' = -Ly$ produces a sequence that decays, as the solution
+$y(t) = y(0)e^{-Lt}$ does; numerical analysts call it the *stability*
+condition for that equation.
+
+::: {#exm-flow-bowl}
+For $x^2 + 3y^2$ from $(1, 1)$, the flow is
+$\boldsymbol{\theta}(t) = (e^{-2t}, e^{-6t})$, which follows the curve
+$y = x^3$ into the origin without crossing the $x$-axis. Gradient
+descent with $\eta = \frac14$ gives $y_k = (-\frac12)^k$ where the flow
+has $y(\frac{k}{4}) = e^{-3k/2}$: the flow's $y$-coordinate stays
+positive, and the iterates' changes sign at every step. The smaller
+steps at the start of this section track the flow, and their last
+points approach its value $(e^{-2}, e^{-6})$ at time $1$.
+:::
+
+```{python}
+#| include: false
+t_ = sp.symbols("t", real=True)
+flow = sp.Matrix([sp.exp(-2 * t_), sp.exp(-6 * t_)])
+gradf = sp.Matrix([2 * flow[0], 6 * flow[1]])
+check(sp.simplify(sp.diff(flow, t_) + gradf) == sp.zeros(2, 1), "flow solves the ODE")
+sym_equal(flow[1], flow[0]**3, "y = x^3")
+sym_equal(sp.diff(flow[0]**2 + 3 * flow[1]**2, t_), -(gradf.T * gradf)[0, 0],
+          "derivative of f along the flow")
+sym_equal(flow[1].subs(t_, kk / 4), sp.exp(-sp.Rational(3, 2) * kk), "y(k/4)")
+# The strongly convex flow bound with mu = 2: f(theta(t)) <= e^{-4t} f(theta(0)).
+for tt in np.linspace(0, 3, 61):
+    check(np.exp(-4 * tt) + 3 * np.exp(-12 * tt) <= np.exp(-4 * tt) * 4 + 1e-15, "flow rate bound")
+for e_, n_, want in ((0.1, 10, ["0.1074", "0.000105"]), (0.01, 100, ["0.1326", "0.00205"]),
+                     (0.001, 1000, ["0.1351", "0.00243"])):
+    it = gd(grad_bowl, [1, 1], e_, n_)
+    close(it[n_], [(1 - 2 * e_)**n_, (1 - 6 * e_)**n_], "Euler iterates")
+    check([f"{it[n_, 0]:.4g}", f"{it[n_, 1]:.3g}"] == want, "rounded Euler values")
+check(abs(np.exp(-2) - 0.1353) < 5e-5 and abs(np.exp(-6) - 0.00248) < 5e-6, "flow values")
+maxima_zero("diff(exp(-2*t)^2 + 3*exp(-6*t)^2, t) + (2*exp(-2*t))^2 + (6*exp(-6*t))^2",
+            "f decreases at rate ||grad||^2 in Maxima")
+```
+
+## Notes and further reading {#sec-gd-notes}
+
+@nesterov2018lectures [ch. 2] develops the theory of smooth convex
+optimisation in detail. It proves that no method that uses only
+gradients can beat a rate of order $1/k^2$ on all convex $L$-smooth
+functions, and constructs accelerated methods that achieve it, so the
+$1/k$ rate of @thm-gd-convex is not the best possible.
+@boyd2004convex [ch. 3] covers convex functions, including the
+first-order and second-order conditions, and
+@boyd2004convex [sec. 9.3] analyses gradient descent with line
+searches, with worked examples showing the effect of the condition
+number. @nocedal2006numerical [ch. 3] treats line searches, which
+choose a step at each iteration instead of fixing $\eta$
+(@exr-ch5-line-search is the simplest case), and the convergence rate of
+steepest descent on quadratics. @deisenroth2020mathematics [ch. 7]
+introduces these methods from the point of view of machine learning.
+
+## Exercises {#sec-gd-exercises}
+
+::: {#exr-ch5-iterates}
+Let $f(x, y) = x^2 + 3y^2$, $\boldsymbol{\theta}_0 = (1, 1)$ and
+$\eta > 0$.
+
+(a) For which $\eta$ does gradient descent converge to $(0, 0)$?
+
+(b) For which $\eta$ does $y_k$ change sign at every step?
+
+(c) Find $\boldsymbol{\theta}_3$ for $\eta = 0.3$, and describe what
+happens when $\eta = \frac13$.
+:::
+
+::: {#exr-ch5-softplus}
+Let $f(x) = \ln(1 + e^x)$, as in @exm-softplus.
+
+(a) Show that no constant smaller than $\frac14$ makes $f$ $L$-smooth.
+
+(b) Run gradient descent with $\eta = 4$ from $x_0 = 0$. Find $x_1$,
+and show that $x_k$ decreases at every step and that $x_k \to -\infty$.
+:::
+
+::: {#exr-ch5-line-search}
+*Exact line search* chooses each step length to minimise $f$ along the
+gradient direction: $\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k - t_k\nabla f(\boldsymbol{\theta}_k)$,
+where $t_k > 0$ minimises $\varphi(t) = f\bigl(\boldsymbol{\theta}_k - t\nabla f(\boldsymbol{\theta}_k)\bigr)$.
+
+(a) For $f(x, y) = x^2 + 3y^2$ and $\boldsymbol{\theta}_0 = (1, 1)$,
+find $t_0$ and $\boldsymbol{\theta}_1$.
+
+(b) Show that for any differentiable $f$,
+$\nabla f(\boldsymbol{\theta}_{k+1})\cdot\nabla f(\boldsymbol{\theta}_k) = 0$:
+consecutive steps are perpendicular.
+:::
+
+::: {#exr-ch5-least-squares}
+Let $X$ be an $m\times n$ matrix, $\mathbf{y} \in \mathbb{R}^m$ and
+$f(\boldsymbol{\theta}) = \frac12\|X\boldsymbol{\theta} - \mathbf{y}\|^2$.
+
+(a) Show that $\nabla f(\boldsymbol{\theta}) = X^\top(X\boldsymbol{\theta} - \mathbf{y})$
+and that the Hessian is $X^\top X$.
+
+(b) Show that every eigenvalue of $X^\top X$ is non-negative. Deduce
+that $f$ is convex and $L$-smooth, with $L$ the largest eigenvalue of
+$X^\top X$.
+
+(c) Fitting a line $\theta_1 + \theta_2 s$ to data at $s = 0, 1, 2$
+gives $X = \begin{pmatrix}1&1&1\\0&1&2\end{pmatrix}^\top$. Find the
+eigenvalues of $X^\top X$ and the condition number of $f$.
+:::
+
+::: {#exr-ch5-strong-equivalent}
+Let $f$ be differentiable and $\mu > 0$. Show that $f$ is
+$\mu$-strongly convex if and only if
+$g(\mathbf{x}) = f(\mathbf{x}) - \frac{\mu}{2}\|\mathbf{x}\|^2$ is
+convex.
+:::
+
+::: {#exr-ch5-mu-le-l}
+Let $f\colon\mathbb{R}^n\to\mathbb{R}$ be $L$-smooth and $\mu$-strongly
+convex. Show that $\mu \le L$.
+:::
+
+::: {#exr-ch5-quadratic-2d}
+Let $A = \begin{pmatrix} 3 & 1\\ 1 & 3\end{pmatrix}$,
+$\mathbf{b} = (1, 1)$ and
+$f(\boldsymbol{\theta}) = \frac12\boldsymbol{\theta}^\top A\boldsymbol{\theta} - \mathbf{b}^\top\boldsymbol{\theta}$.
+
+(a) Find the eigenvalues and unit eigenvectors of $A$, the minimiser
+$\boldsymbol{\theta}^*$, and the step sizes for which gradient descent
+converges from every starting point.
+
+(b) Find the best fixed step $\eta$ and its rate $\rho$.
+
+(c) With that $\eta$ and $\boldsymbol{\theta}_0 = \mathbf{0}$, find
+$\boldsymbol{\theta}_1$ and $\boldsymbol{\theta}_2$. Explain why the
+error shrinks by exactly $\rho$ at every step.
+:::
+
+::: {#exr-ch5-euler-limit}
+Let $\lambda > 0$ and $f(\theta) = \frac{\lambda}{2}\theta^2$.
+
+(a) Solve the gradient flow with $\theta(0) = \theta_0$, and find the
+gradient descent iterates $\theta_k$.
+
+(b) Fix $t > 0$ and take $k$ steps of size $\eta = t/k$. Show that
+$\theta_k \to \theta(t)$ as $k \to \infty$.
+
+(c) For $\lambda = 6$, $\theta_0 = 1$ and $t = 1$, compare $\theta(1)$
+with $\theta_k$ for $k = 6$, $60$ and $600$.
 :::

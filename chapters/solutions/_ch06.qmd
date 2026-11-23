@@ -1,0 +1,281 @@
+## Chapter 6 {#sec-solutions-6}
+
+**@exr-ch6-dice.** Let $X_1$ and $X_2$ be the two scores, so
+$S = X_1 + X_2$. By @exm-die each has mean $\frac72$ and variance
+$\frac{35}{12}$. By @thm-expectation-linear,
+$\mathbb{E}[S] = \frac72 + \frac72 = 7$. The $36$ outcomes are equally
+likely, so $P(X_1 = a \text{ and } X_2 = b) = \frac1{36} = \frac16\cdot\frac16$
+and the scores are independent; by @thm-variance-sum,
+$\operatorname{Var}[S] = 2\cdot\frac{35}{12} = \frac{35}{6}$.
+
+Listing the outcomes, the totals $2, 3, \dots, 12$ occur
+$1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1$ times. So
+$\mathbb{E}[S] = \frac{252}{36} = 7$ and
+$\mathbb{E}[S^2] = \frac{1974}{36}$, and by @lem-variance-formula
+$\operatorname{Var}[S] = \frac{1974}{36} - 49 = \frac{210}{36} = \frac{35}{6}$.
+
+```{python}
+#| include: false
+import itertools
+import math
+from fractions import Fraction as Fr
+rng = np.random.default_rng(66)
+totals = [a + b for a in range(1, 7) for b in range(1, 7)]
+check([totals.count(t) for t in range(2, 13)] == [1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1], "counts")
+check(sum(totals) == 252 and sum(t * t for t in totals) == 1974, "sums 252 and 1974")
+check(Fr(1974, 36) - 49 == Fr(35, 6) and 2 * Fr(35, 12) == Fr(35, 6), "variance 35/6")
+```
+
+**@exr-ch6-without-replacement.** (a) The six pairs give
+$G = -1.5$ for $(1, 2)$ and $(2, 1)$, $-3.5$ for $(1, 6)$ and $(6, 1)$,
+and $-4$ for $(2, 6)$ and $(6, 2)$. The mean is
+$-\frac{2(1.5 + 3.5 + 4)}{6} = -3$, still $f'(0)$, and the variance is
+$\frac{2(1.5^2 + 0.5^2 + 1^2)}{6} = \frac76$, half the $\frac73$ of
+sampling with replacement.
+
+(b) There are $N(N - 1)$ ordered pairs of different indices, all
+equally likely, so
+$\mathbb{E}[\mathbf{d}_I\cdot\mathbf{d}_J] = \frac{1}{N(N-1)}\sum_{a\ne b}\mathbf{d}_a\cdot\mathbf{d}_b$.
+Expanding $\|\sum_a\mathbf{d}_a\|^2$,
+$$
+0 = \Bigl\|\sum_a\mathbf{d}_a\Bigr\|^2 = \sum_a\|\mathbf{d}_a\|^2 + \sum_{a\ne b}\mathbf{d}_a\cdot\mathbf{d}_b ,
+$$
+so $\sum_{a\ne b}\mathbf{d}_a\cdot\mathbf{d}_b = -N\sigma^2$ and
+$\mathbb{E}[\mathbf{d}_I\cdot\mathbf{d}_J] = -\sigma^2/(N - 1)$.
+
+(c) Let the outcomes be the lists $(i_1, \dots, i_B)$ of $B$ different
+examples, all equally likely, and put
+$\mathbf{d}_a = \nabla f_a(\boldsymbol{\theta}) - \nabla f(\boldsymbol{\theta})$,
+so $\sum_a\mathbf{d}_a = \mathbf{0}$. Each entry $I_j$ takes every value
+in the same number of lists, so it is uniform on the $N$ examples, and
+each pair of entries $(I_i, I_j)$ with $i \ne j$ is uniform on the
+ordered pairs of different examples. The batch mean minus
+$\nabla f(\boldsymbol{\theta})$ is $\frac1B\sum_j\mathbf{d}_{I_j}$, whose
+expectation is $\mathbf{0}$, so the estimate is unbiased, and its
+variance is
+$$
+\frac{1}{B^2}\Bigl(\sum_j\mathbb{E}\bigl[\|\mathbf{d}_{I_j}\|^2\bigr] + \sum_{i\ne j}\mathbb{E}[\mathbf{d}_{I_i}\cdot\mathbf{d}_{I_j}]\Bigr)
+= \frac{1}{B^2}\Bigl(B\sigma^2 - \frac{B(B-1)\sigma^2}{N - 1}\Bigr)
+= \frac{\sigma^2}{B}\cdot\frac{N - B}{N - 1},
+$$
+by (b). For $N = 3$ and $B = 2$ this is $\frac{14}{3}\cdot\frac12\cdot\frac12 = \frac76$,
+as in (a). For $B = N$ the variance is $0$: the batch is the whole
+training set.
+
+```{python}
+#| include: false
+ys6 = [Fr(1), Fr(2), Fr(6)]
+G6 = [-(a + b) / 2 for a, b in itertools.permutations(ys6, 2)]
+check(len(G6) == 6 and sum(G6) / 6 == -3, "mean -3 without replacement")
+check(sum((g + 3)**2 for g in G6) / 6 == Fr(7, 6), "variance 7/6")
+# The general formula, exactly, for random integer gradients.
+for N, B in ((4, 2), (5, 3), (5, 5), (6, 1)):
+    gv = [np.array(v, dtype=object) for v in rng.integers(-4, 5, size=(N, 2))]
+    gv = [np.array([Fr(int(c)) for c in v]) for v in gv]
+    mean = sum(gv) / N
+    s2 = sum(((g - mean) ** 2).sum() for g in gv) / N
+    ests = [sum(gv[i] for i in idx) / B for idx in itertools.permutations(range(N), B)]
+    m = sum(ests) / len(ests)
+    check(all(m == mean), "unbiased without replacement")
+    var = sum(((e - m) ** 2).sum() for e in ests) / len(ests)
+    check(var == s2 / B * Fr(N - B, N - 1), "variance (sigma^2/B)(N-B)/(N-1)")
+    d = [g - mean for g in gv]
+    pair = sum((d[a] * d[b]).sum() for a, b in itertools.permutations(range(N), 2)) / (N * (N - 1))
+    check(pair == -s2 / (N - 1), "E[d_I . d_J] = -sigma^2/(N-1)")
+```
+
+**@exr-ch6-sgd-floor.** (a) The step is
+$\theta_{k+1} = \theta_k - \eta(\theta_k - y_{I_k})$. Subtracting $3$,
+$e_{k+1} = e_k - \eta(e_k + 3 - y_{I_k}) = (1 - \eta)e_k + \eta(y_{I_k} - 3)$.
+
+(b) Squaring,
+$$
+e_{k+1}^2 = (1 - \eta)^2e_k^2 + 2\eta(1 - \eta)\,e_k\,(y_{I_k} - 3) + \eta^2(y_{I_k} - 3)^2 .
+$$
+Fix the earlier draws, so that $e_k$ is fixed, and average over
+$I_k$: the values $y_i - 3$ are $-2$, $-1$ and $3$, with average $0$
+and mean square $\sigma^2 = \frac{14}{3}$. So the average over $I_k$ is
+$(1 - \eta)^2e_k^2 + \eta^2\sigma^2$, and by @lem-average-last
+$\mathbb{E}[e_{k+1}^2] = (1 - \eta)^2\,\mathbb{E}[e_k^2] + \eta^2\sigma^2$.
+
+(c) Write $u_k = \mathbb{E}[e_k^2]$ and $a = (1 - \eta)^2$. The
+constant solution of $u_{k+1} = au_k + \eta^2\sigma^2$ is
+$u^* = \eta^2\sigma^2/(1 - a) = \eta^2\sigma^2/\bigl(\eta(2 - \eta)\bigr) = \eta\sigma^2/(2 - \eta)$,
+and $u_k - u^*$ satisfies $u_{k+1} - u^* = a(u_k - u^*)$, so
+$$
+u_k = u^* + (1 - \eta)^{2k}(u_0 - u^*) .
+$$
+For $0 < \eta < 2$, $0 \le a < 1$ and $u_k \to u^*$. With $\eta = 0.1$,
+$u^* = \frac{0.1\cdot14/3}{1.9} \approx 0.246$.
+
+```{python}
+#| include: false
+e_, s2_, u0_, k_ = sp.symbols("eta sigma2 u0 k", positive=True)
+ustar = e_ * s2_ / (2 - e_)
+sym_equal(e_**2 * s2_ / (1 - (1 - e_)**2), ustar, "fixed point")
+uk = ustar + (1 - e_)**(2 * k_) * (u0_ - ustar)
+sym_equal(uk.subs(k_, k_ + 1), (1 - e_)**2 * uk + e_**2 * s2_, "closed form solves the recurrence")
+check([v - 3 for v in (1, 2, 6)] == [-2, -1, 3] and sum([-2, -1, 3]) == 0, "deviations average 0")
+check(f"{0.1 * 14 / 3 / 1.9:.3g}" == "0.246", "limit 0.246")
+```
+
+**@exr-ch6-velocity.** (a) Let $\boldsymbol{\theta}_{-1} = \boldsymbol{\theta}_0$.
+We show by induction that $\mathbf{w}_k = \boldsymbol{\theta}_k - \boldsymbol{\theta}_{k-1}$
+and that the points agree with @eq-stoch-momentum. For $k = 0$,
+$\mathbf{w}_0 = \mathbf{0} = \boldsymbol{\theta}_0 - \boldsymbol{\theta}_{-1}$.
+If $\mathbf{w}_k = \boldsymbol{\theta}_k - \boldsymbol{\theta}_{k-1}$, then
+$$
+\boldsymbol{\theta}_{k+1} = \boldsymbol{\theta}_k + \beta\mathbf{w}_k - \eta\nabla f(\boldsymbol{\theta}_k)
+= \boldsymbol{\theta}_k - \eta\nabla f(\boldsymbol{\theta}_k) + \beta(\boldsymbol{\theta}_k - \boldsymbol{\theta}_{k-1}),
+$$
+which is @eq-stoch-momentum, and
+$\mathbf{w}_{k+1} = \boldsymbol{\theta}_{k+1} - \boldsymbol{\theta}_k$
+by definition.
+
+(b) The recurrence $\mathbf{w}_{k} = \beta\mathbf{w}_{k-1} - \eta\nabla f(\boldsymbol{\theta}_{k-1})$
+has the same form as @def-ema, and the induction in the proof of
+@thm-ema-closed gives
+$\mathbf{w}_k = -\eta\sum_{j=0}^{k-1}\beta^{k-1-j}\nabla f(\boldsymbol{\theta}_j)$.
+Let $m_k$ be the exponential moving average of the gradients
+$\mathbf{g}_j = \nabla f(\boldsymbol{\theta}_{j-1})$. By
+@thm-ema-closed,
+$m_k = (1 - \beta)\sum_{j=0}^{k-1}\beta^{k-1-j}\nabla f(\boldsymbol{\theta}_j)$,
+so $\mathbf{w}_k = -\frac{\eta}{1 - \beta}\,m_k$: the heavy-ball step
+is a moving average of past gradients, scaled by $\eta/(1 - \beta)$.
+
+```{python}
+#| include: false
+Q = rng.normal(size=(3, 3)); A6 = Q @ Q.T + np.eye(3); b6 = rng.normal(size=3)
+gr = lambda t: A6 @ t - b6
+eta6, beta6 = 0.05, 0.7
+prev = cur = rng.normal(size=3); th_v = cur.copy(); w = np.zeros(3)
+mavg = np.zeros(3); grads = []
+for k in range(1, 30):
+    grads.append(gr(th_v))
+    w = beta6 * w - eta6 * grads[-1]
+    th_v = th_v + w
+    prev, cur = cur, cur - eta6 * gr(cur) + beta6 * (cur - prev)
+    close(th_v, cur, "velocity form agrees")
+    close(w, -eta6 * sum(beta6**(k - 1 - j) * grads[j] for j in range(k)), "closed form of w_k")
+    mavg = beta6 * mavg + (1 - beta6) * grads[-1]
+    close(w, -eta6 / (1 - beta6) * mavg, "w_k is a scaled moving average")
+```
+
+**@exr-ch6-momentum-range.** (a) By @thm-momentum-quadratic, every
+solution tends to $0$ exactly when $\eta < 2(1 + \frac14) = \frac52$.
+
+(b) With $\sqrt\beta = \frac12$, the roots are complex exactly when
+$(1 - \frac12)^2 < \eta < (1 + \frac12)^2$, that is,
+$\frac14 < \eta < \frac94$; at the two ends there is a repeated root.
+For $\eta = 1$ the characteristic equation is
+$r^2 - \frac14r + \frac14 = 0$, with roots
+$$
+r = \frac{\frac14 \pm \sqrt{\frac1{16} - 1}}{2} = \frac{1 \pm i\sqrt{15}}{8},
+\qquad |r| = \frac{\sqrt{1 + 15}}{8} = \frac12 = \sqrt\beta .
+$$
+
+```{python}
+#| include: false
+r_ = sp.symbols("r")
+roots = sp.solve(r_**2 - r_ / 4 + sp.Rational(1, 4), r_)
+check(set(roots) == {(1 + sp.I * sp.sqrt(15)) / 8, (1 - sp.I * sp.sqrt(15)) / 8}, "roots")
+check(all(sp.simplify(sp.Abs(rt) - sp.Rational(1, 2)) == 0 for rt in roots), "modulus 1/2")
+for ev in np.linspace(0.01, 3, 300):
+    s_v = 1 + 0.25 - ev
+    rmax = max(abs(np.roots([1, -s_v, 0.25])))
+    check((rmax < 1) == (ev < 2.5), "converges iff eta < 5/2")
+    if 0.26 < ev < 2.24:
+        check(s_v**2 < 1, "complex roots inside (1/4, 9/4)")
+    if ev < 0.24 or ev > 2.26:
+        check(s_v**2 > 1, "real roots outside [1/4, 9/4]")
+```
+
+**@exr-ch6-ema-half.** (a) We need $0.9^k \le 0.01$, that is,
+$k \ge \ln 0.01/\ln 0.9 \approx 43.7$, so $k = 44$.
+
+(b) Let $k = 2h$. The weights on $g_1, \dots, g_h$ are
+$(1 - \beta)\beta^{k-j}$ for $j = 1, \dots, h$, with exponents running
+from $k - 1$ down to $h$. Their sum is
+$$
+(1 - \beta)(\beta^h + \beta^{h+1} + \dots + \beta^{2h-1})
+= \beta^h(1 - \beta)(1 + \beta + \dots + \beta^{h-1}) = \beta^h(1 - \beta^h) .
+$$
+For $\beta = 0.9$ and $k = 20$ the older half carries
+$0.9^{10}(1 - 0.9^{10}) \approx 0.227$ of the weight and the newer half
+$1 - 0.9^{10} \approx 0.651$.
+
+```{python}
+#| include: false
+check(0.9**44 <= 0.01 < 0.9**43 and f"{math.log(0.01) / math.log(0.9):.3g}" == "43.7", "k = 44")
+b_ = sp.symbols("beta", positive=True)
+for h in range(1, 8):
+    sym_equal(sum((1 - b_) * b_**(2 * h - j) for j in range(1, h + 1)), b_**h * (1 - b_**h), "older half")
+    sym_equal(sum((1 - b_) * b_**(2 * h - j) for j in range(h + 1, 2 * h + 1)), 1 - b_**h, "newer half")
+check(f"{0.9**10 * (1 - 0.9**10):.3g}" == "0.227" and f"{1 - 0.9**10:.3g}" == "0.651", "values for k = 20")
+```
+
+**@exr-ch6-adam-scale.** (a) Write primes for the quantities when Adam
+runs on $cf$. We show by induction on $k$ that
+$\boldsymbol{\theta}'_k = \boldsymbol{\theta}_k$, $\mathbf{m}'_k = c\,\mathbf{m}_k$
+and $\mathbf{v}'_k = c^2\mathbf{v}_k$. All hold for $k = 0$. If they
+hold for $k - 1$, then $\mathbf{g}'_k = c\nabla f(\boldsymbol{\theta}'_{k-1}) = c\,\mathbf{g}_k$,
+so the recurrences give $\mathbf{m}'_k = c\,\mathbf{m}_k$ and
+$\mathbf{v}'_k = c^2\mathbf{v}_k$. Then
+$\hat m'_{k,i} = c\,\hat m_{k,i}$ and
+$\sqrt{\hat v'_{k,i}} = c\sqrt{\hat v_{k,i}}$ since $c > 0$, and with
+$\epsilon = 0$ the factor $c$ cancels in the step, so
+$\boldsymbol{\theta}'_k = \boldsymbol{\theta}_k$.
+
+(b) By @thm-ema-bias, if $g_{k,i} = g$ for every $k$ then
+$m_{k,i} = (1 - \beta_1^k)g$ and $v_{k,i} = (1 - \beta_2^k)g^2$, so
+$\hat m_{k,i} = g$ and $\sqrt{\hat v_{k,i}} = |g|$. The step is
+$-\eta_k\,g/(|g| + \epsilon)$, of size just under $\eta_k$, whatever the
+size of $g$.
+
+```{python}
+#| include: false
+def adam_run(grad, th0, K=60, lr=0.01, b1=0.85, b2=0.99, eps=0.0):
+    th = np.array(th0, dtype=float); m = np.zeros_like(th); v = np.zeros_like(th)
+    for k in range(1, K + 1):
+        g = grad(th); m = b1 * m + (1 - b1) * g; v = b2 * v + (1 - b2) * g * g
+        th = th - lr * (m / (1 - b1**k)) / (np.sqrt(v / (1 - b2**k)) + eps)
+    return th
+A_ = np.array([[3.0, 1.0], [1.0, 2.0]])
+base = adam_run(lambda t: A_ @ t, [1.0, -2.0])
+for c in (1e-3, 0.5, 7.0, 1e4):
+    close(adam_run(lambda t: c * (A_ @ t), [1.0, -2.0]), base, "scale invariance with eps = 0", tol=1e-9)
+for g in (-3.0, 1e-4, 250.0):
+    m = v = 0.0
+    for k in range(1, 50):
+        m = 0.85 * m + 0.15 * g; v = 0.99 * v + 0.01 * g * g
+        close(m / (1 - 0.85**k), g, "m-hat = g")
+        close(np.sqrt(v / (1 - 0.99**k)), abs(g), "sqrt v-hat = |g|")
+```
+
+**@exr-ch6-linear-decay.** With $\eta_k = \eta_0(1 - k/K)$,
+$$
+\sum_{k=0}^{K-1}\Bigl(1 - \frac kK\Bigr) = K - \frac1K\cdot\frac{(K-1)K}{2} = \frac{K + 1}{2},
+\qquad
+\sum_{k=0}^{K-1}\Bigl(1 - \frac kK\Bigr)^2 = \frac{1}{K^2}\sum_{j=1}^{K}j^2 = \frac{(K + 1)(2K + 1)}{6K},
+$$
+where the second sum substitutes $j = K - k$ and uses
+$\sum_{j=1}^Kj^2 = K(K + 1)(2K + 1)/6$. Multiplying by $\eta_0$ and
+$\eta_0^2$ gives the two sums. Then
+$$
+\frac{2\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr) + L\sigma^2\eta_0^2\frac{(K+1)(2K+1)}{6K}}{\eta_0\frac{K+1}{2}}
+= \frac{4\bigl(f(\boldsymbol{\theta}_0) - f^*\bigr)}{\eta_0(K + 1)} + \frac{L\sigma^2\eta_0(2K + 1)}{3K} .
+$$
+The theorem needs $\eta_0 \le 1/L$, so that every $\eta_k \le 1/L$.
+
+```{python}
+#| include: false
+K_, e0_, D_, L_, s_ = sp.symbols("K eta0 D L sigma2", positive=True)
+S1 = e0_ * (K_ + 1) / 2
+S2 = e0_**2 * (K_ + 1) * (2 * K_ + 1) / (6 * K_)
+sym_equal((2 * D_ + L_ * s_ * S2) / S1, 4 * D_ / (e0_ * (K_ + 1)) + L_ * s_ * e0_ * (2 * K_ + 1) / (3 * K_),
+          "linear-decay bound")
+for Kv in (1, 2, 7, 1000):
+    check(sum(Fr(Kv - k, Kv) for k in range(Kv)) == Fr(Kv + 1, 2), "first sum")
+    check(sum(Fr(Kv - k, Kv)**2 for k in range(Kv)) == Fr((Kv + 1) * (2 * Kv + 1), 6 * Kv), "second sum")
+maxima_zero("ratsimp(sum(j^2, j, 1, 9) - 9*10*19/6)", "sum of squares in Maxima")
+```
